@@ -15,7 +15,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A7C9DEC8059F496500E67CB3"
-               BuildableName = "teleport.app"
+               BuildableName = "teleport-dev.app"
                BlueprintName = "teleport"
                ReferencedContainer = "container:teleport.xcodeproj">
             </BuildableReference>
@@ -31,7 +31,7 @@
       </Testables>
    </TestAction>
    <LaunchAction
-      buildConfiguration = "Debug"
+      buildConfiguration = "Release"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       launchStyle = "0"
@@ -45,7 +45,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A7C9DEC8059F496500E67CB3"
-            BuildableName = "teleport.app"
+            BuildableName = "teleport-dev.app"
             BlueprintName = "teleport"
             ReferencedContainer = "container:teleport.xcodeproj">
          </BuildableReference>
@@ -62,7 +62,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A7C9DEC8059F496500E67CB3"
-            BuildableName = "teleport.app"
+            BuildableName = "teleport-dev.app"
             BlueprintName = "teleport"
             ReferencedContainer = "container:teleport.xcodeproj">
          </BuildableReference>
@@ -72,7 +72,7 @@
       buildConfiguration = "Debug">
    </AnalyzeAction>
    <ArchiveAction
-      buildConfiguration = "Release"
+      buildConfiguration = "Distribute"
       revealArchiveInOrganizer = "YES">
    </ArchiveAction>
 </Scheme>

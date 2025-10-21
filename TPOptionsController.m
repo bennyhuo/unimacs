@@ -84,6 +84,9 @@ static TPOptionsController * _controller = nil;
 
 
 @implementation TPOptionsController
+{
+	NSView *optionsBackgroundView;
+}
 
 + (TPOptionsController*)controller
 {
@@ -125,22 +128,33 @@ static TPOptionsController * _controller = nil;
 	TPLayoutRemoteHostView * remoteHostView = [layoutView remoteHostViewForHost:host];
 	_currentScreenView = [remoteHostView screenViewAtIndex:screenIndex];
 	_currentScreenFrame = [_currentScreenView frame];
-	NSRect frame = [_currentScreenView convertRect:[_currentScreenView bounds] toView:layoutView];
 
-	[_currentScreenView removeFromSuperview];
-	[_currentScreenView setFrame:frame];
-	[layoutView addSubview:_currentScreenView];
+	optionsBackgroundView = [[NSView alloc] init];
+	optionsBackgroundView.wantsLayer = YES;
+	optionsBackgroundView.layer.backgroundColor = [[NSColor colorWithWhite:0.3 alpha:0.3] CGColor];
+	[layoutView addSubview:optionsBackgroundView];
+
+	[layoutView addSubview:hostOptionsView];
 	
+	[[hostOptionsView window] makeFirstResponder:hostOptionsView];
+	[hostOptionsView setNextResponder:self];
+	
+	[self updateLayout];
+}
+
+- (void)updateLayout {
+	if (!_currentScreenView) {
+		return;
+	}
+	
+	NSRect frame = [_currentScreenView convertRect:[_currentScreenView bounds] toView:layoutView];
 	NSRect optionsFrame = [TPAnimationManager rect:[hostOptionsView bounds] centeredAtPoint:NSMakePoint(NSMidX(frame), NSMidY(frame))];
 	optionsFrame = [TPAnimationManager rect:optionsFrame snappedInsideRect:[layoutView bounds] margin:16.0];
 	optionsFrame.origin.x = round(optionsFrame.origin.x);
 	optionsFrame.origin.y = round(optionsFrame.origin.y);
 
+	[optionsBackgroundView setFrame:layoutView.bounds];
 	[hostOptionsView setFrame:optionsFrame];
-	[hostOptionsView setHidden:YES];
-	[layoutView addSubview:hostOptionsView];
-	
-	[TPAnimationManager flipAnimationFromView:_currentScreenView toView:hostOptionsView invertRotation:NO delegate:self];
 }
 
 - (IBAction)restoreToDefaults:(id)sender
@@ -161,7 +175,21 @@ static TPOptionsController * _controller = nil;
 
 - (IBAction)closeOptions:(id)sender
 {
-	[TPAnimationManager flipAnimationFromView:hostOptionsView toView:_currentScreenView invertRotation:YES delegate:self];
+	[hostOptionsView removeFromSuperview];
+	[optionsBackgroundView removeFromSuperview];
+	optionsBackgroundView = nil;
+
+	[self willChangeValueForKey:@"hostOptions"];
+	
+	_host = nil;
+	_optionsProxy = nil;
+	
+	[self didChangeValueForKey:@"hostOptions"];
+	
+	[layoutView updateLayout];
+	
+	[[NSNotificationCenter defaultCenter] postNotificationName:TPHostDidUpdateNotification object:_host userInfo:nil];
+    _currentScreenView = nil;
 }
 
 - (void)keyComboDidChange:(PTKeyCombo*)keyCombo
@@ -186,35 +214,6 @@ static TPOptionsController * _controller = nil;
 	unsigned short keyCode = [event keyCode];
 	if(keyCode == 53) {
 		[self closeOptions:nil];
-	}
-}
-
-- (void)animationDidComplete
-{
-	if([hostOptionsView isHidden]) {
-		[self willChangeValueForKey:@"hostOptions"];
-		
-		_host = nil;
-		_optionsProxy = nil;
-		
-		[self didChangeValueForKey:@"hostOptions"];
-		
-		[layoutView updateLayout];
-		
-		[[NSNotificationCenter defaultCenter] postNotificationName:TPHostDidUpdateNotification object:_host userInfo:nil];
-		
-		TPLayoutHostView * hostView = [_currentScreenView hostView];
-		[_currentScreenView removeFromSuperview];
-		[_currentScreenView setFrame:_currentScreenFrame];
-		[hostView addSubview:_currentScreenView];
-		
-		[layoutView updateLayout];
-
-		_currentScreenView = nil;
-	}
-	else {
-		[[hostOptionsView window] makeFirstResponder:hostOptionsView];
-		[hostOptionsView setNextResponder:self];
 	}
 }
 

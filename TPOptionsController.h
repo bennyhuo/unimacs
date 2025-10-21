@@ -28,6 +28,7 @@
 + (TPOptionsController*)controller;
 
 - (void)showOptionsForHost:(TPRemoteHost*)host sharedScreenIndex:(unsigned)screenIndex fromRect:(NSRect)frame;
+- (void)updateLayout;
 - (IBAction)restoreToDefaults:(id)sender;
 - (IBAction)useAsDefaults:(id)sender;
 - (IBAction)closeOptions:(id)sender;

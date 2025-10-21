@@ -575,6 +575,26 @@ static TPLocalHost * _localHost = nil;
 	}
 }
 
+- (void) sleepTheSystem {
+	// 1. Get a connection to the power management service
+	// IOPMFindPowerManagement looks up the IOPMrootDomain
+	io_connect_t fb = IOPMFindPowerManagement(MACH_PORT_NULL);
+	
+	if (fb != MACH_PORT_NULL) {
+		// 2. Call the function to initiate system sleep
+		IOReturn status = IOPMSleepSystem(fb);
+		
+		if (status != kIOReturnSuccess) {
+			NSLog(@"Error initiating system sleep: %d", status);
+		}
+		
+		// 3. Close the connection to the service
+		IOServiceClose(fb);
+	} else {
+		NSLog(@"Error: Could not find Power Management service.");
+	}
+}
+
 
 - (id)valueForUndefinedKey:(NSString*)key
 {

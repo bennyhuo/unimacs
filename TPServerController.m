@@ -238,6 +238,7 @@ static TPServerController * _defaultServerController = nil;
 		mousePosition = [_clientHotBorder screenPointFromLocalPoint:mousePosition flipped:YES];
 	}
 	
+	DebugLog(@"startControlWithInfoDict, clientHotBorder=%p, state=%ld", _clientHotBorder, [_clientHotBorder state]);
 	if([_clientHotBorder state] != TPHotBorderInactiveState) {
 		[_clientHotBorder deactivate];
 		if(shouldWarp) {
@@ -294,7 +295,7 @@ static TPServerController * _defaultServerController = nil;
 - (void)stopControlWithDisconnect:(BOOL)disconnect
 {
 #if DEBUG_GENERAL
-	DebugLog(@"server: stopPlaying");
+	DebugLog(@"server: stopPlaying: %d", disconnect);
 #endif
 
 	[super stopControlWithDisconnect:disconnect];
@@ -308,6 +309,7 @@ static TPServerController * _defaultServerController = nil;
 		[[self eventsController] stopPostingEvents];
 		
 		[self takeDownHotBorder:_clientHotBorder];
+		[_clientHotBorder close];
 		_clientHotBorder = nil;
 		
 		/* Update status menu */
@@ -336,10 +338,16 @@ static TPServerController * _defaultServerController = nil;
 #endif
 
 	switch(type) {
-		case TPControlSleepType:
-			DebugLog(@"received sleep msg");
+		case TPControlDeviceSleepType:
+			DebugLog(@"received device sleep msg");
 			if ([[TPPreferencesManager sharedPreferencesManager] boolForPref:SYNC_SLEEP_STATUS]) {
-			[[TPLocalHost localHost] sleepScreen];
+				[[TPLocalHost localHost] sleepTheSystem];
+			}
+			break;
+		case TPControlScreenSleepType:
+			DebugLog(@"received screen sleep msg");
+			if ([[TPPreferencesManager sharedPreferencesManager] boolForPref:SYNC_SLEEP_STATUS]) {
+				[[TPLocalHost localHost] sleepScreen];
 			}
 			break;
 		case TPControlWakeType:

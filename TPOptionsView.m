@@ -35,25 +35,9 @@
 {
 	CGContextRef ctx = [[NSGraphicsContext currentContext] graphicsPort];
 	
-//	TPRemoteHost * remoteHost = (TPRemoteHost*)[hostController content];
+	[[NSColor textBackgroundColor] set];
+	NSRectFill([self bounds]);
 	
-//	NSData * data = [remoteHost backgroundImageData];
-//	if(data != nil) {
-//		CGContextScaleCTM(ctx, 1.0, -1.0);
-//		NSImage * backgroundImage = [[NSImage alloc] initWithData:data];
-//		NSRect adjustedRect = [self bounds];
-//		adjustedRect.origin.y -= NSHeight(adjustedRect);
-//		[backgroundImage drawInRect:adjustedRect fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1.0];
-//		[backgroundImage release];
-//	}
-//	
-//	CGContextScaleCTM(ctx, 1.0, -1.0);
-
-//	NSBezierPath * path = [NSBezierPath bezierPathWithRect:[self bounds]];
-	[NSBezierPath drawRect:[self bounds] withGradientFrom:[NSColor underPageBackgroundColor] to:[NSColor windowBackgroundColor]];
-	
-//	
-//	CGContextSetGrayFillColor(ctx, 0.9, 0.85);
 	CGRect strokeRect = NSRectToCGRect(NSInsetRect([self bounds], 0.5, 0.5));
 	CGContextSetLineWidth(ctx, 1.0);
 	

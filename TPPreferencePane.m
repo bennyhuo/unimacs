@@ -10,7 +10,6 @@
 
 #import <SecurityInterface/SFCertificatePanel.h>
 #import <SecurityInterface/SFChooseIdentityPanel.h>
-#import <Sparkle/Sparkle.h>
 
 #import "TPLayoutView.h"
 #import "TPRemoteHost.h"
@@ -20,11 +19,24 @@
 #import "TPLocalHost.h"
 #import "TPAuthenticationManager.h"
 #import "TPMainController.h"
+#import "TPNetworkConfigurationWatcher.h"
 
 #define LAYOUT_HEIGHT 500
 #define OPTIONS_HEIGHT 250
 
 @implementation TPPreferencePane
+{
+	BOOL hasPendingLayoutUpdates;
+}
+
+- (instancetype)init
+{
+	self = [super init];
+	if (self) {
+		hasPendingLayoutUpdates = NO;
+	}
+	return self;
+}
 
 + (instancetype)preferencePane
 {
@@ -48,6 +60,8 @@
 	NSDictionary * infoDict = [mainBundle infoDictionary];
 	NSDictionary * localizedInfoDict = [mainBundle localizedInfoDictionary];
 	
+	self.window.title = infoDict[@"CFBundleDisplayName"];
+	
 	NSString * publicVersion = infoDict[@"CFBundleVersion"];
 	NSString * buildVersion = infoDict[@"TPRevision"];
 	NSString * translationInfo = localizedInfoDict[@"TPTranslationInfoString"];
@@ -68,24 +82,62 @@
 	BOOL hasSeveralPotentialIdentities = ([[[TPLocalHost localHost] potentialIdentities] count] > 1);
 	[showCertificateButton setHidden:hasSeveralPotentialIdentities];
 	[chooseCertificateButton setHidden:!hasSeveralPotentialIdentities];
+
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(needUpdateLayout) name:TPHostsConfigurationDidChangeNotification object:nil];
 	
-	[[NSNotificationCenter defaultCenter] addObserver:layoutView selector:@selector(updateLayout) name:TPHostsConfigurationDidChangeNotification object:nil];
+	[[NSNotificationCenter defaultCenter] addObserver:self
+											 selector:@selector(willPopUp:)
+												 name:NSPopUpButtonWillPopUpNotification
+											   object:ipAddressSelector];
+	NSString *localIpAddress = [[TPMainController sharedController] networkConfigurationWatcher].selectedLocalIpAddress;
+	[ipAddressSelector addItemWithTitle:localIpAddress];
+	[ipAddressSelector selectItemWithTitle:localIpAddress];
+	
+	[ipAddressSelector bind:@"enabled" toPref:ALLOW_CONTROL];
 }
 
 - (void)showWindow:(id)sender
 {
 	[super showWindow:sender];
 	[NSApp activateIgnoringOtherApps:YES];
-}
 
-- (SUUpdater *)updater
-{
-	return [SUUpdater sharedUpdater];
+	if (hasPendingLayoutUpdates) {
+		[layoutView updateLayout];
+		hasPendingLayoutUpdates = NO;
+	}
 }
 
 
 #pragma mark -
 #pragma mark IBActions
+
+- (IBAction)onIpAddressSelectorClicked:(NSPopUpButton *)popup {
+	NSString *selectedItem = popup.titleOfSelectedItem;
+	[[[TPMainController sharedController] networkConfigurationWatcher] selectLocalIpAddress: selectedItem];
+}
+
+- (void)willPopUp:(NSNotification *)notification {
+	NSPopUpButton *popup = notification.object;
+
+	[popup removeAllItems];
+	NSArray *ipAddrs = [[TPMainController sharedController] networkConfigurationWatcher].localIpAddresses;
+	[popup addItemsWithTitles:ipAddrs];
+
+	NSString *localIpAddress = [[TPMainController sharedController] networkConfigurationWatcher].selectedLocalIpAddress;
+	[ipAddressSelector selectItemWithTitle:localIpAddress];
+}
+
+- (IBAction)resetAllConnections:(id)sender
+{
+	[[TPMainController sharedController] resetAllConnections];
+	
+	NSUserNotification *notification = [[NSUserNotification alloc] init];
+			notification.title = @"Teleport";
+			notification.informativeText = @"All connections are reset!";
+			notification.soundName = NSUserNotificationDefaultSoundName;
+
+	[[NSUserNotificationCenter defaultUserNotificationCenter] deliverNotification:notification];
+}
 
 - (IBAction)showAboutSheet:(id)sender
 {
@@ -341,6 +393,15 @@
 		SFChooseIdentityPanel * chooserPanel = (__bridge SFChooseIdentityPanel*)contextInfo;
 		SecIdentityRef identity = [chooserPanel identity];
 		[[self localHost] setIdentity:identity];
+	}
+}
+
+- (void)needUpdateLayout
+{
+	if (self.window && self.window.isVisible) {
+		[layoutView updateLayout];
+	} else {
+		hasPendingLayoutUpdates = YES;
 	}
 }
 

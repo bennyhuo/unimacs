@@ -28,8 +28,8 @@
 
 - (void)drawBezelWithFrame:(NSRect)frame inView:(NSView *)controlView
 {
-	[[NSColor colorWithCalibratedWhite:0.0 alpha:0.5] set];
-	[[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(frame, 1.0, 3.0) xRadius:6.0 yRadius:6.0] fill];
+	[[NSColor textBackgroundColor] set];
+	[[NSBezierPath bezierPathWithRoundedRect:frame xRadius:6.0 yRadius:6.0] fill];
 	
 	[super drawBezelWithFrame:frame inView:controlView];
 }
@@ -409,8 +409,11 @@ static NSImage * _unpairImage = nil;
 	DebugLog(@"pairing %@ to screen index %d with shared screen index %d position %@", host, screenIndex, _draggingScreenIndex, NSStringFromPoint(snappedPosition));
 	
 	if([host isInState:TPHostSharedState]) {
-		[host setHostState:TPHostPeeringState];
-		[[TPAuthenticationManager defaultManager] requestAuthenticationOnHost:host];
+		if([[TPAuthenticationManager defaultManager] requestAuthenticationOnHost:host]) {
+			[host setHostState:TPHostPeeringState];
+		} else {
+			DebugLog(@"Request auth on host %@ failed immediately.", host);
+		}
 	}
 }
 

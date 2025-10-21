@@ -7,8 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		52ACC2342565FD4E00345EBE /* Sparkle.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A71E0B901AB4210E00911ACB /* Sparkle.framework */; };
-		52ACC2352565FD4E00345EBE /* Sparkle.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A71E0B901AB4210E00911ACB /* Sparkle.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		801E5F8D258FA48000157D1C /* login.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 801E5F8C258FA48000157D1C /* login.framework */; };
 		A700510707AD3BAB0086D029 /* TPHostsManager.h in Headers */ = {isa = PBXBuildFile; fileRef = A700510507AD3BAB0086D029 /* TPHostsManager.h */; };
 		A700510807AD3BAB0086D029 /* TPHostsManager.m in Sources */ = {isa = PBXBuildFile; fileRef = A700510607AD3BAB0086D029 /* TPHostsManager.m */; };
@@ -153,6 +151,9 @@
 		A7EC1BD91A19E84000CDEC7B /* sharedscreen-on.tiff in Resources */ = {isa = PBXBuildFile; fileRef = A7BD4E860CF1D26B005B3BED /* sharedscreen-on.tiff */; };
 		A7EF8B0705AB6CA900E9BC56 /* TPBezierPath.m in Sources */ = {isa = PBXBuildFile; fileRef = A7EF8B0505AB6CA900E9BC56 /* TPBezierPath.m */; };
 		A7EF8B0805AB6CA900E9BC56 /* TPBezierPath.h in Headers */ = {isa = PBXBuildFile; fileRef = A7EF8B0605AB6CA900E9BC56 /* TPBezierPath.h */; };
+		B2438CE32E2671DE003323CD /* icon-refresh.png in Resources */ = {isa = PBXBuildFile; fileRef = B2438CE22E2671DE003323CD /* icon-refresh.png */; };
+		B2CB75FB2E0AC0590033FB60 /* TPScreenLockWatcher.h in Headers */ = {isa = PBXBuildFile; fileRef = B2CB75F92E0AC0590033FB60 /* TPScreenLockWatcher.h */; };
+		B2CB75FC2E0AC0590033FB60 /* TPScreenLockWatcher.m in Sources */ = {isa = PBXBuildFile; fileRef = B2CB75FA2E0AC0590033FB60 /* TPScreenLockWatcher.m */; };
 		DF308BB421EF799600C17AD6 /* 10.12-Sierra.jpg in Resources */ = {isa = PBXBuildFile; fileRef = DF308BAD21EF799500C17AD6 /* 10.12-Sierra.jpg */; };
 		DF308BB521EF799600C17AD6 /* 10.10-Yosemite.jpg in Resources */ = {isa = PBXBuildFile; fileRef = DF308BAE21EF799500C17AD6 /* 10.10-Yosemite.jpg */; };
 		DF308BB621EF799600C17AD6 /* 10.9-Mavericks.jpg in Resources */ = {isa = PBXBuildFile; fileRef = DF308BAF21EF799500C17AD6 /* 10.9-Mavericks.jpg */; };
@@ -161,20 +162,6 @@
 		DF308BB921EF799600C17AD6 /* 10.13-HighSierra.jpg in Resources */ = {isa = PBXBuildFile; fileRef = DF308BB221EF799600C17AD6 /* 10.13-HighSierra.jpg */; };
 		DF308BBA21EF799600C17AD6 /* 10.8-MountainLion.jpg in Resources */ = {isa = PBXBuildFile; fileRef = DF308BB321EF799600C17AD6 /* 10.8-MountainLion.jpg */; };
 /* End PBXBuildFile section */
-
-/* Begin PBXCopyFilesBuildPhase section */
-		52ACC2362565FD4E00345EBE /* Embed Frameworks */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (
-				52ACC2352565FD4E00345EBE /* Sparkle.framework in Embed Frameworks */,
-			);
-			name = "Embed Frameworks";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		089C1672FE841209C02AAC07 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = /System/Library/Frameworks/Foundation.framework; sourceTree = "<absolute>"; };
@@ -195,9 +182,8 @@
 		A7033E250CF0AB8C004AFBEA /* remove.tiff */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = remove.tiff; sourceTree = "<group>"; };
 		A7033F3D0CF10E6C004AFBEA /* sharedscreen.tiff */ = {isa = PBXFileReference; lastKnownFileType = image.tiff; path = sharedscreen.tiff; sourceTree = "<group>"; };
 		A70901850CD007B6006576A6 /* icon-about.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-about.png"; sourceTree = "<group>"; };
-		A70AE0D714674AD100A76119 /* teleport.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = teleport.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A70AE0D714674AD100A76119 /* teleport-dev.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "teleport-dev.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A71221CC1159899E00DCD93B /* MultipleFiles.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = MultipleFiles.icns; sourceTree = "<group>"; };
-		A71E0B901AB4210E00911ACB /* Sparkle.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = Sparkle.framework; sourceTree = "<group>"; };
 		A71EA8C60A12688400805CC6 /* TPBackgroundImageTransfer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TPBackgroundImageTransfer.h; sourceTree = "<group>"; };
 		A71EA8C70A12688400805CC6 /* TPBackgroundImageTransfer.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TPBackgroundImageTransfer.m; sourceTree = "<group>"; };
 		A73510E505A65AA90049E8CD /* TPUDPSocket.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TPUDPSocket.h; sourceTree = "<group>"; };
@@ -344,6 +330,9 @@
 		A7E6ADDA05EEB47D001D7D35 /* TPLayoutLocalHostView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = TPLayoutLocalHostView.m; sourceTree = "<group>"; };
 		A7EF8B0505AB6CA900E9BC56 /* TPBezierPath.m */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.objc; path = TPBezierPath.m; sourceTree = "<group>"; };
 		A7EF8B0605AB6CA900E9BC56 /* TPBezierPath.h */ = {isa = PBXFileReference; fileEncoding = 30; lastKnownFileType = sourcecode.c.h; path = TPBezierPath.h; sourceTree = "<group>"; };
+		B2438CE22E2671DE003323CD /* icon-refresh.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "icon-refresh.png"; sourceTree = "<group>"; };
+		B2CB75F92E0AC0590033FB60 /* TPScreenLockWatcher.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TPScreenLockWatcher.h; sourceTree = "<group>"; };
+		B2CB75FA2E0AC0590033FB60 /* TPScreenLockWatcher.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TPScreenLockWatcher.m; sourceTree = "<group>"; };
 		DF308BAD21EF799500C17AD6 /* 10.12-Sierra.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "10.12-Sierra.jpg"; sourceTree = "<group>"; };
 		DF308BAE21EF799500C17AD6 /* 10.10-Yosemite.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "10.10-Yosemite.jpg"; sourceTree = "<group>"; };
 		DF308BAF21EF799500C17AD6 /* 10.9-Mavericks.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "10.9-Mavericks.jpg"; sourceTree = "<group>"; };
@@ -365,7 +354,6 @@
 				A7C9DF61059F4C5100E67CB3 /* Cocoa.framework in Frameworks */,
 				A786DB3208BE71C400BF1E8B /* Security.framework in Frameworks */,
 				A75ED6CC09A3FDCF00AFDD7D /* Carbon.framework in Frameworks */,
-				52ACC2342565FD4E00345EBE /* Sparkle.framework in Frameworks */,
 				A7BB55E10A1BD00E007044EA /* IOKit.framework in Frameworks */,
 				801E5F8D258FA48000157D1C /* login.framework in Frameworks */,
 				A78FD1AB0CB31B99006AC28C /* SecurityFoundation.framework in Frameworks */,
@@ -404,6 +392,7 @@
 		089C167CFE841241C02AAC07 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				B2438CE22E2671DE003323CD /* icon-refresh.png */,
 				A746D49B08B14AA100CE2B89 /* Info.plist */,
 				A7E61DA409F176340024712F /* teleport.icns */,
 				A70901850CD007B6006576A6 /* icon-about.png */,
@@ -449,7 +438,6 @@
 		1058C7ACFEA557BF11CA2CBB /* Linked Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				A71E0B901AB4210E00911ACB /* Sparkle.framework */,
 				1058C7ADFEA557BF11CA2CBB /* Cocoa.framework */,
 				A75ED6B709A3FDCF00AFDD7D /* Carbon.framework */,
 				F506C035013D953901CA16C8 /* PreferencePanes.framework */,
@@ -512,7 +500,7 @@
 		A70AE0D814674AD100A76119 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A70AE0D714674AD100A76119 /* teleport.app */,
+				A70AE0D714674AD100A76119 /* teleport-dev.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -623,6 +611,8 @@
 				A7C9DF2E059F4B1300E67CB3 /* TPServerController.m */,
 				A7697D730DB25CCE0037F0A5 /* TPNetworkConfigurationWatcher.h */,
 				A7697D740DB25CCE0037F0A5 /* TPNetworkConfigurationWatcher.m */,
+				B2CB75F92E0AC0590033FB60 /* TPScreenLockWatcher.h */,
+				B2CB75FA2E0AC0590033FB60 /* TPScreenLockWatcher.m */,
 			);
 			name = Controllers;
 			sourceTree = "<group>";
@@ -831,6 +821,7 @@
 				A7C9DF17059F4AE900E67CB3 /* TPHost.h in Headers */,
 				A7C9DF1D059F4AF600E67CB3 /* TPHotBorder.h in Headers */,
 				A7C9DF2F059F4B1300E67CB3 /* TPMainController.h in Headers */,
+				B2CB75FB2E0AC0590033FB60 /* TPScreenLockWatcher.h in Headers */,
 				A7C9DF31059F4B1300E67CB3 /* TPClientController.h in Headers */,
 				A7C9DF33059F4B1300E67CB3 /* TPMessage.h in Headers */,
 				A7C9DF35059F4B1300E67CB3 /* TPServerController.h in Headers */,
@@ -892,8 +883,6 @@
 				A7C9DEC6059F496500E67CB3 /* Sources */,
 				A7C9DEC7059F496500E67CB3 /* Frameworks */,
 				A71EA0750A10D5B400805CC6 /* Set revision number */,
-				52ACC2362565FD4E00345EBE /* Embed Frameworks */,
-				5203E59525987BE4009A23E6 /* Sign Sparkle.framework */,
 			);
 			buildRules = (
 			);
@@ -901,7 +890,7 @@
 			);
 			name = teleport;
 			productName = Daemon;
-			productReference = A70AE0D714674AD100A76119 /* teleport.app */;
+			productReference = A70AE0D714674AD100A76119 /* teleport-dev.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -913,7 +902,8 @@
 				LastUpgradeCheck = 1140;
 				TargetAttributes = {
 					A7C9DEC8059F496500E67CB3 = {
-						ProvisioningStyle = Manual;
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -963,6 +953,7 @@
 				DF308BB621EF799600C17AD6 /* 10.9-Mavericks.jpg in Resources */,
 				A77812120CAF331300EEC97E /* halo.png in Resources */,
 				A7EC1BD91A19E84000CDEC7B /* sharedscreen-on.tiff in Resources */,
+				B2438CE32E2671DE003323CD /* icon-refresh.png in Resources */,
 				DF308BB921EF799600C17AD6 /* 10.13-HighSierra.jpg in Resources */,
 				A7C4711C0FA903C300282EF2 /* switch-sound.wav in Resources */,
 				A7EC1BD71A19E83A00CDEC7B /* remove.tiff in Resources */,
@@ -983,24 +974,6 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		5203E59525987BE4009A23E6 /* Sign Sparkle.framework */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Sign Sparkle.framework";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "LOCATION=\"${BUILT_PRODUCTS_DIR}\"/\"${FRAMEWORKS_FOLDER_PATH}\"\n\n# By default, use the configured code signing identity for the project/target\nIDENTITY=\"${CODE_SIGN_IDENTITY}\"\nif [ \"$IDENTITY\" == \"\" ]\nthen\n  # If a code signing identity is not specified, use ad hoc signing\n  IDENTITY=\"-\"\nfi\ncodesign --verbose --force --deep -o runtime --sign \"$IDENTITY\" \"$LOCATION/Sparkle.framework/Versions/A/Resources/AutoUpdate.app\"\ncodesign --verbose --force -o runtime --sign \"$IDENTITY\" \"$LOCATION/Sparkle.framework/Versions/A\"\n";
-		};
 		A71EA0750A10D5B400805CC6 /* Set revision number */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -1013,7 +986,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = "/usr/bin/perl -w";
-			shellScript = "# Xcode auto-versioning script for Subversion\n# by Axel Andersson, modified by Daniel Jalkut to add\n# \"--revision HEAD\" to the svn info line, which allows\n# the latest revision to always be used.\n\nuse strict;\n\ndie \"$0: Must be run from Xcode\" unless $ENV{\"BUILT_PRODUCTS_DIR\"};\n\nmy $REV = `git describe`;\nmy $INFO = \"$ENV{BUILT_PRODUCTS_DIR}/$ENV{WRAPPER_NAME}/Contents/Info.plist\";\n\nmy $version = $REV;\n\nopen(FH, \"$INFO\") or die \"$0: $INFO: $!\";\nmy $info = join(\"\", <FH>);\nclose(FH);\n\n$info =~ s/([\\t ]+<key>TPRevision<\\/key>\\n[\\t ]+<string>).*?(<\\/string>)/$1$version$2/;\n\nopen(FH, \">$INFO\") or die \"$0: $INFO: $!\";\nprint FH $info;\nclose(FH);";
+			shellScript = "# Xcode auto-versioning script for Subversion\n# by Axel Andersson, modified by Daniel Jalkut to add\n# \"--revision HEAD\" to the svn info line, which allows\n# the latest revision to always be used.\n\nuse strict;\n\ndie \"$0: Must be run from Xcode\" unless $ENV{\"BUILT_PRODUCTS_DIR\"};\n\nmy $REV = `git describe`;\nmy $INFO = \"$ENV{BUILT_PRODUCTS_DIR}/$ENV{WRAPPER_NAME}/Contents/Info.plist\";\n\nmy $version = $REV;\n\nopen(FH, \"$INFO\") or die \"$0: $INFO: $!\";\nmy $info = join(\"\", <FH>);\nclose(FH);\n\n$info =~ s/([\\t ]+<key>TPRevision<\\/key>\\n[\\t ]+<string>).*?(<\\/string>)/$1$version$2/;\n\nopen(FH, \">$INFO\") or die \"$0: $INFO: $!\";\nprint FH $info;\nclose(FH);\n";
 		};
 		A786E22C1A19DFA500E66B43 /* Update strings */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -1027,7 +1000,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "echo \"Updating string files\"\ngenstrings -u -littleEndian -o English.lproj *.m";
+			shellScript = "echo \"Updating string files\"\ngenstrings -u -littleEndian -o English.lproj *.m\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -1087,6 +1060,7 @@
 				A7697D760DB25CCE0037F0A5 /* TPNetworkConfigurationWatcher.m in Sources */,
 				A7B08FAC0DCA10A3008CAFF2 /* TPFakeHostsGenerator.m in Sources */,
 				A78C04AB0E13287D00755C6D /* PTHotKey.m in Sources */,
+				B2CB75FC2E0AC0590033FB60 /* TPScreenLockWatcher.m in Sources */,
 				A78C04AD0E13287D00755C6D /* PTHotKeyCenter.m in Sources */,
 				A78C04AF0E13287D00755C6D /* PTKeyBroadcaster.m in Sources */,
 				A78C04B10E13287D00755C6D /* PTKeyCodeTranslator.m in Sources */,
@@ -1133,13 +1107,15 @@
 		A729278408564D7C00518F7E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_DISPLAY_NAME = "teleport-rl";
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGN_ENTITLEMENTS = teleport.entitlements;
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = YES;
-				CURRENT_PROJECT_VERSION = 1.3.5;
+				CURRENT_PROJECT_VERSION = 1.4.0;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				EXCLUDED_ARCHS = "";
@@ -1150,10 +1126,12 @@
 				);
 				GCC_PREFIX_HEADER = teleport_Prefix.pch;
 				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "${APP_DISPLAY_NAME}";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 11.5;
 				OTHER_LDFLAGS = "-Wl,-rpath,@loader_path/../Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = com.abyssoft.teleport;
-				PRODUCT_NAME = teleport;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bennyhuo.teleport.rl;
+				PRODUCT_NAME = "${APP_DISPLAY_NAME}";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SYSTEM_FRAMEWORK_SEARCH_PATHS = "$(inherited) $(SYSTEM_LIBRARY_DIR)/PrivateFrameworks";
 			};
@@ -1162,12 +1140,13 @@
 		A729278508564D7C00518F7E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_DISPLAY_NAME = "teleport-dev";
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGN_ENTITLEMENTS = teleport.entitlements;
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1.3.5;
+				CURRENT_PROJECT_VERSION = 1.4.0;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				EXCLUDED_ARCHS = "";
@@ -1178,10 +1157,12 @@
 				);
 				GCC_PREFIX_HEADER = teleport_Prefix.pch;
 				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "${APP_DISPLAY_NAME}";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 11.5;
 				OTHER_LDFLAGS = "-Wl,-rpath,@loader_path/../Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = com.abyssoft.teleport;
-				PRODUCT_NAME = teleport;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bennyhuo.teleport.dev;
+				PRODUCT_NAME = "${APP_DISPLAY_NAME}";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SYSTEM_FRAMEWORK_SEARCH_PATHS = "$(inherited) $(SYSTEM_LIBRARY_DIR)/PrivateFrameworks";
 			};
@@ -1275,12 +1256,14 @@
 		A751657309314763008F278D /* Tests */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_DISPLAY_NAME = "teleport-dev";
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGN_ENTITLEMENTS = teleport.entitlements;
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1.3.5;
+				CURRENT_PROJECT_VERSION = 1.4.0;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				EXCLUDED_ARCHS = "";
@@ -1291,10 +1274,12 @@
 				);
 				GCC_PREFIX_HEADER = teleport_Prefix.pch;
 				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "${APP_DISPLAY_NAME}";
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 11.5;
 				OTHER_LDFLAGS = "-Wl,-rpath,@loader_path/../Frameworks";
-				PRODUCT_BUNDLE_IDENTIFIER = com.abyssoft.teleport;
-				PRODUCT_NAME = teleport;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bennyhuo.teleport;
+				PRODUCT_NAME = "${APP_DISPLAY_NAME}";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SYSTEM_FRAMEWORK_SEARCH_PATHS = "$(inherited) $(SYSTEM_LIBRARY_DIR)/PrivateFrameworks";
 			};
@@ -1345,6 +1330,80 @@
 			};
 			name = Tests;
 		};
+		B287EAAA2E38B9C300FF5FD0 /* Distribute */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_PRECOMPILE_PREFIX_HEADER = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = "DEBUG_BUILD=0";
+				GCC_TREAT_WARNINGS_AS_ERRORS = NO;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS = NO;
+				GCC_WARN_ABOUT_MISSING_PROTOTYPES = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 10.8;
+				SDKROOT = macosx;
+			};
+			name = Distribute;
+		};
+		B287EAAB2E38B9C300FF5FD0 /* Distribute */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APP_DISPLAY_NAME = teleport;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_ENTITLEMENTS = teleport.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				COPY_PHASE_STRIP = YES;
+				CURRENT_PROJECT_VERSION = 1.4.0;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = YES;
+				EXCLUDED_ARCHS = "";
+				FRAMEWORK_SEARCH_PATHS = (
+					"\"$(SYSTEM_LIBRARY_DIR)/Frameworks/Carbon.framework/Versions/A/Frameworks\"",
+					"$(SRCROOT)",
+					"$(PROJECT_DIR)",
+				);
+				GCC_PREFIX_HEADER = teleport_Prefix.pch;
+				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "${APP_DISPLAY_NAME}";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				MACOSX_DEPLOYMENT_TARGET = 11.5;
+				OTHER_LDFLAGS = "-Wl,-rpath,@loader_path/../Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = com.bennyhuo.teleport;
+				PRODUCT_NAME = "${APP_DISPLAY_NAME}";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SYSTEM_FRAMEWORK_SEARCH_PATHS = "$(inherited) $(SYSTEM_LIBRARY_DIR)/PrivateFrameworks";
+			};
+			name = Distribute;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1353,6 +1412,7 @@
 			buildConfigurations = (
 				A729278508564D7C00518F7E /* Debug */,
 				A729278408564D7C00518F7E /* Release */,
+				B287EAAB2E38B9C300FF5FD0 /* Distribute */,
 				A751657309314763008F278D /* Tests */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -1363,6 +1423,7 @@
 			buildConfigurations = (
 				A729279108564D7C00518F7E /* Debug */,
 				A729279008564D7C00518F7E /* Release */,
+				B287EAAA2E38B9C300FF5FD0 /* Distribute */,
 				A751657609314763008F278D /* Tests */,
 			);
 			defaultConfigurationIsVisible = 0;

@@ -254,7 +254,6 @@ static NSString * TPHotBorderDraggingInfoKey = @"TPHotBorderDraggingInfo";
 - (void)_fireAttemptWithEvent:(NSEvent*)event atLocation:(NSPoint)location withDraggingInfo:(id <NSDraggingInfo>)draggingInfo
 {
 	if(_state != TPHotBorderActiveState) {
-		DebugLog(@"not active");
 		return;
 	}
 	if(_hotDelegate == nil) {
@@ -314,7 +313,7 @@ static NSString * TPHotBorderDraggingInfoKey = @"TPHotBorderDraggingInfo";
 
 - (void)mouseEntered:(NSEvent *)event
 {
-	DebugLog(@"mouseEntered %@", [[NSPasteboard pasteboardWithName:NSDragPboard] types]);
+	DebugLog(@"mouseEntered");
 	
 	[self _discardFireAttempt];
 	

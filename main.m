@@ -10,5 +10,7 @@
 
 int main(int argc, const char *argv[])
 {
+	// Ignore SIGPIPE on socket.
+	signal(SIGPIPE, SIG_IGN);
 	return NSApplicationMain(argc, argv);
 }

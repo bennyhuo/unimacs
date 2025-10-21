@@ -4,8 +4,10 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
+	<key>CFBundleDisplayName</key>
+	<string>${APP_DISPLAY_NAME}</string>
 	<key>CFBundleExecutable</key>
-	<string>teleport</string>
+	<string>${APP_DISPLAY_NAME}</string>
 	<key>CFBundleGetInfoString</key>
 	<string></string>
 	<key>CFBundleIconFile</key>

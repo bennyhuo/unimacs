@@ -42,7 +42,7 @@ NSString * TPBackgroundImageTransferDataKey = @"TPBackgroundImageTransferData";
 
 - (void)_receiverDataTransferCompleted
 {
-	DebugLog(@"_receiverDataTransferCompleted %@ on thread %@", self, [NSThread currentThread]);
+	TransferDebugLog(@"_receiverDataTransferCompleted %@ on thread %@", self, [NSThread currentThread]);
 	
 	NSMutableDictionary * dict = nil;
 	
@@ -50,7 +50,7 @@ NSString * TPBackgroundImageTransferDataKey = @"TPBackgroundImageTransferData";
 		dict = [NSKeyedUnarchiver unarchiveObjectWithData:_data];
 	}
 	@catch(NSException *e) {
-		DebugLog(@"exception when unarchiving dictionary: %@", e);
+		TransferDebugLog(@"exception when unarchiving dictionary: %@", e);
 	}
 	
 	if(dict != nil) {

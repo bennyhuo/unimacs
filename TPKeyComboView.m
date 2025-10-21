@@ -16,9 +16,6 @@
 {
 	BOOL hasFocus = ([[self window] firstResponder] == self);
 
-	[[NSColor whiteColor] set];
-	NSRectFill(rect);
-	
 	if(hasFocus) {
 		[[NSColor keyboardFocusIndicatorColor] set];
 		NSFrameRectWithWidthUsingOperation([self bounds], 2.0, NSCompositeSourceOver);
@@ -29,11 +26,8 @@
 	}
 	
 	NSString * string = nil;
-	NSColor * color = nil;
-	
+
 	if(_keyCombo == nil) {
-		color = [NSColor grayColor];
-		
 		if(hasFocus) {
 			string = NSLocalizedStringFromTableInBundle(@"Type key combo", nil, [NSBundle bundleForClass:[self class]], @"Displayed in the key combo field, should be short");
 		}
@@ -42,7 +36,6 @@
 		}
 	}
 	else {
-		color = [NSColor blackColor];
 		string = [_keyCombo description];
 	}
 	
@@ -52,7 +45,7 @@
 	NSDictionary * attributes = [[NSDictionary alloc] initWithObjectsAndKeys:
 								 paragraphStyle, NSParagraphStyleAttributeName,
 								 font, NSFontAttributeName,
-								 color, NSForegroundColorAttributeName,
+								 [NSColor textColor], NSForegroundColorAttributeName,
 								 nil];
 	[string drawInRect:NSInsetRect([self bounds], 2.0, 2.0) withAttributes:attributes];
 }

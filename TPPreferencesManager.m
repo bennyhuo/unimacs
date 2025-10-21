@@ -125,14 +125,14 @@ static TPPreferencesManager * _sharedPreferencesManager = nil;
 		_userDefaultsController = [[NSUserDefaultsController alloc] initWithDefaults:defaults initialValues:nil];
 		
 		[_userDefaultsController setInitialValues:@{SHARE_PASTEBOARD: @YES,
-												   SYNC_LOCK_STATUS: @NO,
-												   SYNC_SLEEP_STATUS: @NO,
+												   SYNC_LOCK_STATUS: @YES,
+												   SYNC_SLEEP_STATUS: @YES,
 												   ALLOW_CONTROL: @NO,
 												   REQUIRE_KEY: @NO,
 												   DELAYED_SWITCH: @NO,
 												   SWITCH_DELAY: @0.5f,
 												   SWITCH_WITH_DOUBLE_TAP: @NO,
-												   LIMIT_PASTEBOARD_SIZE: @YES,
+												   LIMIT_PASTEBOARD_SIZE: @NO,
 												   MAX_PASTEBOARD_SIZE: @1024,
 												   AUTOCHECK_VERSION: @YES,
 												   /* Secret stuff */
@@ -154,16 +154,17 @@ static TPPreferencesManager * _sharedPreferencesManager = nil;
 												   COPY_FILES: @YES,
 												   REQUIRE_PASTEBOARD_KEY: @NO,
 												   PASTEBOARD_KEY_TAG: @COMMAND_KEY_TAG,
-												   WAKE_ON_LAN: @NO,
+												   WAKE_ON_LAN: @YES,
 												   TRUST_LOCAL_CERTIFICATE: @YES,
 												   SHOW_SWITCH_ANIMATION: @YES,
 												   DOUBLE_TAP_INTERVAL: @0.5f,
 												   SHOW_TEXTUAL_STATUS: @YES,
 												   TIGER_BEHAVIOR: @NO,
 												   ADD_TO_LOGIN_ITEMS: @YES,
-												   DISCONNECT_ON_NETWORK_CONFIG_CHANGE: @NO,
+												   DISCONNECT_ON_NETWORK_CONFIG_CHANGE: @YES,
 												   WRAP_ON_STOP_CONTROL: @YES,
 												   PLAY_SWITCH_SOUND: @NO,
+												   ENABLE_DEBUG_LOG: @NO,
 												   SYNC_MODIFIERS: [NSNumber numberWithInt:YES]}];
 		
 		/* Static prefs */

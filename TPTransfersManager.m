@@ -67,11 +67,11 @@ static TPTransfersManager * _transfersManager = nil;
 	_outgoingTransfers[[transfer uid]] = transfer;
 	
 	if(!transferIsOK) {
-		DebugLog(@"cancelled transfer %@ because there's no data", transfer);
+		TransferDebugLog(@"cancelled transfer %@ because there's no data", transfer);
 		[self transferDidCancel:transfer];
 	}
 	else {
-		DebugLog(@"begin transfer %@", transfer);
+		TransferDebugLog(@"begin transfer %@", transfer);
 		
 		NSDictionary * infoDict = [transfer infoDict];
 		TPMessage * message = [TPMessage messageWithType:TPTransferRequestMsgType
@@ -80,7 +80,7 @@ static TPTransfersManager * _transfersManager = nil;
 		_outgoingConnections[[transfer uid]] = connection; // just to retain the connection until the transfer link is established
 		
 		if(![connection sendMessage:message]) {
-			DebugLog(@"can't send transfer request for %@", transfer);
+			TransferDebugLog(@"can't send transfer request for %@", transfer);
 			[self transferDidCancel:transfer];
 		}
 	}
@@ -90,7 +90,7 @@ static TPTransfersManager * _transfersManager = nil;
 {
 	TPOutgoingTransfer * transfer = _outgoingTransfers[transferUID];
 
-	DebugLog(@"start transfer %@", transfer);
+	TransferDebugLog(@"start transfer %@", transfer);
 	
 	if(transfer != nil) {
 		if(_delegate && [_delegate respondsToSelector:@selector(transfersManager:beginNewTransfer:)])
@@ -110,7 +110,7 @@ static TPTransfersManager * _transfersManager = nil;
 
 - (void)abortTransferWithUID:(NSString*)transferUID
 {
-	DebugLog(@"transfer with UID %@ aborted", transferUID);
+	TransferDebugLog(@"transfer with UID %@ aborted", transferUID);
 	[_outgoingConnections removeObjectForKey:transferUID];
 	[_outgoingTransfers removeObjectForKey:transferUID];
 	[_incomingTransfers removeObjectForKey:transferUID];
@@ -123,18 +123,18 @@ static TPTransfersManager * _transfersManager = nil;
 	NSNumber * dataLengthValue = infoDict[TPTransferDataLengthKey];
 	TPDataLength dataLength = [dataLengthValue longLongValue];
 
-	DebugLog(@"receive transfer of type %@ and length %lld", transferType, dataLength);
+	TransferDebugLog(@"receive transfer of type %@ and length %lld", transferType, dataLength);
 	
 	TPIncomingTransfer * transfer = [TPIncomingTransfer transferOfType:transferType withUID:uid];
 	
 	if(transfer != nil) {
 		if(!isClient && [transfer requireTrustedHost] && ![[TPAuthenticationManager defaultManager] isHostTrusted:[connection connectedHost]]) {
-			DebugLog(@"transfer requires trusted host but this one is not!");
+			TransferDebugLog(@"transfer requires trusted host but this one is not!");
 			[connection sendMessage:[TPMessage messageWithType:TPTransferFailureMsgType
 													 andString:[transfer uid]]];
 		}
 //		else if(_lastTransferWasCancelled) {
-//			DebugLog(@"last transfer was cancelled: do not accept to receive this!");
+//			TransferDebugLog(@"last transfer was cancelled: do not accept to receive this!");
 //			
 //			[connection sendMessage:[TPMessage messageWithType:TPTransferFailureMsgType
 //													 andString:[transfer uid]]];
@@ -152,7 +152,7 @@ static TPTransfersManager * _transfersManager = nil;
 		}
 	}
 	else
-		DebugLog(@"error creating transfer of type <%@>", transferType);
+		TransferDebugLog(@"error creating transfer of type <%@>", transferType);
 }
 
 - (void)abortAllTransferRequests
@@ -171,12 +171,8 @@ static TPTransfersManager * _transfersManager = nil;
 
 - (void)_processNextTransferRequestIfPossible
 {
-	DebugLog(@"processing next transfer request in %@", _transferRequests);
-			 
 	if([_transferRequests count] < 1 || _requestInProcess)
 		return;
-	
-	DebugLog(@"process now");
 	
 	_requestInProcess = YES;
 	
@@ -194,7 +190,7 @@ static TPTransfersManager * _transfersManager = nil;
 		[transfer setManager:self];
 		_incomingTransfers[[transfer uid]] = transfer;
 		
-		DebugLog(@"receive transfer %@", transfer);
+		TransferDebugLog(@"receive transfer %@", transfer);
 		
 		BOOL sent = [connection sendMessage:[TPMessage messageWithType:TPTransferSuccessMsgType
 														   andInfoDict:@{TPTransferUIDKey: [transfer uid],
@@ -208,7 +204,7 @@ static TPTransfersManager * _transfersManager = nil;
 			
 	}
 	else {
-		DebugLog(@"prepare failed for transfer %@", transfer);
+		TransferDebugLog(@"prepare failed for transfer %@", transfer);
 		
 		[connection sendMessage:[TPMessage messageWithType:TPTransferFailureMsgType
 												 andString:[transfer uid]]];
@@ -228,7 +224,7 @@ static TPTransfersManager * _transfersManager = nil;
 
 - (void)transferDidStart:(TPTransfer*)transfer
 {
-	DebugLog(@"transfer %@ did start", transfer);
+	TransferDebugLog(@"transfer %@ did start", transfer);
 	
 	if([transfer isIncoming]) {
 		if(_requestInProcess && [_transferRequests count] > 0) {
@@ -244,7 +240,7 @@ static TPTransfersManager * _transfersManager = nil;
 
 - (void)transfer:(TPTransfer*)transfer didProgress:(float)progress
 {
-	DebugLog(@"transfer %@ did progress to %f", transfer, progress);
+	TransferDebugLog(@"transfer %@ did progress to %f", transfer, progress);
 	
 	if(_delegate && [_delegate respondsToSelector:@selector(transfersManager:transfer:didProgress:)] && [transfer hasFeedback])
 		[_delegate transfersManager:self transfer:transfer didProgress:progress];
@@ -252,8 +248,8 @@ static TPTransfersManager * _transfersManager = nil;
 
 - (void)transferDidComplete:(TPTransfer*)transfer
 {
-	DebugLog(@"transfer %@ did complete", transfer);
-	
+	TransferDebugLog(@"transfer %@ did complete", transfer);
+
 	if(_delegate && [_delegate respondsToSelector:@selector(transfersManager:completeTransfer:)] && [transfer hasFeedback])
 		[_delegate transfersManager:self completeTransfer:transfer];
 	
@@ -262,7 +258,7 @@ static TPTransfersManager * _transfersManager = nil;
 
 - (void)transferDidCancel:(TPTransfer*)transfer
 {
-	DebugLog(@"transfer %@ did cancel", transfer);
+	TransferDebugLog(@"transfer %@ did cancel", transfer);
 	
 	if(_delegate && [_delegate respondsToSelector:@selector(transfersManager:cancelTransfer:)] && [transfer hasFeedback])
 		[_delegate transfersManager:self cancelTransfer:transfer];

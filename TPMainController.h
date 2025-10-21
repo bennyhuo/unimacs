@@ -22,9 +22,10 @@ typedef struct CPSProcessSerNum	CPSProcessSerNum;
 @interface TPMainController : NSObject
 {
 	CPSProcessSerNum _frontProcessNum;
-	TPNetworkConfigurationWatcher * _networkConfigurationWatcher;
 	NSTimer * _wakeTimer;
 }
+
+@property TPNetworkConfigurationWatcher *networkConfigurationWatcher;
 
 + (TPMainController*)sharedController;
 
@@ -39,5 +40,9 @@ typedef struct CPSProcessSerNum	CPSProcessSerNum;
 /* Version checking */
 - (void)checkVersionFromNotification:(NSNotification*)notification;
 - (void)checkVersionsAndConfirm:(BOOL)confirm;
+
+- (void)resetAllConnections;
+
+- (void)resetAllConnectionsIfNotInControl;
 
 @end

@@ -30,10 +30,10 @@
 #import <sys/param.h>
 #import <sys/mount.h>
 #import <Security/AuthSession.h>
-#import <Sparkle/Sparkle.h>
 
 #import "TPNetworkConnection.h"
 #import "TPTestsController.h"
+#import "TPScreenLockWatcher.h"
 
 typedef CGError CGSError;
 
@@ -104,16 +104,16 @@ static TPMainController * _mainController = nil;
 	[[[NSWorkspace sharedWorkspace] notificationCenter] addObserver:self selector:@selector(screensDidWake:) name:NSWorkspaceScreensDidWakeNotification object:nil];
 	[self _setupTimer];
 
+	/* Watch the network configuration */
+	_networkConfigurationWatcher = [[TPNetworkConfigurationWatcher alloc] init];
+	[_networkConfigurationWatcher setDelegate:self];
+	[_networkConfigurationWatcher startWatching];
+	
 	/* Waken controllers */
 	[TPPreferencesManager sharedPreferencesManager];
 	[TPClientController defaultController];
 	[TPServerController defaultController];
 	[TPStatusItemController defaultController];
-	
-	/* Watch the network configuration */
-	_networkConfigurationWatcher = [[TPNetworkConfigurationWatcher alloc] init];
-	[_networkConfigurationWatcher setDelegate:self];
-	[_networkConfigurationWatcher startWatching];
 	
 	/* Data loading */
 	[[TPHostsManager defaultManager] loadHosts];
@@ -142,6 +142,8 @@ static TPMainController * _mainController = nil;
 	if (peeredHosts.count == 0 && ![[TPPreferencesManager sharedPreferencesManager] boolForPref:ALLOW_CONTROL]) {
 		[[TPPreferencePane preferencePane] showWindow:nil];
 	}
+	
+	[TPScreenLockWatcher setup];
 	
 #if 0
 	[TPTestsController runFakeHostsTest];
@@ -216,7 +218,7 @@ static TPMainController * _mainController = nil;
 	DebugLog(@"sleeping screens");
 	[self _invalidateTimer];
 	TPClientController * clientController = [TPClientController defaultController];
-	TPMessage *message = [TPMessage messageWithType:TPControlSleepType];
+	TPMessage *message = [TPMessage messageWithType:TPControlScreenSleepType];
 	if ([clientController currentConnection] != nil && [[TPPreferencesManager sharedPreferencesManager] boolForPref:SYNC_SLEEP_STATUS]) {
 		[[clientController currentConnection] sendMessage:message];
 	}
@@ -254,6 +256,12 @@ static TPMainController * _mainController = nil;
 
 - (void)computerWillSleep:(NSNotification*)notification
 {
+	TPClientController * clientController = [TPClientController defaultController];
+	TPMessage *message = [TPMessage messageWithType:TPControlDeviceSleepType];
+	if ([clientController currentConnection] != nil && [[TPPreferencesManager sharedPreferencesManager] boolForPref:SYNC_SLEEP_STATUS]) {
+		[[clientController currentConnection] sendMessage:message];
+	}
+	
 	if([[TPClientController defaultController] isControlling])
 		[[TPClientController defaultController] stopControl];
 	
@@ -282,16 +290,28 @@ static TPMainController * _mainController = nil;
 	DebugLog(@"Network configuration did change");
 	
 	if([[TPPreferencesManager sharedPreferencesManager] boolForPref:DISCONNECT_ON_NETWORK_CONFIG_CHANGE]) {
-		TPServerController * server = [TPServerController defaultController];
-		if([server allowControl]) {
-			[server stopSharing];
-			[server startSharing];
-		}
-		
-		[[TPBonjourController defaultController] stopBrowsing];
-		[[TPBonjourController defaultController] browse];
-		
-		[[TPClientController defaultController] stopControl];
+		[self resetAllConnections];
+	}
+}
+
+- (void)resetAllConnections {
+	TPServerController * server = [TPServerController defaultController];
+	if([server allowControl]) {
+		[server stopSharing];
+		[server startSharing];
+	}
+	
+	[[TPBonjourController defaultController] stopBrowsing];
+	[[TPBonjourController defaultController] browse];
+	
+	[[TPClientController defaultController] stopControl];
+}
+
+- (void)resetAllConnectionsIfNotInControl {
+	if (![[TPClientController defaultController] isControlling] && ![[TPServerController defaultController] isControlled]) {
+		[self resetAllConnections];
+	} else {
+		DebugLog(@"Try to reset all connections: controlling?%d, controlled?%d", [[TPClientController defaultController] isControlling], [[TPServerController defaultController] isControlled]);
 	}
 }
 
@@ -301,19 +321,19 @@ static TPMainController * _mainController = nil;
 
 - (void)_setupTimer {
 	if (_wakeTimer == nil) {
-		DebugLog(@"Setting up timer");
+		// DebugLog(@"Setting up timer");
 		_wakeTimer = [NSTimer scheduledTimerWithTimeInterval:50.0f target:self selector:@selector(_triggerTimer:) userInfo:nil repeats:YES];
 		_wakeTimer.tolerance = 8.0f;
 	}
 }
 
 - (void)_invalidateTimer {
-	DebugLog(@"invalidating timer");
+	// DebugLog(@"invalidating timer");
 	[_wakeTimer invalidate];
 	_wakeTimer = nil;
 }
 - (void)_triggerTimer:(NSTimer *) timer {
-	DebugLog(@"keeping screens awake");
+	// DebugLog(@"keeping screens awake");
 	[self _sendWakeEvent];
 }
 
@@ -431,12 +451,7 @@ static TPMainController * _mainController = nil;
 
 - (void)checkVersionsAndConfirm:(BOOL)confirm
 {
-	if(confirm) {
-		[[SUUpdater sharedUpdater] checkForUpdates:nil];
-	}
-	else {
-		[[SUUpdater sharedUpdater] checkForUpdatesInBackground];
-	}
+	
 }
 
 //- (void)_handleCheckVersionWithDictionary:(NSDictionary*)productVersionDict

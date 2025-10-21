@@ -11,6 +11,7 @@
 #import "TPHostsManager.h"
 #import "TPNetworkConnection.h"
 #import "TPPreferencesManager.h"
+#import "TPMainController.h"
 
 #import "TPLocalHost.h"
 #import "TPRemoteHost.h"
@@ -20,9 +21,11 @@
 #import <sys/types.h>
 #import <netinet/in.h>
 #import <netdb.h>
+#import "TPNetworkConfigurationWatcher.h"
 
 #define SHOW_LOCALHOST DEBUG_BUILD
 #define RESOLVE_TIMEOUT 10.0
+#define PING_MAX_COUNT "30"
 
 #define TXT_VERSION 1
 
@@ -33,9 +36,78 @@ static NSString * TPRecordProtocolVersionKey = @"protocol";
 static NSString * TPRecordScreenSizesKey = @"screen-sizes";
 static NSString * TPRecordCapabilitiesKey = @"capabilities";
 static NSString * TPRecordOSVersionKey = @"os-vers";
+static NSString * TPRecordSelectedServiceIpAddressKey = @"service-ip";
 static NSString * TPRecordHideIfNotPaired = @"hide";
 
 static TPBonjourController * _defaultBonjourController = nil;
+
+@interface IpPort : NSObject
+
+@property NSString *ipAddress;
+@property int port;
+
+@end
+
+@implementation IpPort
+
+@end
+
+static void pingRemoteAsync(NSString *host) {
+	static NSMutableDictionary<NSString *, NSTask *> *tasks;
+	static dispatch_once_t onceToken;
+	dispatch_once(&onceToken, ^{
+		tasks = [[NSMutableDictionary alloc] init];
+	});
+
+	DebugLog(@"ping -c "PING_MAX_COUNT" %@", host);
+	NSTask *task = [[NSTask alloc] init];
+	task.launchPath = @"/sbin/ping";
+	task.arguments = @[@"-c", @PING_MAX_COUNT, host];
+	
+	NSPipe *pipe = [NSPipe pipe];
+	task.standardOutput = pipe;
+	task.standardError = pipe;
+	
+	NSFileHandle *outputHandle = pipe.fileHandleForReading;
+	
+	task.terminationHandler = ^(NSTask *finishedTask) {
+	};
+	
+	outputHandle.readabilityHandler = ^(NSFileHandle *handle) {
+		NSData *data = [handle availableData];
+		if (data.length == 0) {
+			outputHandle.readabilityHandler = nil;
+			return;
+		}
+		
+		NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+		NSArray *lines = [output componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+		for (NSString *line in lines) {
+			if (line.length > 0) {
+				NSLog(@"%@", line);
+				if ([line containsString:@"bytes from"]) {
+					NSLog(@"ping successfully to %@.", host);
+					[task terminate];
+					return;
+				}
+				if ([line containsString:@"Request timeout for icmp_seq "PING_MAX_COUNT]) {
+					DebugLog(@"ping to %@ - Timeout. Reset connections.", host);
+					dispatch_async(dispatch_get_main_queue(), ^{
+						[[TPMainController sharedController] resetAllConnections];
+					});
+				}
+			}
+		}
+	};
+	
+	[task launch];
+	DebugLog(@"ping to %@ - start.", host);
+	
+	NSTask *prevTask = [tasks objectForKey:host];
+	[prevTask terminate];
+
+	[tasks setValue:task forKey:host];
+}
 
 @implementation TPBonjourController
 
@@ -127,6 +199,11 @@ static TPBonjourController * _defaultBonjourController = nil;
 		return;
 	
 	NSArray * screens = [[TPLocalHost localHost] screens];
+	
+	NSString *selectedIpAddress = [[TPMainController sharedController] networkConfigurationWatcher].selectedLocalIpAddress;
+	if (!selectedIpAddress || [selectedIpAddress isEqualToString:@"0.0.0.0"] || [selectedIpAddress isEqualToString:@"127.0.0.1"]) {
+		selectedIpAddress = @"";
+	}
 
 	NSDictionary * recordDict = @{TPRecordTXTVersionKey: [NSString stringWithInt:TXT_VERSION],
 								 TPRecordIDKey: [[TPLocalHost localHost] identifier],
@@ -135,6 +212,7 @@ static TPBonjourController * _defaultBonjourController = nil;
 								 TPRecordScreenSizesKey: [TPScreen stringFromScreens:screens],
 								  TPRecordCapabilitiesKey: [NSString stringWithInt:[[TPLocalHost localHost] capabilities]],
 								  TPRecordOSVersionKey: [NSString stringWithInt:[[TPLocalHost localHost] osVersion]],
+								  TPRecordSelectedServiceIpAddressKey: selectedIpAddress,
 								  TPRecordHideIfNotPaired: ([[TPPreferencesManager sharedPreferencesManager] intForPref:TRUST_REQUEST_BEHAVIOR] == TRUST_REQUEST_REJECT) ? @"1" : @"0"};
 	
 	NSData * recordData = [NSNetService dataFromTXTRecordDictionary:recordDict];
@@ -152,17 +230,36 @@ static TPBonjourController * _defaultBonjourController = nil;
 
 - (void)netServiceWillPublish:(NSNetService *)service
 {
-	//DebugLog(@"willPublish");
+	DebugLog(@"netServiceWillPublish: %@", service);
+}
+
+- (void)netServiceWillResolve:(NSNetService *)service {
+	DebugLog(@"netServiceWillResolve: %@", service);
 }
 
 - (void)netService:(NSNetService *)service didNotPublish:(NSDictionary *)errorDict
 {
-	//	  DebugLog(@"didNotPublish");
+	DebugLog(@"netServiceDidNotPublish: %@, %@", service, errorDict);
+}
+
+- (void)retryResolve:(NSNetService *)service {
+	if (service.port == -1) {
+		for (NSNetService *_service in _services) {
+			if (_service.hostName == service.hostName) {
+				if([service respondsToSelector:@selector(resolveWithTimeout:)])
+					[service resolveWithTimeout:RESOLVE_TIMEOUT];
+				else
+					[service resolve];
+				return;
+			}
+		}
+	}
 }
 
 - (void)netServiceDidStop:(NSNetService *)service
 {
-	//DebugLog(@"stop");
+	DebugLog(@"netServiceDidStop: %@", service);
+	[self retryResolve:service];
 }
 
 
@@ -183,6 +280,14 @@ static TPBonjourController * _defaultBonjourController = nil;
 - (void)stopBrowsing
 {
 	[_browseService stop];
+	for (NSNetServiceBrowser *_browser in [_browsers allValues]) {
+		[_browser stop];
+	}
+	[_browsers removeAllObjects];
+	for (NSNetService *_service in _services) {
+		[_service stop];
+	}
+	[_services removeAllObjects];
 }
 
 - (void)netServiceBrowserWillSearch:(NSNetServiceBrowser *)browser
@@ -217,6 +322,7 @@ static TPBonjourController * _defaultBonjourController = nil;
 
 - (void)netServiceBrowser:(NSNetServiceBrowser *)aNetServiceBrowser didRemoveDomain:(NSString *)domainString moreComing:(BOOL)moreComing
 {
+	PRINT_ME
 	NSNetServiceBrowser *browser = [_browsers objectForKey:domainString];
 	
 	if (browser != nil) {
@@ -241,6 +347,7 @@ static TPBonjourController * _defaultBonjourController = nil;
 
 - (void)netServiceBrowser:(NSNetServiceBrowser *)browser didRemoveService:(NSNetService *)service moreComing:(BOOL)moreComing
 {
+	PRINT_ME
 	NSString * identifier = _namesToIdentifiersDict[[service name]];
 	TPRemoteHost * remoteHost = [[TPHostsManager defaultManager] hostWithIdentifier:identifier];
 	
@@ -292,47 +399,16 @@ static TPBonjourController * _defaultBonjourController = nil;
 	}
 	
 	if([recordDict[TPRecordProtocolVersionKey] intValue] == PROTOCOL_VERSION) {
-		NSArray * addresses = [service addresses];
-		DebugLog(@"addresses: %@", addresses);
+		NSString *identifier = [recordDict[TPRecordIDKey] stringValue];
+		NSString *selectedServiceIpAddress = [recordDict[TPRecordSelectedServiceIpAddressKey] stringValue];
+		IpPort *ipPort = [self resolveIpPort:service withSelected:selectedServiceIpAddress];
 
-		if([addresses count] == 0)
+		DebugLog(@"netServiceDidResolveAddress: Id=%@, resolved addr:%@:%d", identifier, ipPort.ipAddress, ipPort.port);
+		if (!ipPort) {
 			return;
-		
-		//NSArray * localAddresses = [[NSHost currentHost] addresses];
-		NSString * ipAddressString = nil;
-		int port = 0;
-		
-		// Iterate through addresses until we find an IPv4 address
-		int index;
-		for(index = 0; index < [addresses count]; index++) {
-			NSData * address = addresses[index];
-			struct sockaddr * socketAddress = (struct sockaddr *)[address bytes];
-			
-			if(socketAddress->sa_family == AF_INET) {
-				if(socketAddress != nil) {
-					char buffer[256];
-					if(inet_ntop(AF_INET, &((struct sockaddr_in *)socketAddress)->sin_addr, buffer, sizeof(buffer))) {
-#if LEGACY_BUILD
-						ipAddressString = [NSString stringWithCString:buffer];
-#else
-						ipAddressString = @(buffer);
-#endif
-						
-						//NSLog(@"ip: %@, local: %@", ipAddressString, localAddresses);
-						port = ntohs(((struct sockaddr_in *)socketAddress)->sin_port);
-					}
-				}				
-			}
-			
-			if(ipAddressString != nil) {
-				break;
-			}
 		}
 		
-		if(ipAddressString == nil)
-			return;
-		
-		TPRemoteHost * remoteHost = [[TPRemoteHost alloc] initWithIdentifier:[recordDict[TPRecordIDKey] stringValue] address:ipAddressString port:port];
+		TPRemoteHost * remoteHost = [[TPRemoteHost alloc] initWithIdentifier:identifier address:ipPort.ipAddress port:ipPort.port];
 		DebugLog(@"remoteHost: %@", remoteHost);
 
 		if([self _updateHost:remoteHost withRecordDict:recordDict]) {
@@ -349,6 +425,7 @@ static TPBonjourController * _defaultBonjourController = nil;
 			
 			if(![remoteHost isEqual:[TPLocalHost localHost]]) {
 				[[TPHostsManager defaultManager] addBonjourHost:remoteHost];
+				pingRemoteAsync(ipPort.ipAddress);
 			}
 			else {
 #if SHOW_LOCALHOST	
@@ -379,6 +456,8 @@ static TPBonjourController * _defaultBonjourController = nil;
 
 - (void)netService:(NSNetService *)service didNotResolve:(NSDictionary *)errorDict
 {
+	DebugLog(@"netServiceDidNotResolve: service: %@, reason: %@", service, errorDict);
+	[self retryResolve:service];
 }
 
 - (void)netService:(NSNetService *)sender didUpdateTXTRecordData:(NSData *)data
@@ -392,15 +471,24 @@ static TPBonjourController * _defaultBonjourController = nil;
 	
 	if([identifier isEqualToString:previousIdentifier]) {
 		TPRemoteHost * host = [[TPHostsManager defaultManager] hostWithIdentifier:identifier];
+		DebugLog(@"netService: sameId=%@, host=%@", identifier, host);
 		if(host != nil) {
 			[self _updateHost:host withRecordDict:recordDict];
 		}
 	}
 	else {
 		TPRemoteHost * remoteHost = [[TPHostsManager defaultManager] hostWithIdentifier:previousIdentifier];
+		NSString * selectedIpAddress = [recordDict[TPRecordSelectedServiceIpAddressKey] stringValue];
+		IpPort *ipPort = [self resolveIpPort:sender withSelected:selectedIpAddress];
+		
+		DebugLog(@"netService: newId=%@, prevId=%@, resolved addr:%@:%d", identifier, previousIdentifier, ipPort.ipAddress, ipPort.port);
+		
+		if (!ipPort) {
+			return;
+		}
 
 		if(remoteHost != nil) {
-			TPRemoteHost * newRemoteHost = [[TPRemoteHost alloc] initWithIdentifier:identifier address:[remoteHost address] port:[remoteHost port]];
+			TPRemoteHost * newRemoteHost = [[TPRemoteHost alloc] initWithIdentifier:identifier address:ipPort.ipAddress port:ipPort.port];
 			
 			if([self _updateHost:newRemoteHost withRecordDict:recordDict]) {
 				[[TPHostsManager defaultManager] removeBonjourHost:remoteHost];
@@ -411,6 +499,57 @@ static TPBonjourController * _defaultBonjourController = nil;
 
 		}
 	}
+}
+
+-(IpPort *)resolveIpPort: (NSNetService *)service withSelected: (NSString *)selectedIpAddress {
+	NSArray * addresses = [service addresses];
+	if([addresses count] == 0)
+		return nil;
+	
+	NSMutableArray *ipPorts = [[NSMutableArray alloc] init];
+	
+	// Iterate through addresses until we find an IPv4 address
+	int index;
+	for(index = 0; index < [addresses count]; index++) {
+		NSData * address = addresses[index];
+		struct sockaddr * socketAddress = (struct sockaddr *)[address bytes];
+		
+		if(socketAddress->sa_family == AF_INET) {
+			if(socketAddress != nil) {
+				char buffer[256];
+				if(inet_ntop(AF_INET, &((struct sockaddr_in *)socketAddress)->sin_addr, buffer, sizeof(buffer))) {
+
+					NSString *ipAddressString = @(buffer);
+					int port = ntohs(((struct sockaddr_in *)socketAddress)->sin_port);
+					
+					IpPort *ipPort = [[IpPort alloc] init];
+					ipPort.ipAddress = ipAddressString;
+					ipPort.port = port;
+					
+					[ipPorts addObject:ipPort];
+				}
+			}
+		}
+	}
+	
+	IpPort *selectedIpPort = nil;
+	for (IpPort *ipPort in ipPorts) {
+		if (selectedIpAddress.length > 0) {
+			if ([ipPort.ipAddress isEqualToString:selectedIpAddress]) {
+				selectedIpPort = ipPort;
+				break;
+			}
+		} else {
+			// prefer 169.xxx.xxx.xxx
+			if (selectedIpPort && [ipPort.ipAddress hasPrefix:@"169."]) {
+				selectedIpPort = ipPort;
+			} else {
+				selectedIpPort = ipPort;
+			}
+		}
+	}
+	
+	return selectedIpPort;
 }
 
 @end

@@ -16,6 +16,8 @@
 #include <IOKit/network/IOEthernetController.h>
 
 #import <SecurityFoundation/SFAuthorization.h>
+#import "TPMainController.h"
+#import "TPNetworkConfigurationWatcher.h"
 
 @interface NSObject (AdminPrivate)
 
@@ -303,7 +305,11 @@
 		interfaceNumber++;
 	}
 	
-	return computerIdentifier; 
+	NSString *ipAddress = [[TPMainController sharedController] networkConfigurationWatcher].selectedLocalIpAddress;
+	if (ipAddress) {
+		return [NSString stringWithFormat:@"%@_%@", computerIdentifier, ipAddress];
+	}
+	return computerIdentifier;
 }
 
 - (void)_executeThreadedScript:(NSAppleScript*)script

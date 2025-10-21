@@ -7,6 +7,15 @@
 //
 
 #import <Cocoa/Cocoa.h>
+#import "common.h"
+
+#define DEBUG_TRANSFERS 0
+
+#if DEBUG_TRANSFERS
+#	define TransferDebugLog(logString, args...) DebugLog(logString , ##args)
+#else
+#	define TransferDebugLog(logString, args...)
+#endif
 
 @class TPTCPSocket;
 @class TPNetworkConnection;

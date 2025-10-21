@@ -17,10 +17,15 @@
 	id _delegate;
 }
 
+@property NSMutableArray<NSString *> *localIpAddresses;
+@property NSString *selectedLocalIpAddress;
+
 - (void)setDelegate:(id)delegate;
 
 - (void)startWatching;
 - (void)stopWatching;
+
+-(void)selectLocalIpAddress: (NSString *)value;
 
 @end
 

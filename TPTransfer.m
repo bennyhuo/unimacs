@@ -129,8 +129,8 @@ NSString * TPTransferShouldEncryptKey = @"TPTransferShouldEncrypt";
 
 - (void)_transferDone
 {
-	DebugLog(@"tranfer %@ done", self);
-	
+	TransferDebugLog(@"tranfer %@ done", self);
+
 	[_lock lock];
 	
 	[_socket setDelegate:nil];
@@ -144,8 +144,7 @@ NSString * TPTransferShouldEncryptKey = @"TPTransferShouldEncrypt";
 
 - (void)_receivedData:(NSData*)data
 {
-	DebugLog(@"%@ _receivedData %@", self, data);
-
+	TransferDebugLog(@"%@ _receivedData %@", self, data);
 }
 
 
@@ -169,25 +168,19 @@ NSString * TPTransferShouldEncryptKey = @"TPTransferShouldEncrypt";
 
 - (void)tcpSocket:(TPTCPSocket*)tcpSocket gotData:(NSData*)data
 {
-#if DEBUG_TRANSFERS
-	DebugLog(@"transfer socket %@ got data (length %d)", tcpSocket, (int)[data length]);
-#endif
+	TransferDebugLog(@"transfer socket %@ got data (length %d)", tcpSocket, (int)[data length]);
 	
 	[self _receivedData:data];
 }
 
 - (void)tcpSocketDidSendData:(TPTCPSocket*)tcpSocket
 {
-#if DEBUG_TRANSFERS
-	DebugLog(@"transfer socket %@ did send data on thread %p", tcpSocket, [NSThread currentThread]);
-#endif
+	TransferDebugLog(@"transfer socket %@ did send data on thread %p", tcpSocket, [NSThread currentThread]);
 }
 
 - (void)tcpSocketConnectionClosed:(TPTCPSocket*)tcpSocket
 {
-#if DEBUG_TRANSFERS
-	DebugLog(@"transfer socket %@ connection closed", tcpSocket);
-#endif
+	TransferDebugLog(@"transfer socket %@ connection closed", tcpSocket);
 }
 
 - (SecIdentityRef)tcpSecureSocketCopyIdentity:(TPTCPSecureSocket*)tcpSocket
@@ -223,9 +216,7 @@ NSString * TPTransferShouldEncryptKey = @"TPTransferShouldEncrypt";
 
 - (BOOL)prepareToSendData
 {
-#if DEBUG_TRANSFERS
-	DebugLog(@"prepareToSendData");
-#endif
+	TransferDebugLog(@"prepareToSendData");
 	
 	NSData * dataToTransfer = [self dataToTransfer];
 	if(dataToTransfer == nil)
@@ -262,9 +253,7 @@ NSString * TPTransferShouldEncryptKey = @"TPTransferShouldEncrypt";
 					lastDate = [[NSDate alloc] init];
 				}
 				
-#if DEBUG_TRANSFERS
-				DebugLog(@"send data of length %d on thread %p", (int)sendRange.length, [NSThread currentThread]);
-#endif
+				TransferDebugLog(@"send data of length %d on thread %p", (int)sendRange.length, [NSThread currentThread]);
 				
 				[_lock lock];
 				NSData * sendData = [_data subdataWithRange:sendRange];
@@ -403,16 +392,25 @@ NSString * TPTransferShouldEncryptKey = @"TPTransferShouldEncrypt";
 
 - (BOOL)_listenOnPort:(int*)port forHost:(TPRemoteHost*)host encrypt:(BOOL)shouldEncrypt
 {
+	BOOL result = YES;
 	if(_listenSocket == nil) {
 		_listenSocket = [[TPTCPSecureSocket alloc] initWithDelegate:self];
 		
 		BOOL enableEncryption = shouldEncrypt && [[TPLocalHost localHost] pairWithHost:host hasCapability:TPHostEncryptionCapability];
 		[_listenSocket setEnableEncryption:enableEncryption];
 		
-		return [_listenSocket listenOnPort:port tries:50];
+		result = [_listenSocket listenOnPort:port tries:50];
+		
+		if (result) {
+			DebugLog(@"transfer %@ _listenOnPort %d for %@, set up successfully.", self, *port, host);
+		} else {
+			DebugLog(@"transfer %@ _listenOnPort %d for %@, set up failed.", self, *port, host);
+		}
 	}
-	else
-		return YES;
+	else {
+		DebugLog(@"transfer %@ _listenOnPort %d for %@, has set up already.", self, *port, host);
+	}
+	return result;
 }
 
 - (void)_stopListening
@@ -436,9 +434,7 @@ NSString * TPTransferShouldEncryptKey = @"TPTransferShouldEncrypt";
 
 - (BOOL)prepareToReceiveDataWithInfoDict:(NSDictionary*)infoDict fromHost:(TPRemoteHost*)host onPort:(int*)port delegate:(id)delegate
 {
-#if DEBUG_TRANSFERS
-	DebugLog(@"prepareToReceiveData");
-#endif
+	TransferDebugLog(@"prepareToReceiveData");
 	
 	_totalDataLength = [infoDict[TPTransferDataLengthKey] longLongValue];
 	_shouldEncrypt = [infoDict[TPTransferShouldEncryptKey] boolValue];
@@ -477,9 +473,7 @@ NSString * TPTransferShouldEncryptKey = @"TPTransferShouldEncrypt";
 
 - (void)_receivedData:(NSData*)data
 {
-#if DEBUG_TRANSFERS
 	DebugLog(@"tranfer %@ receivedData (%d) in thread %@", self, (int)[data length], [NSThread currentThread]);
-#endif
 	
 	unsigned dataLength = [data length];
 	[_lock lock];

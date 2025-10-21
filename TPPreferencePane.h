@@ -26,6 +26,7 @@
 	IBOutlet id showCertificateButton;
 	IBOutlet id chooseCertificateButton;
 	
+	IBOutlet NSPopUpButton *ipAddressSelector;
 	NSWindow * _alertPanel;
 	NSArray * _trustedHosts;
 	BOOL _active;

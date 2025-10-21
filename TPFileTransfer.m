@@ -100,20 +100,20 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 
 - (void)fileArchiver:(TPFileArchiver*)archiver hasDataAvailable:(NSData*)data
 {
-	DebugLog(@"sending data: %d", (int)[data length]);
+	TransferDebugLog(@"sending data: %d", (int)[data length]);
 	_totalDataLength += [data length];
 	[_socket sendData:data];
 }
 
 - (void)tcpSocketDidSendData:(TPTCPSocket*)tcpSocket
 {
-	DebugLog(@"did send");
+	TransferDebugLog(@"did send");
 	[_archiver continueReading];
 }
 
 - (void)fileArchiverDidCompleteReading:(TPFileArchiver*)archiver
 {
-	DebugLog(@"fileArchiverDidCompleteReading: %@", archiver);
+	TransferDebugLog(@"fileArchiverDidCompleteReading: %@", archiver);
 	[self _senderDataTransferCompleted];
 }
 
@@ -190,14 +190,14 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 	if([delegate respondsToSelector:@selector(currentHotBorder)]) {
 		TPHotBorder * hotBorder = [delegate currentHotBorder];
 		if(hotBorder == nil) {
-			DebugLog(@"currentHotBorder is nil!");
+			TransferDebugLog(@"currentHotBorder is nil!");
 			return NO;
 		}
 		
 		if([delegate respondsToSelector:@selector(eventsController)]) {
 			TPEventsController * eventsController = [delegate eventsController];
 			if(eventsController == nil) {
-				DebugLog(@"eventsController is nil!");
+				TransferDebugLog(@"eventsController is nil!");
 				return NO;
 			}
 			
@@ -207,7 +207,7 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 			
 			NSPoint currentPoint = [NSEvent mouseLocation];
 			NSPoint centerPoint = [hotBorder convertBaseToScreen:NSMakePoint(NSMidX([[hotBorder contentView] bounds]), NSMidY([[hotBorder contentView] bounds]))];
-			DebugLog(@"current=%@ center=%@", NSStringFromPoint(currentPoint), NSStringFromPoint(centerPoint));
+			TransferDebugLog(@"current=%@ center=%@", NSStringFromPoint(currentPoint), NSStringFromPoint(centerPoint));
 			centerPoint.y = NSMaxY([[hotBorder screen] frame]) - centerPoint.y;
 			currentPoint.y = NSMaxY([[hotBorder screen] frame]) - currentPoint.y;
 			
@@ -217,7 +217,7 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 			//			CGPostMouseEvent(*(CGPoint*)&currentPoint, TRUE, 1, YES);
 			
 			
-			DebugLog(@"Start drag of files: %@", _representedFiles);
+			TransferDebugLog(@"Start drag of files: %@", _representedFiles);
 			
 #if THREADED_DRAG
 			[NSThread detachNewThreadSelector:@selector(startDragUsingHotBorder:) toTarget:self withObject:hotBorder];
@@ -228,12 +228,12 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 			return [super prepareToReceiveDataWithInfoDict:infoDict fromHost:host onPort:port delegate:delegate];
 		}
 		else {
-			DebugLog(@"delegate does not responds to eventsController!");
+			TransferDebugLog(@"delegate does not responds to eventsController!");
 			return NO;
 		}
 	}
 	else {
-		DebugLog(@"delegate does not responds to currentHotBorder!");
+		TransferDebugLog(@"delegate does not responds to currentHotBorder!");
 		return NO;
 	}
 }
@@ -290,7 +290,7 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 
 - (NSArray *)namesOfPromisedFilesDroppedAtDestination:(NSURL *)dropDestination
 {
-	DebugLog(@"Drop at location: %@", dropDestination);
+	TransferDebugLog(@"Drop at location: %@", dropDestination);
 	
 	return [self _dragEndedAtPath:[dropDestination path]];
 }
@@ -298,7 +298,7 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 - (void)draggedImage:(NSImage *)anImage endedAt:(NSPoint)aPoint operation:(NSDragOperation)operation
 {
 	if(operation == NSDragOperationNone) {
-		DebugLog(@"Drop aborted");
+		TransferDebugLog(@"Drop aborted");
 		[self _dragEndedAtPath:nil];
 	}
 }
@@ -330,7 +330,7 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 			case NSAlertOtherReturn:
 			default:
 				if(![[NSFileManager defaultManager] removeFileAtPath:filePath handler:nil]) {
-					DebugLog(@"couldn't remove file at %@", filePath);
+					TransferDebugLog(@"couldn't remove file at %@", filePath);
 					NSBeep();
 					return nil;
 				}
@@ -352,7 +352,7 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 		if(destPath == nil) continue;
 		
 		NSString * tempPath = [tempDestinationPath stringByAppendingPathComponent:filename];
-		DebugLog(@"move %@ to %@", tempPath, destPath);
+		TransferDebugLog(@"move %@ to %@", tempPath, destPath);
 		[[NSFileManager defaultManager] removeItemAtPath:destPath error:NULL]; // remove placeholder
 		[[NSFileManager defaultManager] moveItemAtPath:tempPath toPath:destPath error:NULL];
 	}
@@ -362,9 +362,9 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 
 - (BOOL)_completeTransferIfPossible
 {
-	DebugLog(@"_completeTransferIfPossible");
+	TransferDebugLog(@"_completeTransferIfPossible");
 	if(_destinationPaths != nil && _unarchiver == nil) {
-		DebugLog(@"YUP!");
+		TransferDebugLog(@"YUP!");
 		[NSThread detachNewThreadSelector:@selector(_putItemsInPlace) toTarget:self withObject:nil];
 		return YES;
 	}
@@ -381,7 +381,7 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 		return nil;
 	}
 	
-	DebugLog(@"drag ended at %@", destinationPath);
+	TransferDebugLog(@"drag ended at %@", destinationPath);
 	_destinationPaths = [[NSMutableDictionary alloc] init];
 	
 	NSMutableArray * filenames = [NSMutableArray array];
@@ -404,7 +404,7 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 		_destinationPaths = nil;
 	}
 	
-	DebugLog(@"destinationPaths: %@", _destinationPaths);
+	TransferDebugLog(@"destinationPaths: %@", _destinationPaths);
 	
 	// If transfer is not complete yet, create placeholder files
 	if(![self _completeTransferIfPossible]) {
@@ -417,7 +417,7 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 			
 			if(path == nil) continue;
 			
-			DebugLog(@"create placeholder at: %@", path);
+			TransferDebugLog(@"create placeholder at: %@", path);
 			
 			[[NSFileManager defaultManager] createFileAtPath:path contents:[NSData data] attributes:nil];
 			
@@ -486,14 +486,14 @@ NSString * TPFileTransferDragImageLocationKey = @"TPFileTransferDragImageLocatio
 
 - (void)_receivedData:(NSData*)data
 {
-	DebugLog(@"received data %ld", [data length]);
+	TransferDebugLog(@"received data %ld", [data length]);
 	_totalDataLength += [data length];
 	[_unarchiver writeData:data];
 }
 
 - (void)_receiverDataTransferCompleted
 {
-	DebugLog(@"file transfer completed");
+	TransferDebugLog(@"file transfer completed");
 	[_unarchiver close];
 	_unarchiver = nil;
 	[self _completeTransferIfPossible];

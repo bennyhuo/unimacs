@@ -109,14 +109,14 @@ static inline BOOL TPTypeNeedsIgnoring(NSString * type)
 	unsigned long long pasteboardSize = 0;
 	while((type = [typeEnum nextObject])) {
 		if(TPTypeNeedsIgnoring(type)) {
-			DebugLog(@"Ignoring type %@", type);
+			TransferDebugLog(@"Ignoring type %@", type);
 			continue;
 		}
 		
 		NSData * data = [pasteboard dataForType:type];
 		if(data != nil) {
 			if(TPTypeNeedsSwapping(type)) {
-				DebugLog(@"Swapping type %@ to BE", type);
+				TransferDebugLog(@"Swapping type %@ to BE", type);
 				CFStringRef string = CFStringCreateFromExternalRepresentation(NULL, (CFDataRef)data, kCFStringEncodingUTF16LE);
 				if(string != NULL) {
 					CFDataRef newData = CFStringCreateExternalRepresentation(NULL, (CFStringRef)string, kCFStringEncodingUTF16BE, '?');
@@ -138,7 +138,7 @@ static inline BOOL TPTypeNeedsIgnoring(NSString * type)
 		return nil;
 	}
 	else if(_maxSize > 0 && pasteboardSize > _maxSize) {
-		DebugLog(@"maxSize=%lld pasteboardSize=%lld", _maxSize, pasteboardSize);
+		TransferDebugLog(@"maxSize=%lld pasteboardSize=%lld", _maxSize, pasteboardSize);
 		return nil;
 	}
 	
@@ -204,7 +204,7 @@ static inline BOOL TPTypeNeedsIgnoring(NSString * type)
 		NSData * data = dictionary[type];
 		
 		if(TPTypeNeedsSwapping(type)) {
-			DebugLog(@"Swapping type %@ from BE", type);
+			TransferDebugLog(@"Swapping type %@ from BE", type);
 			CFStringRef string = CFStringCreateFromExternalRepresentation(NULL, (CFDataRef)data, kCFStringEncodingUTF16BE);
 			if(string != NULL) {
 				CFDataRef newData = CFStringCreateExternalRepresentation(NULL, (CFStringRef)string, kCFStringEncodingUTF16LE, '?');

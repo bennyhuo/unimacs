@@ -11,10 +11,17 @@
 
 #import "TPPreferencesManager.h"
 #import "TPMainController.h"
+#import "TPClientController.h"
 
 #include <Carbon/Carbon.h>
 
-#define DEBUG_EVENTTAP 0
+#define DEBUG_EVENTTAP 1
+#if DEBUG_EVENTTAP
+#	define EventTapDebugLog(logString, args...) DebugLog(logString , ##args)
+#else
+#	define EventTapDebugLog(logString, args...)
+#endif
+
 #define MAX_STRING 20
 
 void CGSSetConnectionProperty(int, int, CFStringRef, CFBooleanRef);
@@ -45,6 +52,24 @@ static const char * eventTypeName[] =
 
 @implementation TPEventTapsController
 
+static void setCursorVisibility(BOOL visible) {
+	static CGError error;
+	if (visible) {
+		error = CGDisplayShowCursor(kCGDirectMainDisplay);
+	} else {
+		error = CGDisplayHideCursor(kCGDirectMainDisplay);
+	}
+
+	if (error != kCGErrorSuccess) {
+		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
+					   dispatch_get_main_queue(), ^{
+			if (error != kCGErrorSuccess) {
+				setCursorVisibility(visible);
+			}
+		});
+	}
+}
+
 + (TPEventsController*)defaultController
 {
 	if(_eventTapsController == nil)
@@ -56,15 +81,30 @@ static CGEventRef eventCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
 {
 	TPEventTapsController * self = (__bridge TPEventTapsController*)refcon;
 	
-#if DEBUG_EVENTTAP
-	NSLog(@"Callback: %@", [TPEventTapsController _eventNameFromType:type]);
-#endif
+	// EventTapDebugLog(@"Callback: %@", [TPEventTapsController _eventNameFromType:type]);
 
-	if(type == kCGEventTapDisabledByTimeout) {
-		[self _startGettingsEvents];
-	}
-	else {
-		[self _sendEventToListener:(__bridge id)event];
+	if(![[TPClientController defaultController] isControlling]) {
+		[self stopGettingEvents];
+		EventTapDebugLog(@"eventCallback, _stopGettingEvents when not controlling. type=%d", type);
+		
+		if(!CGCursorIsVisible()) {
+			EventTapDebugLog(@"eventCallback, cursor is invisible while not controlling. ");
+			setCursorVisibility(YES);
+		}
+	} else {
+		if(type >= kCGEventTapDisabledByTimeout) {
+			[self _startGettingsEvents];
+			EventTapDebugLog(@"eventCallback, _startGettingsEvents again on type=%d", type);
+		}
+		else {
+			[self _sendEventToListener:(__bridge id)event];
+		}
+		
+		// Cursor may be set visible by other Apps or the system itself. If so, make it invisible again.
+		if(CGCursorIsVisible()) {
+			EventTapDebugLog(@"eventCallback, cursor is visible while controlling. ");
+			setCursorVisibility(NO);
+		}
 	}
 	
 	return NULL;
@@ -99,7 +139,7 @@ static CGEventRef eventCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
 	CGSSetConnectionProperty(_CGSDefaultConnection(), _CGSDefaultConnection(), propertyString, kCFBooleanTrue);
 	CFRelease(propertyString);
 	
-	CGDisplayHideCursor(kCGDirectMainDisplay);
+	setCursorVisibility(NO);
 	
 	if(_eventPort == NULL) {
 		CFRunLoopRef runLoop = CFRunLoopGetCurrent();
@@ -159,14 +199,14 @@ static CGEventRef eventCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
 
 - (void)_startGettingsEvents
 {
-	if(_eventPort != NULL) {
+	if(_eventPort != NULL && !CGEventTapIsEnabled(_eventPort)) {
 		CGEventTapEnable(_eventPort, true);
 	}
 }
 
 - (void)_stopGettingEvents
 {
-	if(_eventPort != NULL) {
+	if(_eventPort != NULL && CGEventTapIsEnabled(_eventPort)) {
 		CGEventTapEnable(_eventPort, false);
 	}
 	
@@ -177,7 +217,7 @@ static CGEventRef eventCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
 {
 	[super cleanupGettingEvents];
 		
-	CGDisplayShowCursor(kCGDirectMainDisplay);
+	setCursorVisibility(YES);
 }
 
 
@@ -533,8 +573,6 @@ static CGEventRef eventCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
 - (void)warpMouseToPosition:(NSPoint)position
 {
 	[super warpMouseToPosition:position];
-	
-	DebugLog(@"warp to %@", NSStringFromPoint(position));
 	
 	CGEventSourceStateID sourceState;
 	
