@@ -1,0 +1,501 @@
+// Copyright (c) 2003-2012 abyssoft (Julien Robert) and Teleport contributors
+// Copyright (c) 2025-2026 Benny Huo
+// Migrated to Swift and modified from Teleport.
+// SPDX-License-Identifier: GPL-2.0-only
+
+import Cocoa
+import IOKit.pwr_mgt
+import IOKit
+
+enum TPClientState: Int {
+    case idleState
+    case connectingState
+    case controllingState
+}
+
+private let HOTBORDER_SAFE_MARGIN = 3
+
+@objcMembers
+class TPClientController: TPConnectionController, TPEventsListener, DeviceConnectionDelegate {
+
+	static let shared = TPClientController()
+	
+    private var _state: TPClientState = .idleState
+    private var _hotBorders = [String: TPHotBorder]()
+    private var _sleepNotifier: io_object_t = 0
+    private var _sleepService: io_connect_t = 0
+    private var _sleepNotifyPortRef: IONotificationPortRef?
+    
+    /// Pending control request info for when connection is being established
+    private var _pendingControlRequestInfo: [AnyHashable: Any]?
+    
+    @MainActor
+    override init() {
+        super.init()
+        
+        _hotBorders = [:]
+        _sleepService = 0
+        _state = .idleState
+        
+		TPHost.observe(observer: self, selector: #selector(updateTriggers(_:)), object: nil)
+		TPClipboardTransferCoordinator.shared.start()
+        
+        // Register as delegate with DeviceConnectionManager
+        DeviceConnectionManager.shared.addDelegate(self)
+	}
+
+    
+    @MainActor
+    override func currentHotBorder() -> TPHotBorder? {
+        guard let currentConnection = self.currentConnection else { return nil }
+        guard let host = currentConnection.connectedHost else { return nil }
+        
+        return _hotBorders[host.identifier]
+    }
+    
+	@MainActor
+	private func _updateTriggers(for host: TPRemoteHost, showVisualHint: Bool) {
+		let canControl = TPMainController.shared().canControlHost(withIdentifier: host.identifier)
+		let isOnlineOrControlled = host.isInState([.peeredOnline, .controlled])
+		let shouldEnableTriggers = canControl && isOnlineOrControlled
+		let shouldActivateHotBorder = !host.isInState(.controlled)
+		let identifier = host.identifier
+		
+		debugLog("Trigger: host=\(host.computerName) canControl=\(canControl) online=\(isOnlineOrControlled) wakeable=\(host.wakeable)", module: .control)
+		
+		var hotBorder = _hotBorders[identifier]
+		
+		// Hot border
+		// NOTE: local host may have multiple screens; the hot border must be clipped by the
+		// whole local desktop (union of screens), not a single screen frame.
+		let localDesktopFrame = TPLocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
+		
+		let hasValidRemotePlacement = (host.hostDesktopRect != .zero)
+		
+		if let existingHotBorder = hotBorder, hasValidRemotePlacement {
+			if shouldEnableTriggers {
+				// IMPORTANT: once we allow 1↔N / N↔M mappings, the hot border must be sized from the
+				// full remote desktop rect, not just a single remote screen rect.
+				existingHotBorder.update(withRepresentingRect: host.adjustedHostDesktopRect, in: localDesktopFrame)
+				
+				if shouldActivateHotBorder && existingHotBorder.state == .inactiveState {
+					existingHotBorder.delayedActivate()
+				} else if !shouldActivateHotBorder && existingHotBorder.state != .inactiveState {
+					existingHotBorder.deactivate()
+				}
+			} else {
+				existingHotBorder.deactivate()
+				self.takeDownHotBorder(existingHotBorder)
+				existingHotBorder.close()
+				_hotBorders.removeValue(forKey: identifier)
+			}
+		} else if shouldEnableTriggers {
+			if hasValidRemotePlacement {
+				hotBorder = TPHotBorder(hostId: host.identifier, contentRect: host.adjustedHostDesktopRect, in: localDesktopFrame)
+				hotBorder?.setHotDelegate(self)
+				if let hb = hotBorder {
+					self.setupHotBorder(hb, forHost: host)
+					_hotBorders[identifier] = hb
+					
+					debugLog("HotBorder created: \(hb)", module: .control)
+					
+					if shouldActivateHotBorder {
+						hb.delayedActivate()
+					}
+				}
+			} else {
+				warningLog("Remote placement not ready for host: \(host.computerName)", module: .control)
+			}
+		}
+		
+		if showVisualHint && shouldEnableTriggers && shouldActivateHotBorder && host.isInState(.peeredOnline) && host.previousHostState != .controlled {
+			EdgeAppearanceAnimator.shared.showAppearanceAnimation(for: host)
+		}
+	}
+	
+	@MainActor
+	@objc func updateTriggers(_ notification: Notification) {
+		if let host = notification.object as? TPRemoteHost {
+			self._updateTriggers(for: host, showVisualHint: true)
+		}
+	}
+	
+	@MainActor
+	func updateTriggersAndShowVisualHint(_ showVisualHint: Bool) {
+		let hosts = TPHostsManager.shared.hosts(with: .all)
+		for case let host as TPRemoteHost in hosts {
+			self._updateTriggers(for: host, showVisualHint: showVisualHint)
+		}
+	}
+	
+	@MainActor
+	override func hotBorder(_ hotBorder: TPHotBorder, canFireWithEvent event: NSEvent?) -> Bool {
+		let mainController = NSApp.delegate as? TPMainController
+		if !(mainController?.canControlHost(withIdentifier: hotBorder.hostId) ?? false) {
+			return false
+		}
+		
+		if let applicationsIgnoringTeleport = TPPreferencesManager.shared().value(forPref: APPLICATIONS_DISABLING_TELEPORT) as? [String] {
+			if let currentApplicationIdentifier = NSWorkspace.shared.frontmostApplication?.bundleIdentifier {
+				for ignoringApp in applicationsIgnoringTeleport {
+					if ignoringApp == currentApplicationIdentifier {
+						return false
+					}
+				}
+			}
+		}
+		
+		let remoteHost = TPHostsManager.shared.host(withIdentifier: hotBorder.hostId)
+		let options = remoteHost?.options
+		let requireKey = (options?.value(forKey: REQUIRE_KEY) as? NSNumber)?.boolValue ?? false
+		let keyTag = (options?.value(forKey: SWITCH_KEY_TAG) as? NSNumber)?.intValue ?? 0
+		return TPEventsController.default().event(event, hasRequiredKeyIfNeeded: requireKey, withTag: NSEvent.EventType(rawValue: UInt(keyTag))!)
+	}
+	
+	@MainActor
+	override func hotBorder(_ hotBorder: TPHotBorder, firedAtLocation location: NSPoint) -> Bool {
+		guard let remoteHost = TPHostsManager.shared.host(withIdentifier: hotBorder.hostId) else { return false }
+		
+		if remoteHost.hostState == .peeredOnline {
+			// `location` is window-local. Convert it to a point relative to the *local desktop bounding rect*.
+			let localDesktopRect = TPLocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
+			let localCocoaPoint = hotBorder.screenPoint(fromLocalPoint: location, flipped: false)
+			let desktopRelativeLocation = NSPoint(
+				x: localCocoaPoint.x - localDesktopRect.minX,
+				y: localCocoaPoint.y - localDesktopRect.minY
+			)
+			
+			// Preferred: normalized position within the hot border window.
+			let contentSize = hotBorder.contentView?.bounds.size ?? hotBorder.frame.size
+			let rawRelative = NSPoint(
+				x: contentSize.width > 0 ? (location.x / contentSize.width) : 0,
+				y: contentSize.height > 0 ? (location.y / contentSize.height) : 0
+			)
+			let hotBorderRelativePoint = NSPoint(
+				x: min(max(rawRelative.x, 0), 1),
+				y: min(max(rawRelative.y, 0), 1)
+			)
+			
+			if !self.requestStartControl(on: remoteHost, at: desktopRelativeLocation, hotBorderRelativePoint: hotBorderRelativePoint) {
+				hotBorder.activate()
+			}
+			return super.hotBorder(hotBorder, firedAtLocation: location)
+		}
+		
+		return false
+	}
+	
+	@MainActor
+	func requestStartControl(on remoteHost: TPRemoteHost?, at location: NSPoint, hotBorderRelativePoint: NSPoint?) -> Bool {
+		guard let remoteHost = remoteHost, remoteHost.hostState == .peeredOnline, _state == .idleState else {
+			return false
+		}
+		
+		var infoDict: [AnyHashable: Any] = [
+			TPMousePositionKey: NSData.data(with: location)
+		]
+		if let p = hotBorderRelativePoint {
+			infoDict[TPHotBorderRelativePointKey] = NSData.data(with: p)
+		}
+		
+		// Try to use existing connection from DeviceConnectionManager
+		if let existingConnection = DeviceConnectionManager.shared.connection(for: remoteHost) {
+			self.currentConnection = existingConnection
+			TPClipboardTransferCoordinator.shared.clientWillRequestStartControl()
+			self.sendStartControlRequest(for: existingConnection, withInfoDict: infoDict)
+			return true
+		}
+		
+		// Check if we have a current connection that's still valid
+		if let currentConnection = self.currentConnection {
+			if currentConnection.isValid(for: remoteHost) {
+				TPClipboardTransferCoordinator.shared.clientWillRequestStartControl()
+				self.sendStartControlRequest(for: currentConnection, withInfoDict: infoDict)
+				return true
+			} else {
+				self.currentConnection = nil
+			}
+		}
+		
+		// Need to establish new connection via DeviceConnectionManager
+		// Store the pending request info to use when connection succeeds
+		_pendingControlRequestInfo = infoDict
+		_state = .connectingState
+		
+		TPClipboardTransferCoordinator.shared.clientWillRequestStartControl()
+		DeviceConnectionManager.shared.connect(to: remoteHost)
+		return true
+	}
+	
+	func sendStartControlRequest(for connection: NetworkConnection, withInfoDict infoDict: [AnyHashable: Any]) {
+		guard let controlledHost = connection.connectedHost else { return }
+		
+		let mousePosition = (infoDict[TPMousePositionKey] as? NSData)?.pointValue ?? .zero
+		
+		self.currentConnection = connection
+		
+		// The client desktop can span multiple screens (e.g. vertical stacked displays).
+		// Use the full desktop bounding rect so the return hot border can also span screens.
+		let clientDesktopRect = TPLocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
+		
+		// When the border spans multiple local screens, we must glue the remote host rect to the
+		// *actual* screen the cursor used to enter, otherwise the placement will be shifted and the
+		// cursor may come back on a wrong screen.
+		let entryCocoaPoint = NSPoint(
+			x: clientDesktopRect.minX + mousePosition.x,
+			y: clientDesktopRect.minY + mousePosition.y
+		)
+		let entryLocalScreenIndex = TPLocalHost.shared.screenIndex(containing: entryCocoaPoint) ?? 0
+		let serverDesktopRect = controlledHost.adjustedHostDesktopRect(gluedToLocalScreenIndex: entryLocalScreenIndex)
+		
+		var screenPlacement = clientDesktopRect
+		screenPlacement.origin.x -= serverDesktopRect.minX
+		screenPlacement.origin.y -= serverDesktopRect.minY
+		
+		let clientOptions = self._clientOptions(for: controlledHost)
+		let hotBorderRelativePoint = (infoDict[TPHotBorderRelativePointKey] as? NSData)?.pointValue
+		let message = TPMessage.controlRequestMessage(
+			screenPlacement: screenPlacement,
+			mousePosition: mousePosition,
+			hotBorderRelativePoint: hotBorderRelativePoint,
+			options: clientOptions)
+		// Fire and forget - control request doesn't need to block
+		self.currentConnection?.sendAsync(message)
+	}
+	
+	@MainActor
+	func startControl() {
+		guard let currentConnection = self.currentConnection, let controlledHost = currentConnection.connectedHost else { return }
+		
+		TPStatusItemController.default.update(with: .controlling, host: controlledHost)
+		controlledHost.hostState = .controlled
+		self.updateTriggersAndShowVisualHint(false)
+		
+		if !TPPreferencesManager.shared().bool(forPref: HIDE_CONTROL_BEZEL) {
+			TPBezelController.default().showBezel(withControlledHost: controlledHost)
+		}
+		
+		if TPPreferencesManager.shared().bool(forPref: PLAY_SWITCH_SOUND) {
+			SoundUtils.playSwitchSound()
+		}
+
+		TPClipboardTransferCoordinator.shared.clientDidStartControl(using: currentConnection, remoteHost: controlledHost)
+		
+		self.updateEventsController()
+		self.eventsController?.startGettingEvents(for: self)
+		
+		DisplaySleepAssertion.activate(reason: "startControl")
+		
+		_state = .controllingState
+	}
+	
+	private func _clientOptions(for remoteHost: TPRemoteHost) -> [String: Any] {
+		let optionKeys = [
+			REQUIRE_KEY,
+			SWITCH_KEY_TAG
+		]
+		
+		var clientOptions = [String: Any]()
+		let hostOptions = remoteHost.options
+		
+		for optionKey in optionKeys {
+			var value = hostOptions.value(forKey: optionKey)
+			
+			if optionKey == REQUIRE_KEY {
+				if !TPPreferencesManager.shared().bool(forPref: SYNC_MODIFIERS) {
+					value = false
+				}
+			}
+			
+			if let val = value {
+				clientOptions[optionKey] = val
+			}
+		}
+		
+		return clientOptions
+	}
+	
+	@MainActor
+	func requestedStopControl(withInfoDict infoDict: [AnyHashable: Any]) {
+		guard let currentConnection = self.currentConnection, let controlledHost = currentConnection.connectedHost else { return }
+		
+		// Fire and forget - control stop doesn't need to block
+		currentConnection.sendAsync(TPMessage.create(with: .controlStop))
+		
+		let eventsController = self.eventsController
+		self.stopControl(withDisconnect: DISCONNECT_WHEN_STOP_CONTROL)
+		
+		if let relativeValue = infoDict[TPHotBorderRelativePointKey] as? NSData,
+			let hotBorder = _hotBorders[controlledHost.identifier] {
+			// Preferred: normalized within the hot border window.
+			let rel = relativeValue.pointValue
+			let contentSize = hotBorder.contentView?.bounds.size ?? hotBorder.frame.size
+			let localPoint = NSPoint(x: rel.x * contentSize.width, y: rel.y * contentSize.height)
+			let warpedPoint = hotBorder.screenPoint(fromLocalPoint: localPoint, flipped: true)
+			
+			if hotBorder.state != .inactiveState {
+				hotBorder.deactivate()
+				eventsController?.warpMouse(toPosition: warpedPoint)
+				hotBorder.delayedActivate()
+			} else {
+				eventsController?.warpMouse(toPosition: warpedPoint)
+			}
+		} else if let mouseValue = infoDict[TPMousePositionKey] as? NSData {
+			// Fallback (legacy): `TPMousePositionKey` is relative to the *local desktop bounding rect*.
+			let localDesktopRect = TPLocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
+			let desktopRelative = mouseValue.pointValue
+			let localCocoaPoint = NSPoint(
+				x: localDesktopRect.minX + desktopRelative.x,
+				y: localDesktopRect.minY + desktopRelative.y
+			)
+			let mainMaxY = NSScreen.main?.frame.maxY ?? localDesktopRect.maxY
+			let warpedPoint = NSPoint(
+				x: localCocoaPoint.x,
+				y: mainMaxY - localCocoaPoint.y
+			)
+			
+			if let hotBorder = _hotBorders[controlledHost.identifier], hotBorder.state != .inactiveState {
+				hotBorder.deactivate()
+				eventsController?.warpMouse(toPosition: warpedPoint)
+				hotBorder.delayedActivate()
+			} else {
+				eventsController?.warpMouse(toPosition: warpedPoint)
+			}
+		}
+		
+		self.eventsController?.cleanupGettingEvents()
+	}
+	
+	override func stopControl() {
+		super.stopControl()
+		self.eventsController?.cleanupGettingEvents()
+	}
+	
+	@MainActor
+	override func stopControl(withDisconnect disconnect: Bool) {
+		if _state == .controllingState {
+			TPClipboardTransferCoordinator.shared.clientDidStopControl()
+			TPMainController.shared().leaveFrontmost()
+			TPBezelController.default().hideBezel()
+			TPStatusItemController.default.update(with: .idle, host: nil)
+			self.currentConnection?.connectedHost?.hostState = .peeredOnline
+			DisplaySleepAssertion.deactivate()
+			
+			if TPPreferencesManager.shared().bool(forPref: PLAY_SWITCH_SOUND) {
+				SoundUtils.playSwitchSound()
+			}
+		}
+		
+		_state = .idleState
+		self.updateTriggersAndShowVisualHint(false)
+		super.stopControl(withDisconnect: disconnect)
+	}
+	
+	var isControlling: Bool {
+		return _state == .controllingState
+	}
+	
+	func gotEvent(withEventData eventData: Data) {
+		// Events 
+		self.currentConnection?.send(TPMessage.create(with: .event, andData: eventData))
+	}
+	
+	@MainActor
+	func gotEmergencyStopEvent() {
+		self.stopControl()
+	}
+	
+	@MainActor
+	func shouldStop(with event: NSEvent) -> Bool {
+		return false
+	}
+	
+    // MARK: - DeviceConnectionDelegate
+    
+    @MainActor
+    func connectionDidEstablish(to host: TPRemoteHost, connection: NetworkConnection) {
+        // If we're in connecting state and have pending control request, send it
+        if _state == .connectingState, let infoDict = _pendingControlRequestInfo {
+            self.currentConnection = connection
+            self.sendStartControlRequest(for: connection, withInfoDict: infoDict)
+            _pendingControlRequestInfo = nil
+        }
+    }
+    
+    @MainActor
+    func connectionDidDisconnect(from host: TPRemoteHost) {
+        // If this was our current connection, handle disconnection
+        if let currentHost = self.currentConnection?.connectedHost,
+           currentHost.identifier == host.identifier {
+            if _state == .controllingState {
+                self.stopControl(withDisconnect: false)
+            }
+            self.currentConnection = nil
+        }
+    }
+    
+    @MainActor
+    func connectionDidFail(to host: TPRemoteHost) {
+        if _state == .connectingState {
+            _pendingControlRequestInfo = nil
+            
+            let msgTitle = String(format: NSLocalizedString("Connection to \"%@\" failed.", comment: "Title for connection failure"), host.computerName)
+            let alert = NSAlert()
+            alert.messageText = msgTitle
+            alert.addButton(withTitle: NSLocalizedString("OK", comment: ""))
+            alert.informativeText = NSLocalizedString("The server may be down, or an encryption problem may have occured. If encryption is enabled, please check that the certificate algorithms match.", comment: "")
+            (NSApp.delegate as? TPMainController)?.present(alert)
+            
+            self.updateTriggersAndShowVisualHint(false)
+            _state = .idleState
+        } else {
+            if host.isInState([.peeredOffline, .peeredOnline]) {
+                WakeOnLan.wakeUpHost(with: host.macAddresses)
+            }
+        }
+    }
+    
+    @MainActor
+    func handleMessage(_ message: TPMessage, from host: TPRemoteHost, connection: NetworkConnection) -> Bool {
+        let type = message.msgType
+        
+        // Only handle control-related messages for our current connection
+        guard self.currentConnection === connection || 
+              self.currentConnection?.connectedHost?.identifier == host.identifier else {
+            return false
+        }
+        
+        switch type {
+        case .controlSuccess:
+            self.currentConnection = connection
+            self.startControl()
+            return true
+        case .controlFailure:
+            if let controlledHost = connection.connectedHost {
+                controlledHost.hostState = .shared
+                
+                let msgTitle = String(format: NSLocalizedString("Host \"%@\" rejected control.", comment: "Title for control failure"), controlledHost.computerName)
+                let alert = NSAlert()
+                alert.messageText = msgTitle
+                alert.addButton(withTitle: NSLocalizedString("Yes", comment: ""))
+                alert.addButton(withTitle: NSLocalizedString("No", comment: ""))
+                alert.informativeText = NSLocalizedString("The host has probably removed this Mac from its trusted hosts list. Do you want to ask for trust again?", comment: "")
+                
+                let result = TPMainController.shared().present(alert)
+                if result == NSApplication.ModalResponse.alertFirstButtonReturn {
+                    if let freshHost = TPHostsManager.shared.host(withIdentifier: controlledHost.identifier) {
+                        TPAuthenticationManager.default.requestAuthentication(on: freshHost)
+                    }
+                }
+            }
+            return true
+        case .controlStop:
+            self.requestedStopControl(withInfoDict: message.infoDict)
+            return true
+        default:
+            // Let parent class handle transfer-related messages
+            super.connection(connection, receivedMessage: message)
+            return true
+        }
+    }
+}

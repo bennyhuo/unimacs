@@ -1,0 +1,11 @@
+// Copyright (c) 2003-2012 abyssoft (Julien Robert) and Teleport contributors
+// Copyright (c) 2025-2026 Benny Huo
+// Migrated to Swift and modified from Teleport.
+// SPDX-License-Identifier: GPL-2.0-only
+
+import Foundation
+import AppKit
+
+extension NSWindow.Level {
+	static let maxLevel = NSWindow.Level(Int(INT32_MAX - kCGNumReservedWindowLevels))
+}

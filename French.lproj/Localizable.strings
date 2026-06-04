@@ -70,9 +70,6 @@
 /* No comment provided by engineer. */
 "Don't show again" = "Ne plus afficher";
 
-/* No comment provided by engineer. */
-"Drag & Drop files" = "Glisser-déposer des fichiers";
-
 /* Button title */
 "Enable" = "Activer";
 
@@ -138,9 +135,6 @@
 
 /* No comment provided by engineer. */
 "Share this Mac" = "Partager ce Mac";
-
-/* No comment provided by engineer. */
-"Synchronize pasteboard" = "Synchroniser le presse-papier";
 
 /* No comment provided by engineer. */
 "teleport %@ is now available.\n%@\n\nWould you like to download the new version now?" = "teleport %1$@ est maintenant disponible.\n%2$@\n\nVoulez-vous télécharger la nouvelle version maintenant?";
