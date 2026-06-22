@@ -288,6 +288,8 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
 
 	private var mode: Mode = .idleRecording
 	private var pasteboardDirtySinceBaseline: Bool = false
+	/// Pasteboard snapshot at control-session boundaries; used when polling misses a copy.
+	private var sessionBaselineHash: PasteboardContentHash?
     
     // Performance optimization
     private var lastTransferHash: PasteboardContentHash?
@@ -304,6 +306,7 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
 
 	func resetBaselineAndStartRecording() {
 		pasteboardDirtySinceBaseline = false
+		sessionBaselineHash = nil
 		mode = .idleRecording
         
         // Clear history when resetting to avoid false positives
@@ -337,21 +340,28 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
 
 	func clientWillRequestStartControl() {
 		mode = .connectingToControl
+		sessionBaselineHash = PasteboardContentHash(from: NSPasteboard.general)
 	}
 
 	func clientDidStartControl(using connection: NetworkConnection, remoteHost: TPRemoteHost) {
 		mode = .controllingRemote
-
-		guard pasteboardDirtySinceBaseline else { 
-            return 
-        }
-
-		sendPasteboardIfNeeded(using: connection)
-		pasteboardDirtySinceBaseline = false
+		schedulePasteboardSendIfNeeded(using: connection)
 	}
 
 	func clientDidStopControl() {
 		resetBaselineAndStartRecording()
+	}
+
+	/// Called after an incoming (remote) pasteboard has been written to a local pasteboard.
+	/// Writing a remote clipboard is not a local user change, so we re-baseline against the
+	/// just-written content. Without this, the next stop/start boundary sees the synced content
+	/// as "dirty" and echoes it straight back to the sender (clipboard round-trip bug).
+	func didApplyIncomingPasteboard() {
+		let hash = PasteboardContentHash(from: NSPasteboard.general)
+		sessionBaselineHash = hash
+		lastTransferHash = hash
+		pasteboardDirtySinceBaseline = false
+		PasteboardMonitor.shared.clearHistory()
 	}
 
 	// MARK: - Server side (this Mac is controlled by remote)
@@ -359,19 +369,59 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
 	func serverDidStartBeingControlled() {
 		mode = .controlledByRemote
 		pasteboardDirtySinceBaseline = false
+		sessionBaselineHash = PasteboardContentHash(from: NSPasteboard.general)
+	}
+
+	/// Called when the server initiates stop (hot border). Matches legacy `beginTransfers` before `controlStop`.
+	func serverRequestStopControl(using connection: NetworkConnection) {
+		sendPasteboardOnStopIfNeeded(using: connection)
 	}
 
 	func serverWillStopBeingControlled(using connection: NetworkConnection) {
-		defer { resetBaselineAndStartRecording() }
-
-		guard pasteboardDirtySinceBaseline else { 
-            return 
-        }
-
-		sendPasteboardIfNeeded(using: connection)
+		sendPasteboardOnStopIfNeeded(using: connection)
+		resetBaselineAndStartRecording()
 	}
 
 	// MARK: - Transfer building
+
+	private func schedulePasteboardSendIfNeeded(using connection: NetworkConnection) {
+		guard shouldSendPasteboardSinceSessionBaseline() else { return }
+		debugLog("Scheduling start pasteboard send", module: .clipboard)
+		// Yield so event-tap setup in the same run-loop turn can finish first.
+		DispatchQueue.main.async { [weak self] in
+			guard let self else { return }
+			guard self.mode == .controllingRemote else { return }
+			guard self.shouldSendPasteboardSinceSessionBaseline() else { return }
+			self.sendPasteboardIfNeeded(using: connection)
+			self.pasteboardDirtySinceBaseline = false
+			self.sessionBaselineHash = PasteboardContentHash(from: NSPasteboard.general)
+		}
+	}
+
+	private func sendPasteboardOnStopIfNeeded(using connection: NetworkConnection) {
+		guard mode == .controlledByRemote else { return }
+		// Stop-time sync must not rely on dirty polling alone: compare against the session
+		// baseline captured in serverDidStartBeingControlled (legacy beginTransfers read live pasteboard).
+		guard shouldSendPasteboardSinceSessionBaseline() else {
+			debugLog("Skip stop pasteboard send: unchanged since session baseline", module: .clipboard)
+			return
+		}
+		debugLog("Sending pasteboard on stop control", module: .clipboard)
+		sendPasteboardIfNeeded(using: connection)
+		pasteboardDirtySinceBaseline = false
+		sessionBaselineHash = PasteboardContentHash(from: NSPasteboard.general)
+	}
+
+	private func shouldSendPasteboardSinceSessionBaseline() -> Bool {
+		if pasteboardDirtySinceBaseline {
+			return true
+		}
+		let current = PasteboardContentHash(from: NSPasteboard.general)
+		if let baseline = sessionBaselineHash, current != baseline {
+			return true
+		}
+		return false
+	}
 
 	private func sendPasteboardIfNeeded(using connection: NetworkConnection) {
 		let pasteboard = NSPasteboard.general

@@ -6,6 +6,16 @@
 
 import Foundation
 
+// MARK: - Link Phase (UI / reachability)
+
+enum DeviceLinkPhase: Equatable {
+    case connected
+    case connecting
+    case reconnecting
+    case disconnected
+    case unavailable
+}
+
 // MARK: - DeviceConnectionDelegate Protocol
 
 /// Delegate protocol for receiving connection events from DeviceConnectionManager
@@ -64,15 +74,17 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     private var reconnectRetryCount: [String: Int] = [:]
     /// Reconnect timers for each host
     private var reconnectTimers: [String: Timer] = [:]
+    /// Scheduled wall-clock time for the next reconnect attempt
+    private var reconnectNextRetryAt: [String: Date] = [:]
+    /// Outbound connect in flight (awaiting TCP handshake / identification)
+    private var connectingHosts: Set<String> = []
     /// Hosts that were manually disconnected (should not auto-reconnect)
     private var manuallyDisconnectedHosts: Set<String> = []
     
-    /// Maximum number of reconnect attempts
+    /// Base delay for automatic reconnection (seconds); doubles each attempt.
+    private let baseReconnectDelay: TimeInterval = 5.0
+    /// Maximum automatic reconnection attempts before giving up until manual Connect.
     private let maxReconnectAttempts = 5
-    /// Base delay for reconnection (seconds)
-    private let baseReconnectDelay: TimeInterval = 2.0
-    /// Maximum delay for reconnection (seconds)
-    private let maxReconnectDelay: TimeInterval = 30.0
     
     /// Whether the server is currently listening for incoming connections
     private(set) var isListening: Bool = false
@@ -174,6 +186,47 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         }
         return false
     }
+
+    func linkPhase(for host: TPRemoteHost) -> DeviceLinkPhase {
+        let hostId = host.identifier
+        
+        if isConnected(to: host) {
+            return .connected
+        }
+        if manuallyDisconnectedHosts.contains(hostId) {
+            return .disconnected
+        }
+        if connectingHosts.contains(hostId) {
+            return .connecting
+        }
+        if reconnectTimers[hostId] != nil || reconnectingHosts.contains(hostId) {
+            return .reconnecting
+        }
+        return .unavailable
+    }
+    
+    func reconnectSecondsRemaining(for host: TPRemoteHost) -> Int? {
+        guard let retryAt = reconnectNextRetryAt[host.identifier] else { return nil }
+        return max(0, Int(ceil(retryAt.timeIntervalSinceNow)))
+    }
+    
+    func isManuallyDisconnected(_ host: TPRemoteHost) -> Bool {
+        manuallyDisconnectedHosts.contains(host.identifier)
+    }
+
+    /// Bonjour may drop while a persistent TCP link to a paired host is still up (e.g. server locked).
+    func isReachableForControl(_ host: TPRemoteHost) -> Bool {
+        // A live persistent TCP link is the source of truth for control reachability. Bonjour state
+        // (peeredOnline/offline) churns on flaky/link-local networks; relying on it tore the hot
+        // border down even though the connection was healthy.
+        if isConnected(to: host) {
+            return true
+        }
+        if host.isInState(.peeredOnline) {
+            return true
+        }
+        return false
+    }
     
     /// Get connection for a specific host
     /// Returns nil if connection doesn't exist or socket is not connected
@@ -193,6 +246,12 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     
     /// Get connection for a specific host identifier
     /// Returns nil if connection doesn't exist or socket is not connected
+    /// Whether this connection is owned by the persistent connection pool (must not be closed by control session teardown).
+    func managesConnection(_ connection: NetworkConnection) -> Bool {
+        guard let hostId = connection.connectedHost?.identifier else { return false }
+        return connections[hostId] === connection
+    }
+
     func connection(forHostId hostId: String) -> NetworkConnection? {
         guard let connection = connections[hostId] else { return nil }
         
@@ -306,24 +365,79 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     }
     
     // MARK: - Connect (Client Mode)
-    
-    func connect(to host: TPRemoteHost) {
-        guard !isConnected(to: host) else { return }
-        guard host.isInState(.peeredOnline) else { return }
-        
-        // Clear manual disconnect flag when user initiates connection
-        manuallyDisconnectedHosts.remove(host.identifier)
-        
-        // Establish connection
-        let success = TPConnectionsManager.shared.connect(
-            toHost: host,
-            withDelegate: self,
-            infoDict: ["persistent": true]
-        )
-        
-        if success {
-            NSLog("DeviceConnectionManager: Connecting to \(host.computerName)")
+
+    /// When "Share this Mac" is on, this machine listens only and waits for peers to connect in.
+    private func shouldInitiateOutboundConnection() -> Bool {
+        !TPServerController.shared.allowControl
+    }
+
+    /// Whether a paired host is eligible for an outbound persistent connection attempt.
+    private func isConnectable(_ host: TPRemoteHost) -> Bool {
+        if host.isInState(.peeredOnline) {
+            return true
         }
+        if host.isInState(.peeredOffline), let address = host.address, !address.isEmpty, host.port > 0 {
+            return true
+        }
+        return false
+    }
+
+    /// Promote an established socket (e.g. after pairing) into the persistent connection pool.
+    func adoptConnection(_ connection: NetworkConnection) {
+        guard let host = connection.connectedHost else { return }
+        guard !isConnected(to: host) else {
+            connection.disconnect()
+            return
+        }
+        connection.delegate = self
+        registerConnection(connection, for: host)
+        NSLog("DeviceConnectionManager: Adopted connection to \(host.computerName)")
+    }
+    
+    private func beginOutboundConnect(to host: TPRemoteHost) {
+        let hostId = host.identifier
+        manuallyDisconnectedHosts.remove(hostId)
+        reconnectTimers[hostId]?.invalidate()
+        reconnectTimers.removeValue(forKey: hostId)
+        reconnectNextRetryAt.removeValue(forKey: hostId)
+        reconnectingHosts.remove(hostId)
+        connectingHosts.insert(hostId)
+        NSLog("DeviceConnectionManager: Connecting to \(host.computerName)")
+        notifyReachabilityChanged(for: host)
+    }
+
+    @discardableResult
+    func connect(to host: TPRemoteHost, resetRetryBudget: Bool = false) -> Bool {
+        guard !isConnected(to: host) else { return true }
+        guard isConnectable(host) else { return false }
+        guard shouldInitiateOutboundConnection() else {
+            debugLog("Skipping outbound connect to \(host.computerName) while sharing (waiting for peer)", module: .network)
+            return false
+        }
+
+        let hostId = host.identifier
+        if connectingHosts.contains(hostId) {
+            return true
+        }
+
+        if resetRetryBudget {
+            reconnectRetryCount.removeValue(forKey: hostId)
+        }
+
+        beginOutboundConnect(to: host)
+
+        Task { @MainActor in
+            let success = TPConnectionsManager.shared.connect(
+                toHost: host,
+                withDelegate: DeviceConnectionManager.shared,
+                infoDict: ["persistent": true]
+            )
+            if !success {
+                connectingHosts.remove(hostId)
+                scheduleReconnect(for: hostId)
+            }
+        }
+        return true
     }
     
     func disconnect(from host: TPRemoteHost) {
@@ -353,10 +467,19 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         )
         
         NSLog("DeviceConnectionManager: Disconnected from \(host.computerName)")
+        notifyReachabilityChanged(for: host)
     }
     
     /// Disconnect all connections and stop listening
     func disconnectAll() {
+        let hostIdsToReconnect = connections.keys.filter { hostId in
+            guard !manuallyDisconnectedHosts.contains(hostId) else { return false }
+            guard let host = connections[hostId]?.connectedHost
+                ?? TPHostsManager.shared.host(withIdentifier: hostId) else { return false }
+            return host.isInState(.peered)
+        }
+        connectingHosts.removeAll()
+
         // Disconnect all connections
         for (hostId, connection) in connections {
             stopKeepAlive(for: hostId)
@@ -379,15 +502,23 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         NSLog("DeviceConnectionManager: Disconnected all connections")
 		
 		TPConnectionsManager.shared.reset()
+
+        for hostId in hostIdsToReconnect {
+            reconnectRetryCount.removeValue(forKey: hostId)
+            scheduleReconnect(for: hostId)
+        }
     }
     
     // MARK: - Auto-Connect
     
     func autoConnectPairedDevices() {
-        let peeredOnlineHosts = TPHostsManager.shared.hosts(with: .peeredOnline) as? [TPRemoteHost] ?? []
+        let peeredHosts = TPHostsManager.shared.hosts(with: .peered) as? [TPRemoteHost] ?? []
         
-        for host in peeredOnlineHosts {
-            if !isConnected(to: host) {
+        for host in peeredHosts {
+            let hostId = host.identifier
+            if !isConnected(to: host),
+               isConnectable(host),
+               !hasExhaustedReconnectAttempts(for: hostId) {
                 connect(to: host)
             }
         }
@@ -402,25 +533,27 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
             NSLog("DeviceConnectionManager: Skipping reconnect for \(hostId) - manually disconnected")
             return
         }
+
+        guard shouldInitiateOutboundConnection() else {
+            debugLog("Skipping reconnect schedule for \(hostId) while sharing (waiting for peer)", module: .network)
+            return
+        }
         
-        // Check if we've exceeded max attempts
         let currentRetry = reconnectRetryCount[hostId] ?? 0
+
         guard currentRetry < maxReconnectAttempts else {
-            NSLog("DeviceConnectionManager: Max reconnect attempts reached for \(hostId)")
-            cleanupReconnectState(for: hostId)
+            stopReconnectAfterMaxAttempts(for: hostId)
             return
         }
-        
-        // Check if host is still online
+
         guard let host = TPHostsManager.shared.host(withIdentifier: hostId),
-              host.isInState(.peeredOnline) else {
-            NSLog("DeviceConnectionManager: Host \(hostId) is offline, skipping reconnect")
+              isConnectable(host) else {
+            NSLog("DeviceConnectionManager: Host \(hostId) is not connectable, pausing reconnect")
             cleanupReconnectState(for: hostId)
             return
         }
         
-        // Calculate delay with exponential backoff
-        let delay = min(baseReconnectDelay * pow(2.0, Double(currentRetry)), maxReconnectDelay)
+        let delay = baseReconnectDelay * pow(2.0, Double(currentRetry))
         
         NSLog("DeviceConnectionManager: Scheduling reconnect for \(host.computerName) in \(delay)s (attempt \(currentRetry + 1)/\(maxReconnectAttempts))")
         
@@ -429,6 +562,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         
         // Cancel existing timer if any
         reconnectTimers[hostId]?.invalidate()
+        reconnectNextRetryAt[hostId] = Date().addingTimeInterval(delay)
         
         // Schedule reconnection
         let timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
@@ -437,6 +571,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
             }
         }
         reconnectTimers[hostId] = timer
+        notifyReachabilityChanged(for: host)
     }
     
     /// Attempt to reconnect to the given host
@@ -453,28 +588,14 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
             return
         }
         
-        guard host.isInState(.peeredOnline) else {
-            NSLog("DeviceConnectionManager: Host \(host.computerName) is offline, canceling reconnect")
+        guard isConnectable(host) else {
+            NSLog("DeviceConnectionManager: Host \(host.computerName) is not connectable, canceling reconnect")
             cleanupReconnectState(for: hostId)
             return
         }
         
         NSLog("DeviceConnectionManager: Attempting reconnect to \(host.computerName)")
-        
-        // Clear the timer reference since we're executing
-        reconnectTimers.removeValue(forKey: hostId)
-        
-        // Try to connect
-        let success = TPConnectionsManager.shared.connect(
-            toHost: host,
-            withDelegate: self,
-            infoDict: ["persistent": true, "reconnect": true]
-        )
-        
-        if !success {
-            // Schedule another attempt
-            scheduleReconnect(for: hostId)
-        }
+        _ = connect(to: host)
     }
     
     /// Cancel pending reconnection for a host
@@ -484,12 +605,35 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         cleanupReconnectState(for: hostId)
     }
     
+    private func hasExhaustedReconnectAttempts(for hostId: String) -> Bool {
+        (reconnectRetryCount[hostId] ?? 0) >= maxReconnectAttempts
+    }
+
+    /// Stop automatic reconnect after the retry budget is used up; manual Connect resets the counter.
+    private func stopReconnectAfterMaxAttempts(for hostId: String) {
+        guard let host = TPHostsManager.shared.host(withIdentifier: hostId) else {
+            cleanupReconnectState(for: hostId)
+            return
+        }
+        NSLog("DeviceConnectionManager: Max reconnect attempts (\(maxReconnectAttempts)) reached for \(host.computerName)")
+        reconnectingHosts.remove(hostId)
+        reconnectTimers[hostId]?.invalidate()
+        reconnectTimers.removeValue(forKey: hostId)
+        reconnectNextRetryAt.removeValue(forKey: hostId)
+        connectingHosts.remove(hostId)
+        reconnectRetryCount[hostId] = maxReconnectAttempts
+        notifyReachabilityChanged(for: host)
+    }
+
     /// Clean up reconnection state for a host
     private func cleanupReconnectState(for hostId: String) {
         reconnectingHosts.remove(hostId)
         reconnectRetryCount.removeValue(forKey: hostId)
         reconnectTimers[hostId]?.invalidate()
         reconnectTimers.removeValue(forKey: hostId)
+        reconnectNextRetryAt.removeValue(forKey: hostId)
+        connectingHosts.remove(hostId)
+        notifyReachabilityChanged(for: TPHostsManager.shared.host(withIdentifier: hostId))
     }
     
     /// Reset reconnection state after successful connection
@@ -498,6 +642,15 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         reconnectRetryCount.removeValue(forKey: hostId)
         reconnectTimers[hostId]?.invalidate()
         reconnectTimers.removeValue(forKey: hostId)
+        reconnectNextRetryAt.removeValue(forKey: hostId)
+        connectingHosts.remove(hostId)
+    }
+    
+    private func notifyReachabilityChanged(for host: TPRemoteHost?) {
+        NotificationCenter.default.post(
+            name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+            object: host
+        )
     }
     
     // MARK: - Keep-Alive
@@ -567,6 +720,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         )
         
         NSLog("DeviceConnectionManager: Registered connection to \(host.computerName)")
+        notifyReachabilityChanged(for: host)
     }
     
     /// Handle connection disconnection
@@ -609,6 +763,7 @@ extension DeviceConnectionManager: TPClientConnectionsDelegate {
         Task { @MainActor in
             connections.removeValue(forKey: host.identifier)
             connectedHosts.remove(host.identifier)
+            connectingHosts.remove(host.identifier)
             
             NSLog("DeviceConnectionManager: Connection failed to \(host.computerName)")
             

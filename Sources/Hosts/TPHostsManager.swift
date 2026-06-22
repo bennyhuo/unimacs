@@ -49,6 +49,9 @@ class TPHostsManager: NSObject {
                         break
                     case .peeredOffline, .peeredOnline, .controlled:
                         newHost.hostState = .peeredOffline
+						if newHost.port == 0 {
+							newHost.port = Int(TPPreferencesManager.shared().port(forPref: COMMAND_PORT))
+						}
                         _hosts[newHost.identifier] = newHost
                     default:
                         break
@@ -77,6 +80,11 @@ class TPHostsManager: NSObject {
         var shouldNotify = true
 
         if let knownHost = knownHost {
+            if DeviceConnectionManager.shared.isConnected(to: knownHost) {
+                debugLog("Bonjour service removed for \(knownHost.computerName) but persistent TCP is still up; keeping online state", module: .network)
+                return
+            }
+
             let state = knownHost.hostState
 
             switch state {
@@ -112,9 +120,16 @@ class TPHostsManager: NSObject {
             if bonjourHost.address != nil {
                 let state = knownHost.hostState
 
+				// Refresh cached reachability from Bonjour; live TCP is not torn down on address change.
                 knownHost.address = bonjourHost.address
                 knownHost.port = bonjourHost.port
-                knownHost.screens = bonjourHost.screens
+                // A Bonjour TXT record may omit/truncate the screens field (TXT size limits,
+                // multi-monitor hosts). Never overwrite authoritative screen geometry obtained
+                // in-band (via identification) with an empty Bonjour value, or the host's
+                // desktop rect collapses to .zero and its hot border can never be created.
+                if !bonjourHost.screens.isEmpty {
+                    knownHost.screens = bonjourHost.screens
+                }
 
                 switch state {
                 case []:
@@ -159,6 +174,16 @@ class TPHostsManager: NSObject {
             knownHost.capabilities = host.capabilities
 			knownHost.macAddresses = host.macAddresses
             knownHost.osVersion = host.osVersion
+			if let address = host.address, !address.isEmpty {
+				knownHost.address = address
+			}
+			if host.port > 0 {
+				knownHost.port = host.port
+			}
+			if !host.screens.isEmpty {
+				knownHost.screens = host.screens
+			}
+			knownHost.notifyChange()
 
             return knownHost
         } else {

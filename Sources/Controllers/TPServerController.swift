@@ -21,6 +21,8 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
     private var switchOptions: [AnyHashable: Any]?
 	/// Client desktop placement in *server* global coordinates. Used to map cross-screen border locations.
 	private var clientDesktopPlacementInServerCoords: NSRect?
+	/// Avoid spamming controlStop while the cursor stays inside the return hot border on a locked screen.
+	private var wasInsideReturnHotBorderWhileLocked = false
     
 	static let shared = TPServerController()
     
@@ -105,7 +107,7 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
 	func requestedStartControl(by host: TPRemoteHost, on connection: NetworkConnection, with data: ControlRequestBody) {
         let connectionIsCurrent = (connection === self.currentConnection)
         
-		if !(NSApp.delegate as! TPMainController).canBeControlledByHost(withIdentifier: host.identifier) {
+		if !TPMainController.shared().canBeControlledByHost(withIdentifier: host.identifier) {
 			// Fire and forget - failure response
 			connection.sendAsync(TPMessage.create(with: .controlFailure, andInfoDict: ["reason": NSLocalizedString("Host not controllable.", comment: "Reason for control failure")]))
             if connectionIsCurrent {
@@ -137,6 +139,7 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
 	@MainActor
 	func startControl(with data: ControlRequestBody) {
         self.state = .controlled
+        wasInsideReturnHotBorderWhileLocked = false
         
 		let host = self.currentConnection!.connectedHost!
         
@@ -222,6 +225,30 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
     
     // MARK: - Stop control
     
+	/// Lock-screen fallback: hot borders do not receive mouseEntered, so detect border entry by cursor position.
+	@MainActor
+	func handleLockedReturnHotBorder(at globalCocoaPoint: NSPoint) {
+		guard state == .controlled, let border = clientHotBorder else {
+			wasInsideReturnHotBorderWhileLocked = false
+			return
+		}
+		
+		let inside = border.frame.contains(globalCocoaPoint)
+		if !inside {
+			wasInsideReturnHotBorderWhileLocked = false
+			return
+		}
+		guard !wasInsideReturnHotBorderWhileLocked else { return }
+		wasInsideReturnHotBorderWhileLocked = true
+		
+		let localLocation = NSPoint(
+			x: globalCocoaPoint.x - border.frame.minX,
+			y: globalCocoaPoint.y - border.frame.minY
+		)
+		debugLog("Locked-screen return hot border hit at \(localLocation), requesting client stop", module: .control)
+		requestStopControl(at: localLocation)
+	}
+    
 	@MainActor func requestStopControl(at location: NSPoint) {
 		// Only send serializable cursor / hot-border position info in the controlStop message.
 		var messageInfoDict: [AnyHashable: Any] = [:]
@@ -251,6 +278,10 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
 			messageInfoDict[TPMousePositionKey] = NSData.data(with: location)
 		}
 		
+		if state == .controlled, let connection = currentConnection {
+			TPClipboardTransferCoordinator.shared.serverRequestStopControl(using: connection)
+		}
+		
 		let message = TPMessage.create(with: .controlStop, andInfoDict: messageInfoDict)
 		// Fire and forget - control stop should not block
 		self.currentConnection?.sendAsync(message)
@@ -266,6 +297,7 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
         
         if state == .controlled {
             state = .shared
+            wasInsideReturnHotBorderWhileLocked = false
             
             if TPPreferencesManager.shared().bool(forPref: WRAP_ON_STOP_CONTROL) {
                 self.eventsController?.warpMouseToCenter()
@@ -296,14 +328,11 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
     
     @MainActor
     func connectionDidDisconnect(from host: TPRemoteHost) {
-        // If this was our controlling client, stop control
-        if let currentHost = self.currentConnection?.connectedHost,
-           currentHost.identifier == host.identifier {
-            if state == .controlled {
-                self.stopControl(withDisconnect: false)
-            }
-            self.currentConnection = nil
+        guard currentConnection?.connectedHost?.identifier == host.identifier else { return }
+        if state == .controlled {
+            stopControl(withDisconnect: false)
         }
+        currentConnection = nil
     }
     
     @MainActor
@@ -346,9 +375,13 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
             }
             return false
         default:
-            // Let parent class handle transfer-related messages
-            super.connection(connection, receivedMessage: message)
-            return true
+            switch message.msgType {
+            case .transferRequest, .transferSuccess, .transferFailure:
+                super.connection(connection, receivedMessage: message)
+                return true
+            default:
+                return false
+            }
         }
     }
     

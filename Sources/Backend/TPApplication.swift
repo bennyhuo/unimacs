@@ -11,20 +11,9 @@ protocol TPEventDelegate: NSObjectProtocol {
 	optional func applicationWillSendEvent(_ event: NSEvent) -> Bool
 }
 
-@main
 @objc(TPApplication)
 final class TPApplication: NSApplication {
 	private weak var eventsDelegate: TPEventDelegate?
-
-	// Entry point - migrated from main.m
-	static func main() {
-		// Ignore SIGPIPE on socket
-		signal(SIGPIPE, SIG_IGN)
-		
-		// Start the application
-		let app = TPApplication.shared
-		_ = NSApplicationMain(CommandLine.argc, CommandLine.unsafeArgv)
-	}
 
 	@objc(setEventDelegate:)
 	func setEventDelegate(_ eventDelegate: TPEventDelegate?) {

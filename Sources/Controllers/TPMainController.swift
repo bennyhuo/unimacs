@@ -161,6 +161,12 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
 		watcher.startWatching()
 		
         PasteboardMonitor.shared.start()
+
+		// Ensure server is listening and proactively connect to paired peers.
+		if TPServerController.shared.allowControl {
+			TPServerController.shared.startSharing()
+		}
+		DeviceConnectionManager.shared.autoConnectPairedDevices()
     }
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -213,6 +219,10 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
         
         // Send via DeviceConnectionManager (unified connection management)
         DeviceConnectionManager.shared.sendMessageToAllConnectedDevices(message)
+
+        if TPServerController.shared.allowControl {
+            TPServerController.shared.startSharing()
+        }
     }
     
     @objc func screensDidSleep(_ notification: Notification) {
@@ -222,6 +232,10 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
         
         // Send via DeviceConnectionManager (unified connection management)
         DeviceConnectionManager.shared.sendMessageToAllConnectedDevices(message)
+
+        if TPServerController.shared.allowControl {
+            TPServerController.shared.startSharing()
+        }
     }
     
     @objc func screensDidWake(_ notification: Notification) {
@@ -243,10 +257,6 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
             serverController.stopControl()
         } else {
             serverController.currentConnection = nil
-        }
-        
-        if serverController.allowControl {
-            serverController.stopSharing()
         }
     }
     
@@ -277,6 +287,9 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
     @objc func computerDidWake(_ notification: Notification) {
         TPHostsManager.shared.notifyChanges()
         TPClientController.shared.updateTriggersAndShowVisualHint(true)
+
+		DomainBrowser.shared.restart()
+		DeviceConnectionManager.shared.autoConnectPairedDevices()
         
         if let sessionInfoDict = CGSessionCopyCurrentDictionary() as? [String: Any],
            let onConsole = sessionInfoDict[kCGSessionOnConsoleKey as String] as? Bool,
@@ -304,6 +317,7 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
         DomainBrowser.shared.restart()
         
         TPClientController.shared.stopControl()
+        TPClientController.shared.cancelControlAttempt()
         
         // Use DeviceConnectionManager as the unified connection management layer
         DeviceConnectionManager.shared.disconnectAll()
@@ -311,7 +325,12 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
     
     @objc func resetAllConnectionsIfNotInControl() {
         debugLog("Try to reset all connections: controlling?\(TPClientController.shared.isControlling), controlled?\(TPServerController.shared.isControlled)", module: .control)
-        if !DeviceConnectionManager.shared.isConnected {
+        let client = TPClientController.shared
+        let stuckWaitingForControl = client.isWaitingForControlAttempt
+        if !DeviceConnectionManager.shared.isConnected || stuckWaitingForControl {
+            if stuckWaitingForControl {
+                client.cancelControlAttempt()
+            }
             resetAllConnections()
         }
     }
@@ -341,10 +360,15 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
     }
     
     private func sendWakeEvent() {
+        // `controlWake` is one-directional: only the controller keeps the controlled machine's
+        // screen awake. With persistent connections, broadcasting to every connected peer (and
+        // having receivers wake + re-broadcast via screensDidWake) caused an infinite wake storm.
+        guard TPClientController.shared.isControlling,
+              let connection = TPClientController.shared.currentConnection else {
+            return
+        }
         let message = TPMessage.create(with: .controlWake)
-        
-        // Send via DeviceConnectionManager (unified connection management)
-        DeviceConnectionManager.shared.sendMessageToAllConnectedDevices(message)
+        connection.sendAsync(message)
     }
     
     // MARK: - Accessibility & Encryption Checks

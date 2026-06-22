@@ -496,7 +496,60 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 	if(_socketState == TPSocketDisconnectedState)
 		return;
 	
+	[_lock lock];
+	CFRunLoopRef ownerRunLoop = _runLoopRef;
+	[_lock unlock];
+	
+	// Run loop source removal must happen on the socket's owner run loop.
+	if (ownerRunLoop != NULL && ownerRunLoop != CFRunLoopGetCurrent()) {
+		dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+		__weak TPTCPSocket *weakSelf = self;
+		CFRunLoopPerformBlock(ownerRunLoop, kCFRunLoopCommonModes, ^{
+			TPTCPSocket *strongSelf = weakSelf;
+			if (strongSelf != nil) {
+				[strongSelf _close:NO];
+			}
+			dispatch_semaphore_signal(sem);
+		});
+		CFRunLoopWakeUp(ownerRunLoop);
+		
+		if (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC))) != 0) {
+			WarningLog(@"[Socket] owner run loop did not respond, forcing close");
+			[self _forceCloseWithoutRunLoopCleanup:NO];
+		}
+		return;
+	}
+	
 	[self _close:NO];
+}
+
+- (void)_forceCloseWithoutRunLoopCleanup:(BOOL)dropped
+{
+	if(_socketState == TPSocketDisconnectedState)
+		return;
+	
+	TPSocketState previousState = _socketState;
+	_socketState = TPSocketDisconnectedState;
+	
+	NetworkDebugLog(@"[Socket] _forceCloseWithoutRunLoopCleanup: dropped=%@, previousState=%d, local=%@, remote=%@", dropped?@"YES":@"NO", previousState, [self localAddress], [self remoteAddress]);
+	
+	if(_cfSocket != NULL) {
+		[_lock lock];
+		if (CFSocketIsValid(_cfSocket)) {
+			CFSocketInvalidate(_cfSocket);
+		}
+		CFRelease(_cfSocket);
+		_cfSocket = NULL;
+		[_lock unlock];
+	}
+	
+	[_lock lock];
+	if (_sourceRef != NULL) {
+		CFRelease(_sourceRef);
+		_sourceRef = NULL;
+	}
+	_runLoopRef = NULL;
+	[_lock unlock];
 }
 
 - (void)_close:(BOOL)dropped

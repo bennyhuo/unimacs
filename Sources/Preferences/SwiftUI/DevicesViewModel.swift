@@ -17,12 +17,12 @@ struct DeviceInfo: Identifiable, Equatable {
     let hasCertificate: Bool
     let osVersion: Int
     let isPaired: Bool
-    let isOnline: Bool
     let isConnected: Bool
     let isControlling: Bool
     let isBeingControlled: Bool
+    let linkPhase: DeviceLinkPhase
+    let reconnectSecondsRemaining: Int?
     let macAddresses: [String]
-    let isWakeable: Bool
     
     // Reference to the actual remote host
     weak var remoteHost: TPRemoteHost?
@@ -38,72 +38,92 @@ struct DeviceInfo: Identifiable, Equatable {
         self.osVersion = host.osVersion
         self.remoteHost = host
         self.macAddresses = host.macAddresses.map { $0.description }
-        self.isWakeable = host.wakeable
+        
+        let manager = DeviceConnectionManager.shared
+        self.linkPhase = manager.linkPhase(for: host)
+        self.reconnectSecondsRemaining = manager.reconnectSecondsRemaining(for: host)
         
         let state = host.hostState
-        // A device is paired if it's in any peered state (offline, online, controlled, or peering)
-        // Check each individual state that makes up peeredState
-        self.isPaired = state.contains(.peeredOffline) || 
-                       state.contains(.peeredOnline) || 
+        self.isPaired = state.contains(.peeredOffline) ||
+                       state.contains(.peeredOnline) ||
                        state.contains(.controlled) ||
                        state.contains(.peering)
-        // A device is online if it's in any of the online states
-        // onlineState is a composite: sharedState | peeredOnlineState | controlledState | incompatibleState | peeringState
-        self.isOnline = state.contains(.shared) ||
-                       state.contains(.peeredOnline) || 
-                       state.contains(.controlled) ||
-                       state.contains(.peering)
-        self.isConnected = state.contains(.controlled) || 
-                          (state.contains(.peeredOnline) && DeviceConnectionManager.shared.connectedHosts.contains(host.identifier))
+        self.isConnected = linkPhase == .connected
         self.isControlling = state.contains(.controlled)
-        self.isBeingControlled = false // Will be set by server controller
+        self.isBeingControlled = false
     }
     
     var statusText: String {
         if isControlling {
             return "Controlling"
-        } else if isConnected {
+        }
+        switch linkPhase {
+        case .connected:
             return "Connected"
-        } else if isOnline {
-            return "Online"
-        } else if isPaired {
-            return "Offline"
-        } else {
-            return address
+        case .connecting:
+            return "Connecting…"
+        case .reconnecting:
+            if let seconds = reconnectSecondsRemaining, seconds > 0 {
+                return "Reconnecting in \(seconds)s…"
+            }
+            return "Connecting…"
+        case .disconnected:
+            return "Disconnected"
+        case .unavailable:
+            return "Unavailable"
         }
     }
     
-    /// Connection status text for detail view (more descriptive)
     var connectionStatusText: String {
         if isControlling {
             return "Controlling this device"
-        } else if isConnected {
+        }
+        switch linkPhase {
+        case .connected:
             return "Connected"
-        } else if isOnline {
-            return "Available"
-        } else if isPaired {
-            return "Offline"
-        } else {
-            return "Not connected"
+        case .connecting:
+            return "Connecting…"
+        case .reconnecting:
+            if let seconds = reconnectSecondsRemaining, seconds > 0 {
+                return "Reconnecting in \(seconds)s…"
+            }
+            return "Connecting…"
+        case .disconnected:
+            return "Disconnected"
+        case .unavailable:
+            return "Unavailable"
         }
     }
     
     var statusColor: Color {
-        if isControlling || isConnected {
+        switch linkPhase {
+        case .connected:
             return .green
-        } else if isOnline {
-            return .blue
-        } else {
+        case .connecting, .reconnecting:
+            return .orange
+        case .disconnected, .unavailable:
             return .gray
         }
     }
     
+    var showsDisconnectAction: Bool {
+        linkPhase == .connected
+    }
+    
+    var showsConnectAction: Bool {
+        linkPhase == .disconnected || linkPhase == .unavailable
+    }
+    
+    var showsRetryAction: Bool {
+        linkPhase == .reconnecting
+    }
+    
     static func == (lhs: DeviceInfo, rhs: DeviceInfo) -> Bool {
         lhs.id == rhs.id &&
-        lhs.isOnline == rhs.isOnline &&
+        lhs.linkPhase == rhs.linkPhase &&
+        lhs.reconnectSecondsRemaining == rhs.reconnectSecondsRemaining &&
         lhs.isConnected == rhs.isConnected &&
-        lhs.isControlling == rhs.isControlling &&
-        lhs.isWakeable == rhs.isWakeable
+        lhs.isControlling == rhs.isControlling
     }
 }
 
@@ -116,6 +136,7 @@ final class DevicesViewModel: ObservableObject {
     @Published var isScanning: Bool = true
     
     private var cancellables = Set<AnyCancellable>()
+    private var countdownTimer: AnyCancellable?
     
     init() {
         loadDevices()
@@ -124,7 +145,6 @@ final class DevicesViewModel: ObservableObject {
     // MARK: - Observation
     
     func startObserving() {
-        // Observe host state changes
         NotificationCenter.default.publisher(for: NSNotification.Name("TPHostDidUpdateNotification"))
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -132,15 +152,14 @@ final class DevicesViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // Observe connection changes
         NotificationCenter.default.publisher(for: NSNotification.Name("TPConnectionStateDidChangeNotification"))
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.loadDevices()
+                self?.updateCountdownTimer()
             }
             .store(in: &cancellables)
         
-        // Observe pairing changes
         NotificationCenter.default.publisher(for: NSNotification.Name("TPHostDidBecomeActivatedNotification"))
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -149,10 +168,26 @@ final class DevicesViewModel: ObservableObject {
             .store(in: &cancellables)
         
         loadDevices()
+        updateCountdownTimer()
     }
     
     func stopObserving() {
         cancellables.removeAll()
+        countdownTimer = nil
+    }
+    
+    private func updateCountdownTimer() {
+        let needsCountdown = pairedDevices.contains { $0.linkPhase == .reconnecting }
+        
+        if needsCountdown, countdownTimer == nil {
+            countdownTimer = Timer.publish(every: 1, on: .main, in: .common)
+                .autoconnect()
+                .sink { [weak self] _ in
+                    self?.loadDevices()
+                }
+        } else if !needsCountdown {
+            countdownTimer = nil
+        }
     }
     
     // MARK: - Load Devices
@@ -160,79 +195,77 @@ final class DevicesViewModel: ObservableObject {
     func loadDevices() {
         let hostsManager = TPHostsManager.shared
         
-        // Get paired devices (peered state)
         let peeredHosts = hostsManager.hosts(with: .peered) as? [TPRemoteHost] ?? []
         pairedDevices = peeredHosts
-            .filter { !$0.computerName.isEmpty }  // Filter out devices with empty names
+            .filter { !$0.computerName.isEmpty }
             .map { DeviceInfo(from: $0) }
-            .sorted { $0.isOnline && !$1.isOnline }
+            .sorted { lhs, rhs in
+                let lhsRank = linkPhaseSortRank(lhs.linkPhase)
+                let rhsRank = linkPhaseSortRank(rhs.linkPhase)
+                if lhsRank != rhsRank { return lhsRank < rhsRank }
+                return lhs.name < rhs.name
+            }
         
-        // Get nearby unpaired devices (shared state only, not peered)
         let sharedHosts = hostsManager.hosts(with: .shared) as? [TPRemoteHost] ?? []
         nearbyDevices = sharedHosts
-            .filter { !$0.isInState(.peered) && !$0.computerName.isEmpty }  // Filter out peered and empty names
+            .filter { !$0.isInState(.peered) && !$0.computerName.isEmpty }
             .map { DeviceInfo(from: $0) }
+        
+        updateCountdownTimer()
+    }
+    
+    private func linkPhaseSortRank(_ phase: DeviceLinkPhase) -> Int {
+        switch phase {
+        case .connected: return 0
+        case .connecting, .reconnecting: return 1
+        case .disconnected, .unavailable: return 2
+        }
     }
     
     // MARK: - Actions
     
     func pair(with device: DeviceInfo) {
         guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
-        
-        // Request authentication/pairing
         TPAuthenticationManager.default.requestAuthentication(on: host)
     }
     
     func unpair(device: DeviceInfo) {
         guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
         
-        // Disconnect first if connected
         if device.isConnected {
             disconnect(from: device)
         }
         
-        // Remove from trusted hosts
         TPAuthenticationManager.default.host(host, setTrusted: false)
         
-        // Reset host state
         if host.isInState(.online) {
             host.hostState = .shared
         } else {
             host.hostState = []
         }
         
-        // Save changes
         TPHostsManager.shared.saveHosts()
-        
         loadDevices()
     }
     
     func connect(to device: DeviceInfo) {
         guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
-        
-        // Use the new connection manager to establish persistent connection
-        DeviceConnectionManager.shared.connect(to: host)
+        DeviceConnectionManager.shared.connect(to: host, resetRetryBudget: true)
     }
     
     func disconnect(from device: DeviceInfo) {
         guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
-        
-        // Disconnect using the connection manager
         DeviceConnectionManager.shared.disconnect(from: host)
-    }
-    
-    func wakeUp(device: DeviceInfo) {
-        guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
-        guard host.wakeable else { return }
-        
-        WakeOnLan.wakeUpHost(with: host.macAddresses)
     }
     
     // MARK: - Helper
     
+    func device(withId id: String) -> DeviceInfo? {
+        pairedDevices.first { $0.id == id } ?? nearbyDevices.first { $0.id == id }
+    }
+
     private func findHost(by identifier: String) -> TPRemoteHost? {
         return TPHostsManager.shared.host(withIdentifier: identifier)
     }
 }
-
 

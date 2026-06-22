@@ -12,6 +12,7 @@ import Security
 final class TPRemoteHost: TPHost, NSCopying {
 
 	static let AddressKey = "address"
+	static let PortKey = "port"
 	
 	// New model: the remote host is positioned as a *full desktop* (union of remote screens).
 	// Persist the origin of that desktop bounding rect in local global screen coordinates.
@@ -75,6 +76,11 @@ final class TPRemoteHost: TPHost, NSCopying {
     required init(coder: NSCoder) {
 		_identifier = coder.decodeObject(of: NSString.self, forKey: Self.IdentifierKey)! as String
         _address = coder.decodeObject(forKey: Self.AddressKey) as? String
+		if coder.containsValue(forKey: Self.PortKey) {
+			port = coder.decodeInteger(forKey: Self.PortKey)
+		} else {
+			port = Int(TPPreferencesManager.shared().port(forPref: COMMAND_PORT))
+		}
 
         // Desktop placement
         let decodedDesktopOrigin: NSPoint? = coder.containsValue(forKey: Self.DesktopOriginKey)
@@ -129,6 +135,7 @@ final class TPRemoteHost: TPHost, NSCopying {
         super.encode(with: coder)
 
         coder.encode(_address, forKey: Self.AddressKey)
+		coder.encode(port, forKey: Self.PortKey)
         coder.encode(_desktopOrigin, forKey: Self.DesktopOriginKey)
 
         if let certData = certificateData as CFData? {

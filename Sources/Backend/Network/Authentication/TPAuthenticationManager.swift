@@ -87,7 +87,7 @@ private func certificateEqual(_ cert1: SecCertificate, _ cert2: SecCertificate) 
         alert.addButton(withTitle: NSLocalizedString("OK", comment: ""))
         
         DispatchQueue.main.async {
-            (NSApp.delegate as? TPMainController)?.present(alert)
+            TPMainController.shared().present(alert)
         }
     }
     
@@ -111,7 +111,11 @@ private func certificateEqual(_ cert1: SecCertificate, _ cert2: SecCertificate) 
             
         case .authenticationSuccess:
             host.hostState = .peeredOnline
+            let authConnection = connection
             currentConnection = nil
+            Task { @MainActor in
+                DeviceConnectionManager.shared.adoptConnection(authConnection)
+            }
             
         case .authenticationFailure:
             let msgTitle = String(format: NSLocalizedString("The host \u{201C}%@\u{201D} rejected your trust request.", comment: "Title for trust failure"), host.computerName ?? "")
@@ -127,6 +131,7 @@ private func certificateEqual(_ cert1: SecCertificate, _ cert2: SecCertificate) 
 				_ = TPMainController.shared().present(alert)
 			}
             
+            currentConnection?.disconnect()
             currentConnection = nil
             
         case .transferRequest:

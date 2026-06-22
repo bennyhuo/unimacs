@@ -5,6 +5,7 @@
 
 class TPIncomingPasteboardTransfer: TPIncomingTransfer {
     private var _pasteboardName: String?
+    private var _didApplyPasteboard = false
 
 	override var priority: TPTransferPriority {
 		return .high
@@ -28,14 +29,14 @@ class TPIncomingPasteboardTransfer: TPIncomingTransfer {
 		return super.prepareToReceiveData(withInfoDict: infoDict, from: host, onPort: &port, delegate: delegate)
     }
 
-    override func _receiverDataTransferCompleted() {
+    /// Deserialize + write the pasteboard on the background receive thread (off main).
+    override func _prepareReceivedDataBeforeCompletion() {
         guard let data = _data,
-			  let dictionary = LegacyKeyedArchiver.unarchive(data: data as Data) as? [String: Data] ,
+			  let dictionary = LegacyKeyedArchiver.unarchive(data: data as Data) as? [String: Data],
               let pboardName = _pasteboardName else {
-            super._receiverDataTransferCompleted()
             return
         }
-        
+
         let pasteboard = NSPasteboard(name: NSPasteboard.Name(pboardName))
         let typesStrings = Array(dictionary.keys)
         let types = typesStrings.map { NSPasteboard.PasteboardType($0) }
@@ -45,10 +46,10 @@ class TPIncomingPasteboardTransfer: TPIncomingTransfer {
 		declaredTypes.append(markerType)
 
         pasteboard.declareTypes(declaredTypes, owner: nil)
-        
+
         for typeString in typesStrings {
             var data = dictionary[typeString]
-            
+
             if let currentData = data, TPTypeNeedsSwapping(typeString) {
                 if let string = String(data: currentData, encoding: .utf16BigEndian) {
 					if let newData = string.data(using: String.Encoding.utf16LittleEndian) {
@@ -56,7 +57,7 @@ class TPIncomingPasteboardTransfer: TPIncomingTransfer {
                     }
                 }
             }
-            
+
             if let finalData = data, !finalData.isEmpty {
                 pasteboard.setData(finalData, forType: NSPasteboard.PasteboardType(typeString))
             }
@@ -64,7 +65,18 @@ class TPIncomingPasteboardTransfer: TPIncomingTransfer {
 
 		// Marker so `PasteboardMonitor` can ignore changes applied by teleport itself.
 		pasteboard.setData(Data([1]), forType: markerType)
-        
+        _didApplyPasteboard = true
+    }
+
+    override func _receiverDataTransferCompleted() {
         super._receiverDataTransferCompleted()
+
+        // Re-baseline the coordinator on the main thread: a remote clipboard we just wrote is
+        // not a local user change, so it must not be echoed back when control stops.
+        if _didApplyPasteboard {
+            DispatchQueue.main.async {
+                TPClipboardTransferCoordinator.shared.didApplyIncomingPasteboard()
+            }
+        }
     }
 }

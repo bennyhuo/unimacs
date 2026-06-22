@@ -14,7 +14,11 @@ class DomainBrowser: NSObject, NetServiceBrowserDelegate {
 		start()
 	}
 	
+    private let localDomain = "local."
+
     @objc func start() {
+        startBrowsing(in: localDomain)
+
         if _browseService == nil {
             _browseService = NetServiceBrowser()
         }
@@ -22,6 +26,15 @@ class DomainBrowser: NSObject, NetServiceBrowserDelegate {
         _browseService?.schedule(in: .main, forMode: .common)
         _browseService?.delegate = self
         _browseService?.searchForBrowsableDomains()
+    }
+
+    private func startBrowsing(in domain: String) {
+        guard _browsers[domain] == nil else { return }
+
+        let browser = HostBrowser(domain: domain)
+        browser.start()
+        _browsers[domain] = browser
+        debugLog("Browse started in domain: \(domain)", module: .network)
     }
 
     @objc func stop() {
@@ -35,10 +48,7 @@ class DomainBrowser: NSObject, NetServiceBrowserDelegate {
     }
 
     func netServiceBrowser(_ browser: NetServiceBrowser, didFindDomain domain: String, moreComing: Bool) {
-        let browser = HostBrowser(domain: domain)
-        browser.start()
-
-        _browsers[domain] = browser
+        startBrowsing(in: domain)
         debugLog("Found domain: \(domain)", module: .network)
     }
 

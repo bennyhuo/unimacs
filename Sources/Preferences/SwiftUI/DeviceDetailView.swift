@@ -13,13 +13,10 @@ struct DeviceDetailView: View {
     let device: DeviceInfo
     @ObservedObject var viewModel: DevicesViewModel
     @Environment(\.dismiss) private var dismiss
-    @State private var refreshedDevice: DeviceInfo?
-    
-    private var displayDevice: DeviceInfo {
-        refreshedDevice ?? device
-    }
     
     var body: some View {
+        let displayDevice = viewModel.device(withId: device.id) ?? device
+        
         VStack(spacing: 0) {
             // Header
             VStack(spacing: 16) {
@@ -132,14 +129,21 @@ struct DeviceDetailView: View {
                 
                 Spacer()
                 
-                if displayDevice.isConnected {
+                if displayDevice.showsDisconnectAction {
                     Button {
                         viewModel.disconnect(from: displayDevice)
                     } label: {
                         Label("Disconnect", systemImage: "xmark.circle")
                     }
                     .buttonStyle(.bordered)
-                } else if displayDevice.isOnline && displayDevice.isPaired {
+                } else if displayDevice.showsRetryAction {
+                    Button {
+                        viewModel.connect(to: displayDevice)
+                    } label: {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else if displayDevice.showsConnectAction && displayDevice.isPaired {
                     Button {
                         viewModel.connect(to: displayDevice)
                     } label: {
@@ -165,16 +169,6 @@ struct DeviceDetailView: View {
         }
         .frame(width: 400, height: 520)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onAppear {
-            // Try to refresh device info from host manager
-            // First try to get from the device's remoteHost reference
-            if let host = device.remoteHost {
-                refreshedDevice = DeviceInfo(from: host)
-            } else if let host = TPHostsManager.shared.host(withIdentifier: device.id) {
-                refreshedDevice = DeviceInfo(from: host)
-            }
-            // If refresh fails, we still have the original device data
-        }
     }
     
     // MARK: - Helpers
@@ -283,10 +277,11 @@ struct MacAddressRow: View {
             hasCertificate: true,
             osVersion: 1400,
             isPaired: true,
-            isOnline: true,
             isConnected: false,
             isControlling: false,
             isBeingControlled: false,
+            linkPhase: .unavailable,
+            reconnectSecondsRemaining: nil,
             remoteHost: nil
         ),
         viewModel: DevicesViewModel()
@@ -304,12 +299,12 @@ extension DeviceInfo {
         hasCertificate: Bool,
         osVersion: Int,
         isPaired: Bool,
-        isOnline: Bool,
         isConnected: Bool,
         isControlling: Bool,
         isBeingControlled: Bool,
         macAddresses: [String] = [],
-        isWakeable: Bool = false,
+        linkPhase: DeviceLinkPhase = .unavailable,
+        reconnectSecondsRemaining: Int? = nil,
         remoteHost: TPRemoteHost?
     ) {
         self.id = id
@@ -320,12 +315,12 @@ extension DeviceInfo {
         self.hasCertificate = hasCertificate
         self.osVersion = osVersion
         self.isPaired = isPaired
-        self.isOnline = isOnline
         self.isConnected = isConnected
         self.isControlling = isControlling
         self.isBeingControlled = isBeingControlled
         self.macAddresses = macAddresses
-        self.isWakeable = isWakeable
+        self.linkPhase = linkPhase
+        self.reconnectSecondsRemaining = reconnectSecondsRemaining
         self.remoteHost = remoteHost
     }
 }

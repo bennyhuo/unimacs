@@ -103,7 +103,7 @@ extension SocketConnection: NetworkConnectionDelegate {
     }
     
     func connectionDisconnected(_ connection: NetworkConnection) {
-        // Handle disconnection if needed
+        TPConnectionsManager.shared.socketConnectionFailed(self)
     }
 }
 
@@ -136,42 +136,53 @@ extension SocketConnection: NetworkConnectionDelegate {
     
     @objc func connect(toHost host: TPRemoteHost, withDelegate delegate: TPClientConnectionsDelegate?, infoDict: [String: Any]?) -> Bool {
         debugLog("TPConnectionsManager connectToHost", module: .network)
-        
-        if pendingConnections[host.identifier] != nil {
-            debugLog("connectToHost: \(host.identifier), pending...", module: .network)
-            return true
-        }
-        
-        if let connection = SocketConnection(connectionToHost: host, delegate: delegate, infoDict: infoDict) {
-            pendingConnections[host.identifier] = connection
-            debugLog("connectToHost: \(host.identifier), add to pendingConnections", module: .network)
-            return true
-        } else {
-            debugLog("connectToHost: \(host.identifier), failed immediately", module: .network)
-            return false
+
+        // Socket creation/connect must run on the network run loop so the socket's
+        // CFRunLoop source is hosted off the main thread. All access to the
+        // pending/connections collections is confined to the same thread.
+        return NetworkRunLoopThread.shared.sync {
+            if pendingConnections[host.identifier] != nil {
+                debugLog("connectToHost: \(host.identifier), pending...", module: .network)
+                return true
+            }
+
+            if let connection = SocketConnection(connectionToHost: host, delegate: delegate, infoDict: infoDict) {
+                pendingConnections[host.identifier] = connection
+                debugLog("connectToHost: \(host.identifier), add to pendingConnections", module: .network)
+                return true
+            } else {
+                debugLog("connectToHost: \(host.identifier), failed immediately", module: .network)
+                return false
+            }
         }
     }
     
     // MARK: - Listening
     
     @objc func startListening(withDelegate delegate: TPServerConnectionsDelegate?, onPort port: UnsafeMutablePointer<Int32>) -> Bool {
-        if listenSocket != nil {
-            return true
+        return NetworkRunLoopThread.shared.sync {
+            if listenSocket != nil {
+                return true
+            }
+
+            listenDelegate = delegate
+
+            let enableEncryption = TPLocalHost.shared.hasCapability(.encryption)
+            let socket = TPTCPSecureSocket(delegate: self)
+            socket.enableEncryption = enableEncryption
+            listenSocket = socket
+
+            // Listening on the network run loop means every accepted child socket
+            // also binds its callbacks to this thread, off the main run loop.
+            return socket.listen(onPort: port, tries: 50)
         }
-        
-        listenDelegate = delegate
-        
-        let enableEncryption = TPLocalHost.shared.hasCapability(.encryption)
-        let socket = TPTCPSecureSocket(delegate: self)
-        socket.enableEncryption = enableEncryption
-        listenSocket = socket
-        
-        return socket.listen(onPort: port, tries: 50)
     }
     
     @objc func stopListening() {
-        listenSocket?.close()
-        listenSocket = nil
+        NetworkRunLoopThread.shared.sync {
+            listenSocket?.close()
+            listenSocket = nil
+        }
     }
     
     // MARK: - Socket Connection Callbacks
@@ -199,15 +210,17 @@ extension SocketConnection: NetworkConnectionDelegate {
     // MARK: - Reset
     
     @objc func reset() {
-        for connection in connections {
-            connection.disconnect()
+        NetworkRunLoopThread.shared.sync {
+            for connection in connections {
+                connection.disconnect()
+            }
+            connections.removeAll()
+
+            for connection in pendingConnections.values {
+                connection.close()
+            }
+            pendingConnections.removeAll()
         }
-        connections.removeAll()
-        
-        for connection in pendingConnections.values {
-            connection.close()
-        }
-        pendingConnections.removeAll()
     }
 }
 

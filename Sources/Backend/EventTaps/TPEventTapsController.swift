@@ -111,7 +111,7 @@ private let eventTypeName: [String] = [
         
         if IsSecureEventInputEnabled() {
             DispatchQueue.main.async {
-                (NSApp.delegate as? TPMainController)?.goFrontmost()
+                TPMainController.shared().goFrontmost()
             }
         }
         
@@ -207,7 +207,7 @@ private let eventTypeName: [String] = [
         }
         
         DispatchQueue.main.async {
-            (NSApp.delegate as? TPMainController)?.leaveFrontmost()
+            TPMainController.shared().leaveFrontmost()
         }
     }
     

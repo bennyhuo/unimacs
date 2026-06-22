@@ -31,9 +31,12 @@ class TPConnectionController: NSObject, TPHotBorderDelegate, NetworkConnectionDe
             debugLog("currentConnection setter: old=[\(oldConnId), \(oldHost)], new=[\(newConnId), \(newHost)], isSameRef=\(isSameRef)", module: .control)
             
             if _currentConnection !== newValue {
-                warningLog("currentConnection setter: reference changed, will disconnect old connection", module: .control)
+                warningLog("currentConnection setter: reference changed", module: .control)
 				TPTransfersManager.shared.abortAllTransferRequests()
-                _currentConnection?.disconnect()
+                if let old = _currentConnection,
+                   !DeviceConnectionManager.shared.managesConnection(old) {
+                    old.disconnect()
+                }
                 
                 _currentConnection = newValue
                 // Note: delegate is managed by DeviceConnectionManager

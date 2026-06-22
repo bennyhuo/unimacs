@@ -231,19 +231,11 @@ open class TPEventsController: NSObject {
         currentMouseLocation.y += (mainScreenRect.maxY - screenFrame.maxY)
         
         // When locked, HotBorder will never receive mouseEnter events.
-        // Work around to make it possible to move back to the client.
+        // Detect geometric entry and ask the client to stop control (same as a normal hot-border exit).
         if MainActor.assumeIsolated({ SystemStatusObserver.shared.isLocked }) {
+            let mouseLocationInvertY = CGPoint(x: currentMouseLocation.x, y: mainScreenRect.maxY - currentMouseLocation.y)
             MainActor.assumeIsolated {
-                if let border = TPServerController.shared.currentHotBorder() {
-                    if border.state == TPHotBorder.State.activeState && screen.isEqual(border.screen) {
-                        // currentMouseLocation is relative to the left-top corner of the main screen.
-                        // while borderRect is relative to the left-bottom corner of the main screen.
-                        let mouseLocationInvertY = CGPoint(x: currentMouseLocation.x, y: mainScreenRect.maxY - currentMouseLocation.y)
-                        if border.frame.contains(mouseLocationInvertY) {
-                            TPServerController.shared.stopControl()
-                        }
-                    }
-                }
+                TPServerController.shared.handleLockedReturnHotBorder(at: mouseLocationInvertY)
             }
         }
     }

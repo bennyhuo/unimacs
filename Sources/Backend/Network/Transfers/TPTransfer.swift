@@ -470,6 +470,9 @@ class TPIncomingTransfer: TPTransfer {
                 
                 _socket?._setRunLoop(nil)
                 if _receivedDataLength == _totalDataLength {
+                    // Heavy post-receive work (deserialize + pasteboard write) runs here on the
+                    // background receive thread, so it never blocks the main thread / control I/O.
+                    self._prepareReceivedDataBeforeCompletion()
                     self.performSelector(onMainThread: #selector(_receiverDataTransferCompleted), with: nil, waitUntilDone: true)
                 } else {
                     self.performSelector(onMainThread: #selector(_receiverDataTransferAborted), with: nil, waitUntilDone: true)
@@ -487,10 +490,16 @@ class TPIncomingTransfer: TPTransfer {
                 }
                 _socket?._setRunLoop(nil)
 				self.performSelector(onMainThread: #selector(_notifyProgress(_:)), with: NSNumber(value: _receivedDataLength), waitUntilDone: false)
+                self._prepareReceivedDataBeforeCompletion()
                 self.performSelector(onMainThread: #selector(_receiverDataTransferCompleted), with: nil, waitUntilDone: true)
             }
         }
     }
+
+    /// Subclass hook for heavy post-receive processing (deserialize, write pasteboard, etc.).
+    /// Runs on the background receive thread *before* the main-thread completion callback,
+    /// so it never stalls the main run loop or the persistent control connection's I/O.
+    @objc func _prepareReceivedDataBeforeCompletion() {}
     
 	@objc override func _receiverDataTransferCompleted() {
 		if hasFeedback {

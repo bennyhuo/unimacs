@@ -45,8 +45,7 @@ struct DevicesView: View {
                                 onUnpair: { viewModel.unpair(device: device) },
                                 onShowDetail: {
                                     detailDevice = device
-                                },
-                                onWakeUp: { viewModel.wakeUp(device: device) }
+                                }
                             )
                             
                             if device.id != viewModel.pairedDevices.last?.id {
@@ -166,7 +165,6 @@ struct PairedDeviceRow: View {
     let onDisconnect: () -> Void
     let onUnpair: () -> Void
     let onShowDetail: () -> Void
-    let onWakeUp: () -> Void
     
     var body: some View {
         HStack(spacing: 12) {
@@ -174,7 +172,7 @@ struct PairedDeviceRow: View {
             ZStack(alignment: .bottomTrailing) {
                 Image(systemName: "desktopcomputer")
                     .font(.system(size: 24))
-                    .foregroundColor(device.isOnline ? .accentColor : .secondary)
+                    .foregroundColor(device.linkPhase == .connected ? .accentColor : .secondary)
                     .frame(width: 32, height: 32)
                 
                 // Status indicator
@@ -203,7 +201,7 @@ struct PairedDeviceRow: View {
             
             // Action buttons
             HStack(spacing: 12) {
-                if device.isConnected {
+                if device.showsDisconnectAction {
                     Button {
                         onDisconnect()
                     } label: {
@@ -212,7 +210,16 @@ struct PairedDeviceRow: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundColor(.secondary)
-                } else if device.isOnline {
+                } else if device.showsRetryAction {
+                    Button {
+                        onConnect()
+                    } label: {
+                        Text("Retry")
+                            .font(.callout)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.accentColor)
+                } else if device.showsConnectAction {
                     Button {
                         onConnect()
                     } label: {
@@ -221,15 +228,6 @@ struct PairedDeviceRow: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundColor(.accentColor)
-                } else if device.isWakeable {
-                    Button {
-                        onWakeUp()
-                    } label: {
-                        Text("Wake")
-                            .font(.callout)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundColor(.orange)
                 }
                 
                 // Info button
@@ -245,12 +243,12 @@ struct PairedDeviceRow: View {
         }
         .padding(.vertical, 8)
         .contextMenu {
-            if device.isConnected {
+            if device.showsDisconnectAction {
                 Button("Disconnect") { onDisconnect() }
-            } else if device.isOnline {
+            } else if device.showsRetryAction {
+                Button("Retry") { onConnect() }
+            } else if device.showsConnectAction {
                 Button("Connect") { onConnect() }
-            } else if device.isWakeable {
-                Button("Wake") { onWakeUp() }
             }
             Divider()
             Button("Show Details") { onShowDetail() }

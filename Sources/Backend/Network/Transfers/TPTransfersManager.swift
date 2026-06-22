@@ -58,30 +58,42 @@ class TPTransfersManager: NSObject {
     }
     
     func beginTransfer(_ transfer: TPOutgoingTransfer, using connection: NetworkConnection) {
-        let transferIsOK = transfer.prepareToSendData()
         _lastTransferWasCancelled = false
-        
+
 		transfer.manager = self
 		transfer.remoteHost = connection.connectedHost
+		// Register synchronously so an early `transferSuccess` can still find the transfer.
 		_outgoingTransfers[transfer.uid] = transfer
-        
-        if !transferIsOK {
-            self.transferDidCancel(transfer)
-        } else {
-            let message = TPMessage.create(with: .transferRequest, andInfoDict: transfer.infoDict())
-            
-			_outgoingConnections[transfer.uid] = connection
-            
-			// Use async send, but handle failure via callback
-			Task {
-				let success = await connection.sendMessageAsync(message)
-				if !success {
-					await MainActor.run {
-						self.transferDidCancel(transfer)
+		_outgoingConnections[transfer.uid] = connection
+
+		// Serializing the payload (e.g. a large pasteboard image via NSKeyedArchiver) can be
+		// expensive. Never run it on the main thread or it freezes input/UI while a control
+		// session is starting or stopping. This restores the pre-persistent-connection behavior
+		// where transfer setup happened off the main run loop.
+		DispatchQueue.global(qos: .userInitiated).async {
+			let transferIsOK = transfer.prepareToSendData()
+			DispatchQueue.main.async {
+				// Bail if the transfer was cancelled/aborted while we were serializing.
+				guard self._outgoingTransfers[transfer.uid] != nil else { return }
+
+				if !transferIsOK {
+					self.transferDidCancel(transfer)
+					return
+				}
+
+				let message = TPMessage.create(with: .transferRequest, andInfoDict: transfer.infoDict())
+
+				// Use async send, but handle failure via callback
+				Task {
+					let success = await connection.sendMessageAsync(message)
+					if !success {
+						await MainActor.run {
+							self.transferDidCancel(transfer)
+						}
 					}
 				}
 			}
-        }
+		}
     }
     
     func startTransfer(withUID transferUID: String, using connection: NetworkConnection, onPort port: Int32) {

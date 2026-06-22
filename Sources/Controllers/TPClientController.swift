@@ -38,6 +38,12 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
         _state = .idleState
         
 		TPHost.observe(observer: self, selector: #selector(updateTriggers(_:)), object: nil)
+		NotificationCenter.default.addObserver(
+			self,
+			selector: #selector(connectionStateDidChange(_:)),
+			name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+			object: nil
+		)
 		TPClipboardTransferCoordinator.shared.start()
         
         // Register as delegate with DeviceConnectionManager
@@ -56,7 +62,8 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 	@MainActor
 	private func _updateTriggers(for host: TPRemoteHost, showVisualHint: Bool) {
 		let canControl = TPMainController.shared().canControlHost(withIdentifier: host.identifier)
-		let isOnlineOrControlled = host.isInState([.peeredOnline, .controlled])
+		let isOnlineOrControlled = host.isInState(.controlled)
+			|| DeviceConnectionManager.shared.isReachableForControl(host)
 		let shouldEnableTriggers = canControl && isOnlineOrControlled
 		let shouldActivateHotBorder = !host.isInState(.controlled)
 		let identifier = host.identifier
@@ -108,7 +115,7 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 			}
 		}
 		
-		if showVisualHint && shouldEnableTriggers && shouldActivateHotBorder && host.isInState(.peeredOnline) && host.previousHostState != .controlled {
+		if showVisualHint && shouldEnableTriggers && shouldActivateHotBorder && DeviceConnectionManager.shared.isReachableForControl(host) && host.previousHostState != .controlled {
 			EdgeAppearanceAnimator.shared.showAppearanceAnimation(for: host)
 		}
 	}
@@ -117,6 +124,21 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 	@objc func updateTriggers(_ notification: Notification) {
 		if let host = notification.object as? TPRemoteHost {
 			self._updateTriggers(for: host, showVisualHint: true)
+		}
+	}
+
+	@MainActor
+	@objc private func connectionStateDidChange(_ notification: Notification) {
+		if let host = notification.object as? TPRemoteHost {
+			if _state == .connectingState,
+			   _pendingControlRequestInfo != nil,
+			   let connection = DeviceConnectionManager.shared.connection(for: host) {
+				fulfillPendingControlRequest(on: connection, for: host)
+			}
+			self._updateTriggers(for: host, showVisualHint: false)
+		} else {
+			cancelPendingControlRequest()
+			self.updateTriggersAndShowVisualHint(false)
 		}
 	}
 	
@@ -130,8 +152,7 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 	
 	@MainActor
 	override func hotBorder(_ hotBorder: TPHotBorder, canFireWithEvent event: NSEvent?) -> Bool {
-		let mainController = NSApp.delegate as? TPMainController
-		if !(mainController?.canControlHost(withIdentifier: hotBorder.hostId) ?? false) {
+		if !TPMainController.shared().canControlHost(withIdentifier: hotBorder.hostId) {
 			return false
 		}
 		
@@ -156,7 +177,7 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 	override func hotBorder(_ hotBorder: TPHotBorder, firedAtLocation location: NSPoint) -> Bool {
 		guard let remoteHost = TPHostsManager.shared.host(withIdentifier: hotBorder.hostId) else { return false }
 		
-		if remoteHost.hostState == .peeredOnline {
+		if DeviceConnectionManager.shared.isReachableForControl(remoteHost) {
 			// `location` is window-local. Convert it to a point relative to the *local desktop bounding rect*.
 			let localDesktopRect = TPLocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
 			let localCocoaPoint = hotBorder.screenPoint(fromLocalPoint: location, flipped: false)
@@ -187,7 +208,27 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 	
 	@MainActor
 	func requestStartControl(on remoteHost: TPRemoteHost?, at location: NSPoint, hotBorderRelativePoint: NSPoint?) -> Bool {
-		guard let remoteHost = remoteHost, remoteHost.hostState == .peeredOnline, _state == .idleState else {
+		guard let remoteHost else {
+			warningLog("requestStartControl blocked: nil host", module: .control)
+			return false
+		}
+		guard DeviceConnectionManager.shared.isReachableForControl(remoteHost) else {
+			warningLog("requestStartControl blocked: \(remoteHost.computerName) not reachable for control (state=\(remoteHost.hostState.rawValue), screens=\(remoteHost.screens.count))", module: .control)
+			return false
+		}
+		guard _state == .idleState else {
+			if _state == .connectingState,
+			   let pendingInfo = _pendingControlRequestInfo,
+			   let existingConnection = DeviceConnectionManager.shared.connection(for: remoteHost) {
+				warningLog("requestStartControl: recovering stuck connectingState for \(remoteHost.computerName)", module: .control)
+				_pendingControlRequestInfo = nil
+				_state = .idleState
+				self.currentConnection = existingConnection
+				TPClipboardTransferCoordinator.shared.clientWillRequestStartControl()
+				self.sendStartControlRequest(for: existingConnection, withInfoDict: pendingInfo)
+				return true
+			}
+			warningLog("requestStartControl blocked: client state=\(_state.rawValue)", module: .control)
 			return false
 		}
 		
@@ -218,17 +259,44 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 		}
 		
 		// Need to establish new connection via DeviceConnectionManager
-		// Store the pending request info to use when connection succeeds
 		_pendingControlRequestInfo = infoDict
 		_state = .connectingState
 		
 		TPClipboardTransferCoordinator.shared.clientWillRequestStartControl()
 		DeviceConnectionManager.shared.connect(to: remoteHost)
+		
+		// Persistent TCP may already exist (connect() is a no-op); send control immediately.
+		if let existingConnection = DeviceConnectionManager.shared.connection(for: remoteHost) {
+			_pendingControlRequestInfo = nil
+			_state = .idleState
+			self.currentConnection = existingConnection
+			self.sendStartControlRequest(for: existingConnection, withInfoDict: infoDict)
+		}
 		return true
 	}
 	
+	@MainActor
+	private func cancelPendingControlRequest() {
+		_pendingControlRequestInfo = nil
+		if _state == .connectingState {
+			_state = .idleState
+		}
+	}
+	
+	@MainActor
+	private func fulfillPendingControlRequest(on connection: NetworkConnection, for host: TPRemoteHost) {
+		guard let infoDict = _pendingControlRequestInfo else { return }
+		_pendingControlRequestInfo = nil
+		_state = .idleState
+		self.currentConnection = connection
+		self.sendStartControlRequest(for: connection, withInfoDict: infoDict)
+	}
+	
 	func sendStartControlRequest(for connection: NetworkConnection, withInfoDict infoDict: [AnyHashable: Any]) {
-		guard let controlledHost = connection.connectedHost else { return }
+		guard let controlledHost = connection.connectedHost else {
+			warningLog("sendStartControlRequest blocked: connection has no connectedHost", module: .control)
+			return
+		}
 		
 		let mousePosition = (infoDict[TPMousePositionKey] as? NSData)?.pointValue ?? .zero
 		
@@ -279,10 +347,9 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 			SoundUtils.playSwitchSound()
 		}
 
-		TPClipboardTransferCoordinator.shared.clientDidStartControl(using: currentConnection, remoteHost: controlledHost)
-		
 		self.updateEventsController()
 		self.eventsController?.startGettingEvents(for: self)
+		TPClipboardTransferCoordinator.shared.clientDidStartControl(using: currentConnection, remoteHost: controlledHost)
 		
 		DisplaySleepAssertion.activate(reason: "startControl")
 		
@@ -386,6 +453,7 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 			}
 		}
 		
+		cancelPendingControlRequest()
 		_state = .idleState
 		self.updateTriggersAndShowVisualHint(false)
 		super.stopControl(withDisconnect: disconnect)
@@ -393,6 +461,11 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 	
 	var isControlling: Bool {
 		return _state == .controllingState
+	}
+	
+	/// True while waiting for TCP and/or a controlSuccess after the user triggered a hot border.
+	var isWaitingForControlAttempt: Bool {
+		return _state == .connectingState || _pendingControlRequestInfo != nil
 	}
 	
 	func gotEvent(withEventData eventData: Data) {
@@ -414,12 +487,12 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
     
     @MainActor
     func connectionDidEstablish(to host: TPRemoteHost, connection: NetworkConnection) {
-        // If we're in connecting state and have pending control request, send it
-        if _state == .connectingState, let infoDict = _pendingControlRequestInfo {
-            self.currentConnection = connection
-            self.sendStartControlRequest(for: connection, withInfoDict: infoDict)
-            _pendingControlRequestInfo = nil
+        // Only honor a pending control request from an explicit user-initiated attempt.
+        if _state == .connectingState, _pendingControlRequestInfo != nil {
+            fulfillPendingControlRequest(on: connection, for: host)
         }
+		
+		self._updateTriggers(for: host, showVisualHint: true)
     }
     
     @MainActor
@@ -432,45 +505,58 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
             }
             self.currentConnection = nil
         }
+        
+        cancelPendingControlRequest()
     }
     
     @MainActor
     func connectionDidFail(to host: TPRemoteHost) {
         if _state == .connectingState {
-            _pendingControlRequestInfo = nil
+            cancelPendingControlRequest()
             
             let msgTitle = String(format: NSLocalizedString("Connection to \"%@\" failed.", comment: "Title for connection failure"), host.computerName)
             let alert = NSAlert()
             alert.messageText = msgTitle
             alert.addButton(withTitle: NSLocalizedString("OK", comment: ""))
             alert.informativeText = NSLocalizedString("The server may be down, or an encryption problem may have occured. If encryption is enabled, please check that the certificate algorithms match.", comment: "")
-            (NSApp.delegate as? TPMainController)?.present(alert)
+            TPMainController.shared().present(alert)
             
             self.updateTriggersAndShowVisualHint(false)
-            _state = .idleState
-        } else {
-            if host.isInState([.peeredOffline, .peeredOnline]) {
-                WakeOnLan.wakeUpHost(with: host.macAddresses)
-            }
         }
     }
     
+    /// Clear an in-flight control attempt without tearing down persistent TCP connections.
+    @MainActor
+    func cancelControlAttempt() {
+        cancelPendingControlRequest()
+    }
+    
+    @MainActor
+    private func shouldHandleControlMessage(from host: TPRemoteHost, on connection: NetworkConnection) -> Bool {
+        if self.currentConnection === connection {
+            return true
+        }
+        if self.currentConnection?.connectedHost?.identifier == host.identifier {
+            return true
+        }
+        if DeviceConnectionManager.shared.managesConnection(connection),
+           connection.connectedHost?.identifier == host.identifier {
+            return true
+        }
+        return false
+    }
+
     @MainActor
     func handleMessage(_ message: TPMessage, from host: TPRemoteHost, connection: NetworkConnection) -> Bool {
-        let type = message.msgType
-        
-        // Only handle control-related messages for our current connection
-        guard self.currentConnection === connection || 
-              self.currentConnection?.connectedHost?.identifier == host.identifier else {
-            return false
-        }
-        
-        switch type {
+        switch message.msgType {
         case .controlSuccess:
+            guard shouldHandleControlMessage(from: host, on: connection) else { return false }
             self.currentConnection = connection
             self.startControl()
             return true
         case .controlFailure:
+            guard shouldHandleControlMessage(from: host, on: connection) else { return false }
+            _state = .idleState
             if let controlledHost = connection.connectedHost {
                 controlledHost.hostState = .shared
                 
@@ -490,12 +576,18 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
             }
             return true
         case .controlStop:
+            guard shouldHandleControlMessage(from: host, on: connection) else { return false }
             self.requestedStopControl(withInfoDict: message.infoDict)
             return true
         default:
-            // Let parent class handle transfer-related messages
-            super.connection(connection, receivedMessage: message)
-            return true
+            switch message.msgType {
+            case .transferRequest, .transferSuccess, .transferFailure:
+                super.connection(connection, receivedMessage: message)
+                return true
+            default:
+                // Leave server-side control requests and other messages to TPServerController.
+                return false
+            }
         }
     }
 }

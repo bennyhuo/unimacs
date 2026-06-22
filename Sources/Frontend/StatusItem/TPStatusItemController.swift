@@ -12,6 +12,24 @@ import Cocoa
     case controlled
 }
 
+private enum TPStatusBarIconState {
+    case disconnected
+    case connected
+    /// Remote-control session in progress (controlling or being controlled).
+    case active
+    
+    var imageName: String {
+        switch self {
+        case .disconnected:
+            return "status-disconnected"
+        case .connected:
+            return "status-connected"
+        case .active:
+            return "status-active"
+        }
+    }
+}
+
 /// Controller for the menu bar status item
 @objcMembers
 class TPStatusItemController: NSObject {
@@ -23,6 +41,7 @@ class TPStatusItemController: NSObject {
     // MARK: - Properties
     
     private var statusItem: NSStatusItem?
+    private var controlStatus: TPStatus = .idle
     
     @objc var showStatusItem: Bool {
         get { statusItem != nil }
@@ -33,6 +52,12 @@ class TPStatusItemController: NSObject {
     
     private override init() {
         super.init()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(connectionStateDidChange(_:)),
+            name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+            object: nil
+        )
         showStatusItem = true
     }
     
@@ -48,13 +73,11 @@ class TPStatusItemController: NSObject {
     }
     
     private func createStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         
         guard let statusItem = statusItem else { return }
         
-        statusItem.button?.image = NSImage(named: "menuicon")
-        statusItem.button?.alternateImage = NSImage(named: "menuicon-white")
-        statusItem.button?.cell?.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        applyIconState(.disconnected, to: statusItem)
         
         let menu = NSMenu()
         
@@ -108,33 +131,52 @@ class TPStatusItemController: NSObject {
         menu.addItem(quitMenuItem)
         
         statusItem.menu = menu
+        refreshStatusIcon()
     }
     
     // MARK: - Public Methods
     
     @objc func update(with status: TPStatus, host: TPRemoteHost?) {
-        guard let statusItem = statusItem,
-              TPPreferencesManager.shared().bool(forPref: SHOW_TEXTUAL_STATUS) else {
-            return
+        controlStatus = status
+        refreshStatusIcon()
+    }
+    
+    // MARK: - Icon State
+    
+    @objc private func connectionStateDidChange(_ notification: Notification) {
+        refreshStatusIcon()
+    }
+    
+    private func refreshStatusIcon() {
+        guard statusItem != nil else { return }
+        
+        Task { @MainActor in
+            guard let statusItem = self.statusItem else { return }
+            let iconState = self.resolvedIconState()
+            self.applyIconState(iconState, to: statusItem)
         }
-        
-        var title: String? = nil
-        
-        switch status {
+    }
+    
+    @MainActor
+    private func resolvedIconState() -> TPStatusBarIconState {
+        switch controlStatus {
+        case .controlling, .controlled:
+            return .active
         case .idle:
-            title = nil
-        case .controlled:
-            if let computerName = host?.computerName {
-                title = String(format: NSLocalizedString("controlled by %@", comment: ""), computerName)
+            if DeviceConnectionManager.shared.isConnected {
+                return .connected
             }
-        case .controlling:
-            if let computerName = host?.computerName {
-                title = String(format: NSLocalizedString("controlling %@", comment: ""), computerName)
-            }
+            return .disconnected
         }
+    }
+    
+    private func applyIconState(_ iconState: TPStatusBarIconState, to statusItem: NSStatusItem) {
+        guard let image = NSImage(named: iconState.imageName) else { return }
+        image.isTemplate = true
         
         NSDisableScreenUpdates()
-        statusItem.button?.title = title ?? ""
+        statusItem.button?.title = ""
+        statusItem.button?.image = image
         NSEnableScreenUpdates()
     }
     

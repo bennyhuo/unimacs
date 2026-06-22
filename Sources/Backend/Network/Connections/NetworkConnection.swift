@@ -122,6 +122,10 @@ class NetworkConnection: NSObject, TPTCPSocketDelegate {
         guard localHostCapabilities == TPLocalHost.shared.capabilities else {
             return false
         }
+        // Bonjour may refresh the cached address while this TCP session is still up.
+        if isConnected {
+            return true
+        }
         guard _socket.remoteAddress == host.address else {
             return false
         }
@@ -161,26 +165,7 @@ case .connectedState:
                         continuation.resume(returning: false)
                         return
                     }
-                    
-                    let msgTypeDesc = self.messageTypeDescription(message.msgType)
-                    let infoDesc = self.messageInfoDescription(message)
-                    debugLog("[Conn:\(self.connectionId)] Sending message: type=\(msgTypeDesc)\(infoDesc)", module: .network)
-                    
-                    let result = self._socket.send(message.rawData)
-                    
-                    if result {
-                        debugLog("[Conn:\(self.connectionId)] Message sent successfully: type=\(msgTypeDesc)", module: .network)
-                    } else {
-                        let socketState = self._socket.socketState
-                        errorLog("[Conn:\(self.connectionId)] Failed to send message: type=\(msgTypeDesc), socketState=\(socketState.rawValue)", module: .network)
-                        // Notify delegate on main thread
-                        DispatchQueue.main.async { [weak self] in
-                            guard let self = self else { return }
-                            self.delegate?.connectionDisconnected(self)
-                        }
-                    }
-                    
-                    continuation.resume(returning: result)
+                    continuation.resume(returning: self.performSend(message))
                 }
             }
             
@@ -196,7 +181,11 @@ case .connectingState:
     }
     
     /// Send a message synchronously (for backward compatibility with ObjC)
-    /// Note: This may block the calling thread
+    /// Note: This blocks the calling thread until the bytes are written.
+    /// Like every other send path it is serialized through `sendQueue`, so a single
+    /// message's bytes are always written contiguously and in submission order — even
+    /// when events (sync) and control/transfer handshakes (async) are produced from
+    /// different threads. This is what keeps event ordering intact on the wire.
     /// - Parameter message: The message to send
     /// - Returns: Whether the message was sent/queued successfully
     @discardableResult
@@ -205,21 +194,7 @@ case .connectingState:
         
         switch state {
 case .connectedState:
-            let msgTypeDesc = messageTypeDescription(message.msgType)
-            let infoDesc = messageInfoDescription(message)
-            debugLog("[Conn:\(connectionId)] Sending message (sync): type=\(msgTypeDesc)\(infoDesc)", module: .network)
-            
-            let result = _socket.send(message.rawData)
-            
-            if result {
-                debugLog("[Conn:\(connectionId)] Message sent successfully (sync): type=\(msgTypeDesc)", module: .network)
-            } else {
-                let socketState = _socket.socketState
-                errorLog("[Conn:\(connectionId)] Failed to send message (sync): type=\(msgTypeDesc), socketState=\(socketState.rawValue)", module: .network)
-                delegate?.connectionDisconnected(self)
-            }
-            
-            return result
+            return sendQueue.sync { performSend(message) }
             
 case .connectingState:
             debugLog("[Conn:\(connectionId)] Queuing pending message: \(message)")
@@ -236,6 +211,29 @@ case .connectingState:
             warningLog("[Conn:\(connectionId)] Cannot send message, socket not connected (state=\(state.rawValue))", module: .network)
             return false
         }
+    }
+
+    /// The single point that writes a message to the socket. Always runs on `sendQueue`.
+    /// All public send paths funnel through here so writes never interleave.
+    private func performSend(_ message: TPMessage) -> Bool {
+        let msgTypeDesc = messageTypeDescription(message.msgType)
+        let infoDesc = messageInfoDescription(message)
+        debugLog("[Conn:\(connectionId)] Sending message: type=\(msgTypeDesc)\(infoDesc)", module: .network)
+
+        let result = _socket.send(message.rawData)
+
+        if result {
+            debugLog("[Conn:\(connectionId)] Message sent successfully: type=\(msgTypeDesc)", module: .network)
+        } else {
+            let socketState = _socket.socketState
+            errorLog("[Conn:\(connectionId)] Failed to send message: type=\(msgTypeDesc), socketState=\(socketState.rawValue)", module: .network)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.delegate?.connectionDisconnected(self)
+            }
+        }
+
+        return result
     }
     
     /// Send pending messages after connection is established

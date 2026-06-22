@@ -52,7 +52,7 @@ import Cocoa
         authenticationAlert.addButton(withTitle: NSLocalizedString("Reject", comment: ""))
         authenticationAlert.addButton(withTitle: NSLocalizedString("Accept and Reject Others", comment: ""))
         
-        let result = (NSApp.delegate as! TPMainController).present(authenticationAlert)
+        let result = TPMainController.shared().present(authenticationAlert)
         
         switch result {
         case NSApplication.ModalResponse.alertFirstButtonReturn:

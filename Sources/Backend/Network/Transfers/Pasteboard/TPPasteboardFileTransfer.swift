@@ -257,6 +257,7 @@ class TPOutgoingPasteboardFileTransfer: TPOutgoingTransfer, TPFileArchiverDelega
 	private var _filePaths: [String] = []
 	private var _lastProgressDate: Date = .distantPast
 	private var _didLogArchiveHeader: Bool = false
+	private var _archiveFinished: Bool = false
 
 	override var type: String {
 		return "TPIncomingPasteboardFileTransfer"
@@ -312,15 +313,35 @@ let sizeString = String.sizeString(for: size)
 	}
 
 	override func _beginTransfer() {
+		// `_beginTransfer` runs on the socket's run loop, which is the main run loop because the
+		// transfer socket connects on the MainActor. Drive tar reading and socket writes on a
+		// dedicated background thread (mirroring TPOutgoingTransfer._sendDataThread) so a large
+		// file transfer never blocks input/UI on the main thread.
 		manager?.transfer(self, didProgress: 0.0)
 		_lastProgressDate = Date()
-		_archiver?.startReading()
+		_archiveFinished = false
+		_socket?._setRunLoop(nil)
+		Thread.detachNewThreadSelector(#selector(_archiveThread), toTarget: self, with: nil)
+	}
+
+	@objc private func _archiveThread() {
+		autoreleasepool {
+			_socket?._setRunLoop(RunLoop.current.getCFRunLoop())
+			_archiver?.startReading()
+			// Pump this thread's run loop so the archiver's background-read notifications
+			// (and the socket callbacks) are delivered here instead of on the main thread.
+			while !_archiveFinished {
+				CFRunLoopRunInMode(.defaultMode, 0.1, true)
+			}
+			_socket?._setRunLoop(nil)
+		}
 	}
 
 	func fileArchiver(_ archiver: TPFileArchiver, hasDataAvailable data: Data) {
 		let sent = _socket?.send(data) ?? false
 		if !sent {
-			self._senderDataTransferAborted()
+			_archiveFinished = true
+			self.performSelector(onMainThread: #selector(_senderDataTransferAborted), with: nil, waitUntilDone: false)
 			return
 		}
 
@@ -330,9 +351,8 @@ let sizeString = String.sizeString(for: size)
 			_lastProgressDate = Date()
 		}
 
-		DispatchQueue.main.async {
-			archiver.continueReading()
-		}
+		// Same (background) run loop the archiver was started on.
+		archiver.continueReading()
 	}
 
 	override func tcpSocketDidSendData(_ tcpSocket: TPTCPSocket) {
@@ -342,7 +362,8 @@ let sizeString = String.sizeString(for: size)
 	func fileArchiverDidCompleteReading(_ archiver: TPFileArchiver) {
 		_sentDataLength = _progressTotalDataLength
 		self.performSelector(onMainThread: #selector(_notifyProgress(_:)), with: NSNumber(value: _sentDataLength), waitUntilDone: false)
-		self._senderDataTransferCompleted()
+		_archiveFinished = true
+		self.performSelector(onMainThread: #selector(_senderDataTransferCompleted), with: nil, waitUntilDone: false)
 	}
 }
 

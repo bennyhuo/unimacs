@@ -6,7 +6,7 @@ import Foundation
 // MARK: - Constants
 // Note: In Swift, you must define constants explicitly.
 // Assuming PING_MAX_COUNT was a preprocessor macro defined elsewhere (e.g., "5")
-let PING_MAX_COUNT = "30"
+let PING_MAX_COUNT = "2"
 
 /// Represents a network interface with its IPv4 address and subnet mask
 private struct InterfaceInfo {
@@ -40,14 +40,20 @@ class PingManager : NSObject {
 	@MainActor private static var tasks: [String: Process] = [:]
 	private static let lock = NSLock() // Used for thread-safe access to 'tasks'
 
-	private static func updateTask(host: String, task: Process?) {
+	private static func registerTask(host: String, task: Process) {
 		DispatchQueue.main.async {
-			if let prevTask = tasks[host] {
-				// Terminate previous task for this host
-				prevTask.terminate()
+			if let prevTask = tasks[host], prevTask !== task {
+				prevTask.terminateIfRunning()
 			}
-			// Store the new task
 			tasks[host] = task
+		}
+	}
+
+	private static func removeTask(host: String, task: Process) {
+		DispatchQueue.main.async {
+			if tasks[host] === task {
+				tasks[host] = nil
+			}
 		}
 	}
 	
@@ -140,8 +146,9 @@ class PingManager : NSObject {
 	private static func pingWithInterfaces(host: String, interfaces: [String], currentIndex: Int) {
 		guard currentIndex < interfaces.count else {
 			debugLog("ping to \(host) - all interfaces exhausted, no success.")
-			DispatchQueue.main.async {
-				TPMainController.shared().resetAllConnectionsIfNotInControl()
+			Task { @MainActor in
+				DomainBrowser.shared.restart()
+				DeviceConnectionManager.shared.autoConnectPairedDevices()
 			}
 			return
 		}
@@ -160,8 +167,6 @@ class PingManager : NSObject {
 		task.standardError = pipe // Capture both output and error streams
 		
 		let outputHandle = pipe.fileHandleForReading
-		
-		updateTask(host: host, task: task)
 
 		// Track if we've already handled success/failure for this task
 		var hasHandledResult = false
@@ -194,14 +199,16 @@ class PingManager : NSObject {
 						
 						if !alreadyHandled {
 							debugLog("ping successfully to \(host) via \(interfaceName).")
-							// Success: Terminate the running task
-							task.terminate()
+							task.terminateIfRunning()
 							handle.readabilityHandler = nil
+							Task { @MainActor in
+								DeviceConnectionManager.shared.autoConnectPairedDevices()
+							}
 						}
 						return
 					}
 					
-					if line.contains("Request timeout for icmp_seq \(PING_MAX_COUNT)") {
+					if line.contains("Request timeout") {
 						resultLock.lock()
 						let alreadyHandled = hasHandledResult
 						hasHandledResult = true
@@ -211,7 +218,7 @@ class PingManager : NSObject {
 							debugLog("ping to \(host) via \(interfaceName) - Timeout. Trying next interface...")
 							
 							// Timeout detected: Terminate the running task and try next interface
-							task.terminate()
+							task.terminateIfRunning()
 							handle.readabilityHandler = nil
 							
 							// Try next interface
@@ -223,23 +230,20 @@ class PingManager : NSObject {
 			}
 		}
 		
-		// Launch the process
+		// Launch the process before registering so updateTask never terminates an unlaunched process
 		do {
 			try task.run()
 			debugLog("ping to \(host) via \(interfaceName) - start.")
 		} catch {
 			debugLog("Error launching ping task via \(interfaceName): \(error.localizedDescription)")
-			// Cleanup task storage on launch failure, try next interface
-			updateTask(host: host, task: nil)
 			pingWithInterfaces(host: host, interfaces: interfaces, currentIndex: currentIndex + 1)
 			return
 		}
-		
-		// Define a termination handler (optional, but good practice)
-		// This is primarily for post-cleanup or logging final status.
+
+		registerTask(host: host, task: task)
+
 		task.terminationHandler = { finishedTask in
-			// Final cleanup of the task storage
-			updateTask(host: host, task: nil)
+			removeTask(host: host, task: finishedTask)
 		}
 	}
 }

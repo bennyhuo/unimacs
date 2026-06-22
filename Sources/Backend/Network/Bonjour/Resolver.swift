@@ -5,7 +5,7 @@
 
 import Foundation
 
-let resolveTimeout = 10.0
+let resolveTimeout = 3.0
 
 class Resolver: NSObject, @preconcurrency NetServiceDelegate {
 
