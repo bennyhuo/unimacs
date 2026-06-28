@@ -10,8 +10,8 @@ private let TPMsgHostDataKey = "host-data"
 
 // MARK: - Internal SocketConnection Class
 
-private class SocketConnection: NSObject, TPTCPSecureSocketDelegate {
-    private(set) var socket: TPTCPSecureSocket?
+private class SocketConnection: NSObject, MessageChannelDelegate {
+    private(set) var channel: MessageChannel?
     private(set) var host: TPRemoteHost
     private(set) var infoDict: [String: Any]?
     private(set) weak var delegate: TPClientConnectionsDelegate?
@@ -26,37 +26,34 @@ private class SocketConnection: NSObject, TPTCPSecureSocketDelegate {
         
         debugLog("SocketConnection init", module: .network)
         
-        let socket = TPTCPSecureSocket(delegate: self)
-        self.socket = socket
-        
         let enableEncryption = TPLocalHost.shared.pairWith(host: remoteHost, hasCapability: .encryption)
-        socket.enableEncryption = enableEncryption
+        let channel = MessageTransportFactory.makeChannel(enableEncryption: enableEncryption)
+        self.channel = channel
+        channel.delegate = self
+        channel.setNoDelay(true)
         
-        if socket.connect(toHost: remoteHost.address, onPort: Int32(remoteHost.port)) {
-            socket.setNoDelay(true)
-        } else {
-            socket.close()
+        guard let address = remoteHost.address,
+              channel.connect(toHost: address, port: Int32(remoteHost.port)) else {
+            channel.close()
             return nil
         }
     }
     
     func close() {
-        socket?.close()
+        channel?.close()
     }
     
-    // MARK: - TPTCPSecureSocketDelegate
+    // MARK: - MessageChannelDelegate
     
-    func tcpSocketConnectionSucceeded(_ tcpSocket: TPTCPSocket) {
-        debugLog("SocketConnection tcpSocketConnectionSucceeded", module: .network)
+    func channelDidConnect(_ channel: MessageChannel) {
+        debugLog("SocketConnection channelDidConnect", module: .network)
         
-        // If this is a secure socket, save the peer certificate
-        if let secureSocket = tcpSocket as? TPTCPSecureSocket, secureSocket.enableEncryption {
-            if let certRef = secureSocket.copyPeerCertificate {
-                host.certificate = certRef
-            }
+        // Trust-on-first-use: capture the peer certificate after the handshake.
+        if channel.enableEncryption, let certRef = channel.peerCertificate {
+            host.certificate = certRef
         }
         
-        let networkConnection = NetworkConnection(socket: tcpSocket)
+        let networkConnection = NetworkConnection(channel: channel)
         self.connection = networkConnection
         
         connection?.delegate = self
@@ -64,9 +61,18 @@ private class SocketConnection: NSObject, TPTCPSecureSocketDelegate {
         connection?.sendAsync(TPConnectionsManager.identificationMessage())
     }
     
-    func tcpSocketConnectionFailed(_ tcpSocket: TPTCPSocket) {
-        debugLog("SocketConnection tcpSocketConnectionFailed", module: .network)
+    func channelDidFailToConnect(_ channel: MessageChannel) {
+        debugLog("SocketConnection channelDidFailToConnect", module: .network)
         TPConnectionsManager.shared.socketConnectionFailed(self)
+    }
+    
+    func channelDidDisconnect(_ channel: MessageChannel) {
+        debugLog("SocketConnection channelDidDisconnect", module: .network)
+        TPConnectionsManager.shared.socketConnectionFailed(self)
+    }
+    
+    func channel(_ channel: MessageChannel, didReceiveData data: Data) {
+        // Data is handled by `NetworkConnection` once it takes over as delegate.
     }
 }
 
@@ -115,7 +121,7 @@ extension SocketConnection: NetworkConnectionDelegate {
     
     private var connections = Set<NetworkConnection>()
     private var pendingConnections = [String: SocketConnection]()
-    private var listenSocket: TPTCPSecureSocket?
+    private var listener: MessageListener?
     private weak var listenDelegate: TPServerConnectionsDelegate?
     
     private override init() {
@@ -137,116 +143,142 @@ extension SocketConnection: NetworkConnectionDelegate {
     @objc func connect(toHost host: TPRemoteHost, withDelegate delegate: TPClientConnectionsDelegate?, infoDict: [String: Any]?) -> Bool {
         debugLog("TPConnectionsManager connectToHost", module: .network)
 
-        // Socket creation/connect must run on the network run loop so the socket's
-        // CFRunLoop source is hosted off the main thread. All access to the
-        // pending/connections collections is confined to the same thread.
-        return NetworkRunLoopThread.shared.sync {
-            if pendingConnections[host.identifier] != nil {
+        // Socket creation/connect must run on the network run loop so the socket's CFRunLoop
+        // source is hosted off the main thread. We dispatch *asynchronously*: the blocking
+        // `socket.connect` (up to the connection timeout) must never run while the caller's
+        // thread (often the main actor) waits on it — doing so froze the main run loop.
+        // All access to the pending/connections collections stays confined to this thread.
+        // Immediate failures are reported through the delegate, which schedules a reconnect.
+        NetworkRunLoopThread.shared.async {
+            if self.pendingConnections[host.identifier] != nil {
                 debugLog("connectToHost: \(host.identifier), pending...", module: .network)
-                return true
+                return
             }
 
             if let connection = SocketConnection(connectionToHost: host, delegate: delegate, infoDict: infoDict) {
-                pendingConnections[host.identifier] = connection
+                self.pendingConnections[host.identifier] = connection
                 debugLog("connectToHost: \(host.identifier), add to pendingConnections", module: .network)
-                return true
             } else {
                 debugLog("connectToHost: \(host.identifier), failed immediately", module: .network)
-                return false
+                // Delegates may touch UI / main-actor state, so always report on main.
+                DispatchQueue.main.async {
+                    delegate?.connectionToServerFailed(host, infoDict: infoDict)
+                }
             }
         }
+        return true
     }
     
     // MARK: - Listening
     
     @objc func startListening(withDelegate delegate: TPServerConnectionsDelegate?, onPort port: UnsafeMutablePointer<Int32>) -> Bool {
-        return NetworkRunLoopThread.shared.sync {
-            if listenSocket != nil {
+        return NetworkRunLoopThread.shared.sync { [self] in
+            if self.listener != nil {
                 return true
             }
 
-            listenDelegate = delegate
+            self.listenDelegate = delegate
 
             let enableEncryption = TPLocalHost.shared.hasCapability(.encryption)
-            let socket = TPTCPSecureSocket(delegate: self)
-            socket.enableEncryption = enableEncryption
-            listenSocket = socket
+            let listener = MessageTransportFactory.makeListener(enableEncryption: enableEncryption)
+            listener.delegate = self
+            self.listener = listener
 
-            // Listening on the network run loop means every accepted child socket
-            // also binds its callbacks to this thread, off the main run loop.
-            return socket.listen(onPort: port, tries: 50)
+            // For the legacy stack, listening on the network run loop binds every
+            // accepted child socket's callbacks to this thread, off the main run
+            // loop. The NW stack uses its own dispatch queues.
+            return listener.start(onPort: port, tries: 50)
         }
     }
     
     @objc func stopListening() {
-        NetworkRunLoopThread.shared.sync {
-            listenSocket?.close()
-            listenSocket = nil
+        NetworkRunLoopThread.shared.async {
+            self.listener?.stop()
+            self.listener = nil
         }
     }
     
     // MARK: - Socket Connection Callbacks
+
+    // Channel delegate callbacks may arrive on the legacy network run loop or on
+    // a Network.framework dispatch queue, so confine all access to the pending /
+    // connections collections to the network run loop.
     
     fileprivate func socketConnectionFailed(_ socketConnection: SocketConnection) {
-        let host = socketConnection.host
-        let identifier = host.identifier
-        
-        if pendingConnections[identifier] != nil {
-            socketConnection.delegate?.connectionToServerFailed(host, infoDict: socketConnection.infoDict)
-            pendingConnections.removeValue(forKey: identifier)
+        NetworkRunLoopThread.shared.async {
+            let host = socketConnection.host
+            let identifier = host.identifier
+
+            if self.pendingConnections[identifier] != nil {
+                socketConnection.delegate?.connectionToServerFailed(host, infoDict: socketConnection.infoDict)
+                self.pendingConnections.removeValue(forKey: identifier)
+            }
         }
     }
     
     fileprivate func socketConnection(_ socketConnection: SocketConnection, succeededWithNetworkConnection networkConnection: NetworkConnection) {
-        let host = socketConnection.host
-        let identifier = host.identifier
-        
-        if pendingConnections[identifier] != nil {
-            socketConnection.delegate?.connectionToServerSucceeded(networkConnection, infoDict: socketConnection.infoDict)
-            pendingConnections.removeValue(forKey: identifier)
+        NetworkRunLoopThread.shared.async {
+            let host = socketConnection.host
+            let identifier = host.identifier
+
+            if self.pendingConnections[identifier] != nil {
+                socketConnection.delegate?.connectionToServerSucceeded(networkConnection, infoDict: socketConnection.infoDict)
+                self.pendingConnections.removeValue(forKey: identifier)
+            }
         }
     }
     
     // MARK: - Reset
     
     @objc func reset() {
-        NetworkRunLoopThread.shared.sync {
-            for connection in connections {
+        NetworkRunLoopThread.shared.async {
+            for connection in self.connections {
                 connection.disconnect()
             }
-            connections.removeAll()
+            self.connections.removeAll()
 
-            for connection in pendingConnections.values {
+            for connection in self.pendingConnections.values {
                 connection.close()
             }
-            pendingConnections.removeAll()
+            self.pendingConnections.removeAll()
         }
     }
 }
 
-// MARK: - TPTCPSecureSocketDelegate
+// MARK: - MessageListenerDelegate
 
-extension TPConnectionsManager: TPTCPSecureSocketDelegate {
-    
-    func tcpSocket(_ listenSocket: TPTCPSocket, connectionAccepted childSocket: TPTCPSocket) {
-        debugLog("connection accepted from \(listenSocket) on \(childSocket)", module: .network)
-        
-        childSocket.setNoDelay(true)
-        
-        let connection = NetworkConnection(socket: childSocket)
-        connection.delegate = self
-        // Fire and forget - identification message
-        connection.sendAsync(TPConnectionsManager.identificationMessage())
-        connections.insert(connection)
+extension TPConnectionsManager: MessageListenerDelegate {
+
+    func listener(_ listener: MessageListener, didAcceptChannel channel: MessageChannel) {
+        NetworkRunLoopThread.shared.async {
+            debugLog("connection accepted on \(channel.remoteAddress ?? "nil")", module: .network)
+
+            channel.setNoDelay(true)
+
+            let connection = NetworkConnection(channel: channel)
+            connection.delegate = self
+            // Fire and forget - identification message
+            connection.sendAsync(TPConnectionsManager.identificationMessage())
+            self.connections.insert(connection)
+        }
     }
-    
-    func tcpSecureSocketShouldEnableEncryption(_ tcpSocket: TPTCPSecureSocket) -> Bool {
-        guard let remoteAddress = tcpSocket.remoteAddress else {
+
+    func listenerShouldEnableEncryption(_ listener: MessageListener, forRemoteAddress address: String?) -> Bool {
+        shouldEnableEncryption(forRemoteAddress: address)
+    }
+}
+
+extension TPConnectionsManager {
+    /// Decide whether to use encryption for a peer at the given address, based on
+    /// the shared encryption capability. Also used by file transfers (which keep
+    /// running on the legacy `TPTCPSecureSocket` regardless of the control stack).
+    @objc func shouldEnableEncryption(forRemoteAddress address: String?) -> Bool {
+        guard let remoteAddress = address else {
             let encryptionActive = TPPreferencesManager.shared().bool(forPref: ENABLED_ENCRYPTION)
             warningLog("could not determine remote address, will\(encryptionActive ? "" : " NOT") use encryption as it is configured so locally", module: .network)
             return encryptionActive
         }
-        
+
         if let remoteHost = TPHostsManager.shared.host(withAddress: remoteAddress) {
             return TPLocalHost.shared.pairWith(host: remoteHost, hasCapability: .encryption)
         } else {
@@ -254,14 +286,6 @@ extension TPConnectionsManager: TPTCPSecureSocketDelegate {
             warningLog("could not determine which host has IP \(remoteAddress), will\(encryptionActive ? "" : " NOT") use encryption as it is configured so locally", module: .network)
             return encryptionActive
         }
-    }
-    
-    func tcpSocketConnectionSucceeded(_ tcpSocket: TPTCPSocket) {
-        // Not used for listen socket
-    }
-    
-    func tcpSocketConnectionFailed(_ tcpSocket: TPTCPSocket) {
-        // Not used for listen socket
     }
 }
 
@@ -290,6 +314,8 @@ extension TPConnectionsManager: NetworkConnectionDelegate {
     }
     
     func connectionDisconnected(_ connection: NetworkConnection) {
-        connections.remove(connection)
+        NetworkRunLoopThread.shared.async {
+            self.connections.remove(connection)
+        }
     }
 }

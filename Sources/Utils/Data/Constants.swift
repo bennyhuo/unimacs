@@ -40,6 +40,9 @@ public class TPConstants: NSObject {
     @objc public static let switchSoundPathKey = "switchSoundPath"
     @objc public static let applicationsDisablingTeleportKey = "appIdentifiersDisablingTeleport"
     @objc public static let syncModifiersKey = "syncModifiers"
+    @objc public static let useSwiftNetworkStackKey = "useSwiftNetworkStack"
+    @objc public static let useDirectEventTapsKey = "useDirectEventTaps"
+    @objc public static let useCursorShieldWindowKey = "useCursorShieldWindow"
     
     @objc public static let commandPortKey = "commandPort"
     @objc public static let transferPortKey = "transferPort"
@@ -98,6 +101,9 @@ public class TPConstants: NSObject {
     @objc public static var SWITCH_SOUND_PATH: String { switchSoundPathKey }
     @objc public static var APPLICATIONS_DISABLING_TELEPORT: String { applicationsDisablingTeleportKey }
     @objc public static var SYNC_MODIFIERS: String { syncModifiersKey }
+    @objc public static var USE_SWIFT_NETWORK_STACK: String { useSwiftNetworkStackKey }
+    @objc public static var USE_DIRECT_EVENT_TAPS: String { useDirectEventTapsKey }
+    @objc public static var USE_CURSOR_SHIELD_WINDOW: String { useCursorShieldWindowKey }
     
     @objc public static var COMMAND_PORT: String { commandPortKey }
     @objc public static var TRANSFER_PORT: String { transferPortKey }

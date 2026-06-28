@@ -21,8 +21,6 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
     private var switchOptions: [AnyHashable: Any]?
 	/// Client desktop placement in *server* global coordinates. Used to map cross-screen border locations.
 	private var clientDesktopPlacementInServerCoords: NSRect?
-	/// Avoid spamming controlStop while the cursor stays inside the return hot border on a locked screen.
-	private var wasInsideReturnHotBorderWhileLocked = false
     
 	static let shared = TPServerController()
     
@@ -139,7 +137,6 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
 	@MainActor
 	func startControl(with data: ControlRequestBody) {
         self.state = .controlled
-        wasInsideReturnHotBorderWhileLocked = false
         
 		let host = self.currentConnection!.connectedHost!
         
@@ -161,7 +158,7 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
         }
         
 		// Clip against the whole local desktop, not a single screen frame.
-        clientHotBorder = TPHotBorder(hostId: host.identifier, contentRect: adjustedPlacement, in: localDesktopFrame)
+        clientHotBorder = TPHotBorder(hostId: host.identifier, contentRect: adjustedPlacement, in: localDesktopFrame, kind: .control)
 		clientDesktopPlacementInServerCoords = adjustedPlacement
         if let border = clientHotBorder {
             self.setupHotBorder(border, for: host)
@@ -178,7 +175,7 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
 		if let border = clientHotBorder, let rel = data.hotBorderRelativePoint {
 			// Preferred: normalized within the hot border window.
 			shouldWarp = true
-			let contentSize = border.contentView?.bounds.size ?? border.frame.size
+			let contentSize = border.frame.size
 			let localPoint = NSPoint(x: rel.x * contentSize.width, y: rel.y * contentSize.height)
 			mousePosition = border.screenPoint(fromLocalPoint: localPoint, flipped: true)
 		} else if mousePosition.x >= 0.0 && mousePosition.y >= 0.0 {
@@ -225,30 +222,6 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
     
     // MARK: - Stop control
     
-	/// Lock-screen fallback: hot borders do not receive mouseEntered, so detect border entry by cursor position.
-	@MainActor
-	func handleLockedReturnHotBorder(at globalCocoaPoint: NSPoint) {
-		guard state == .controlled, let border = clientHotBorder else {
-			wasInsideReturnHotBorderWhileLocked = false
-			return
-		}
-		
-		let inside = border.frame.contains(globalCocoaPoint)
-		if !inside {
-			wasInsideReturnHotBorderWhileLocked = false
-			return
-		}
-		guard !wasInsideReturnHotBorderWhileLocked else { return }
-		wasInsideReturnHotBorderWhileLocked = true
-		
-		let localLocation = NSPoint(
-			x: globalCocoaPoint.x - border.frame.minX,
-			y: globalCocoaPoint.y - border.frame.minY
-		)
-		debugLog("Locked-screen return hot border hit at \(localLocation), requesting client stop", module: .control)
-		requestStopControl(at: localLocation)
-	}
-    
 	@MainActor func requestStopControl(at location: NSPoint) {
 		// Only send serializable cursor / hot-border position info in the controlStop message.
 		var messageInfoDict: [AnyHashable: Any] = [:]
@@ -264,7 +237,7 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
 			messageInfoDict[TPMousePositionKey] = NSData.data(with: clientDesktopRelative)
 			
 			// Preferred: normalized within the hot border window.
-			let contentSize = border.contentView?.bounds.size ?? border.frame.size
+			let contentSize = border.frame.size
 			let rawRelative = NSPoint(
 				x: contentSize.width > 0 ? (location.x / contentSize.width) : 0,
 				y: contentSize.height > 0 ? (location.y / contentSize.height) : 0
@@ -296,8 +269,7 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
         super.stopControl(withDisconnect: disconnect)
         
         if state == .controlled {
-            state = .shared
-            wasInsideReturnHotBorderWhileLocked = false
+            state = TPPreferencesManager.shared().bool(forPref: ALLOW_CONTROL) ? .shared : .idle
             
             if TPPreferencesManager.shared().bool(forPref: WRAP_ON_STOP_CONTROL) {
                 self.eventsController?.warpMouseToCenter()
@@ -314,6 +286,7 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
             
 			TPStatusItemController.default.update(with: .idle, host: nil)
             TPClientController.shared.updateTriggersAndShowVisualHint(false)
+			debugLog("Control stopped, server state restored to \(state == .shared ? "shared" : "idle")", module: .control)
         }
     }
     

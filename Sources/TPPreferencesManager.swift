@@ -31,6 +31,19 @@ let ENABLE_DEBUG_LOG = "enableLogging"
 let SWITCH_SOUND_PATH = "switchSoundPath"
 let APPLICATIONS_DISABLING_TELEPORT = "appIdentifiersDisablingTeleport"
 let SYNC_MODIFIERS = "syncModifiers"
+/// When enabled, the control connection uses the Swift Network.framework stack
+/// (`NWConnection`/`NWListener`); when disabled it falls back to the legacy ObjC
+/// CFSocket/SecureTransport implementation (`TPTCPSecureSocket`).
+let USE_SWIFT_NETWORK_STACK = "useSwiftNetworkStack"
+/// When enabled, input events are streamed directly to the remote host for full
+/// gesture support. When disabled, the compatibility event-taps mode is used.
+let USE_DIRECT_EVENT_TAPS = "useDirectEventTaps"
+/// Cursor hiding strategy while controlling a remote machine. When enabled
+/// (Scheme A, the default), teleport is brought to the foreground behind a
+/// transparent shield window and the public `CGDisplayHideCursor` API is used —
+/// this works reliably on macOS 26+. When disabled (Scheme B), the legacy
+/// private `SetsCursorInBackground` background hack is used instead.
+let USE_CURSOR_SHIELD_WINDOW = "useCursorShieldWindow"
 
 let COMMAND_PORT = "commandPort"
 let TRANSFER_PORT = "transferPort"
@@ -127,6 +140,7 @@ class TPPreferencesManager: NSObject {
             // Secret stuff
             HIDE_CONTROL_BEZEL: false,
             "visibleBorders": false,
+            "hotBorderStyle": 0,
             INHIBITION_PERIOD: 0.2,
             SYNC_FIND_PASTEBOARD: false,
             WARNED_ABOUT_ACCESSIBILITY: false,
@@ -143,7 +157,10 @@ class TPPreferencesManager: NSObject {
             WRAP_ON_STOP_CONTROL: true,
             PLAY_SWITCH_SOUND: false,
             ENABLE_DEBUG_LOG: false,
-            SYNC_MODIFIERS: true
+            SYNC_MODIFIERS: true,
+            USE_SWIFT_NETWORK_STACK: false,
+            USE_DIRECT_EVENT_TAPS: true,
+            USE_CURSOR_SHIELD_WINDOW: true
         ]
        
         return controller

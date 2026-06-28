@@ -71,6 +71,9 @@ class PasteboardMonitor: NSObject {
     private let monitoringQueue = DispatchQueue(label: "com.teleport.pasteboard.monitor", qos: .utility)
     private var isActivelyMonitoring = false
     private var adaptiveInterval: TimeInterval = 0.5
+    private var aggressiveMonitoring = false
+    private static let defaultInterval: TimeInterval = 0.5
+    private static let aggressiveInterval: TimeInterval = 0.1
     
     // Set this to true to ignore copies made by your own app
     var ignoreOwnAppCopies = true
@@ -149,12 +152,15 @@ class PasteboardMonitor: NSObject {
     }
     
     private func adjustMonitoringFrequency(isActive: Bool) {
+        guard !aggressiveMonitoring else { return }
         adaptiveInterval = isActive ? 0.2 : 0.8  // Fast: 200ms, Slow: 800ms
-        
-        if timer != nil {
-            stop()
-            start()  // Restart with new interval
-        }
+        restartTimerIfNeeded()
+    }
+
+    private func restartTimerIfNeeded() {
+        guard timer != nil else { return }
+        stop()
+        start()
     }
 
     // MARK: - Public Interface
@@ -256,6 +262,29 @@ class PasteboardMonitor: NSObject {
             self?.pollPasteboard()
         }
     }
+
+    /// Poll synchronously so control-boundary clipboard sync sees the latest pasteboard state.
+    func syncPoll() {
+        monitoringQueue.sync { [weak self] in
+            self?.pollPasteboard()
+        }
+    }
+
+    /// Short-lived fast polling around control start/stop where copy-then-switch is common.
+    func setAggressiveMonitoring(_ enabled: Bool) {
+        let apply = { [weak self] in
+            guard let self else { return }
+            guard self.aggressiveMonitoring != enabled else { return }
+            self.aggressiveMonitoring = enabled
+            self.adaptiveInterval = enabled ? Self.aggressiveInterval : Self.defaultInterval
+            self.restartTimerIfNeeded()
+        }
+        if Thread.isMainThread {
+            apply()
+        } else {
+            DispatchQueue.main.async(execute: apply)
+        }
+    }
     
     /// Clear content history (useful when switching contexts)
     func clearHistory() {
@@ -294,6 +323,18 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
     // Performance optimization
     private var lastTransferHash: PasteboardContentHash?
 
+	/// Captured when a boundary sync starts so retries still work after mode resets.
+	private struct BoundarySendContext {
+		let connection: NetworkConnection
+		let baseline: PasteboardContentHash?
+		let generation: UInt
+	}
+
+	private var boundarySendGeneration: UInt = 0
+	private var boundarySendCompletedGeneration: UInt?
+	private var activeBoundaryContext: BoundarySendContext?
+	private static let boundaryRetryDelays: [TimeInterval] = [0.08, 0.2, 0.45]
+
 	func start() {
 		let monitor = PasteboardMonitor.shared
         monitor.delegate = self
@@ -308,6 +349,7 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
 		pasteboardDirtySinceBaseline = false
 		sessionBaselineHash = nil
 		mode = .idleRecording
+		PasteboardMonitor.shared.setAggressiveMonitoring(false)
         
         // Clear history when resetting to avoid false positives
         PasteboardMonitor.shared.clearHistory()
@@ -340,15 +382,18 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
 
 	func clientWillRequestStartControl() {
 		mode = .connectingToControl
+		PasteboardMonitor.shared.syncPoll()
 		sessionBaselineHash = PasteboardContentHash(from: NSPasteboard.general)
+		PasteboardMonitor.shared.setAggressiveMonitoring(true)
 	}
 
 	func clientDidStartControl(using connection: NetworkConnection, remoteHost: TPRemoteHost) {
 		mode = .controllingRemote
-		schedulePasteboardSendIfNeeded(using: connection)
+		scheduleBoundaryPasteboardSend(using: connection, reason: "start control")
 	}
 
 	func clientDidStopControl() {
+		cancelBoundaryPasteboardSend()
 		resetBaselineAndStartRecording()
 	}
 
@@ -369,56 +414,116 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
 	func serverDidStartBeingControlled() {
 		mode = .controlledByRemote
 		pasteboardDirtySinceBaseline = false
+		PasteboardMonitor.shared.syncPoll()
 		sessionBaselineHash = PasteboardContentHash(from: NSPasteboard.general)
+		PasteboardMonitor.shared.setAggressiveMonitoring(true)
 	}
 
 	/// Called when the server initiates stop (hot border). Matches legacy `beginTransfers` before `controlStop`.
 	func serverRequestStopControl(using connection: NetworkConnection) {
-		sendPasteboardOnStopIfNeeded(using: connection)
+		scheduleBoundaryPasteboardSend(using: connection, reason: "stop control")
 	}
 
 	func serverWillStopBeingControlled(using connection: NetworkConnection) {
-		sendPasteboardOnStopIfNeeded(using: connection)
+		// Client-initiated stop does not go through serverRequestStopControl; still sync clipboard.
+		if activeBoundaryContext == nil {
+			scheduleBoundaryPasteboardSend(using: connection, reason: "stop control (client initiated)")
+		}
 		resetBaselineAndStartRecording()
 	}
 
 	// MARK: - Transfer building
 
-	private func schedulePasteboardSendIfNeeded(using connection: NetworkConnection) {
-		guard shouldSendPasteboardSinceSessionBaseline() else { return }
-		debugLog("Scheduling start pasteboard send", module: .clipboard)
-		// Yield so event-tap setup in the same run-loop turn can finish first.
+	private func cancelBoundaryPasteboardSend() {
+		boundarySendGeneration &+= 1
+		activeBoundaryContext = nil
+		boundarySendCompletedGeneration = nil
+	}
+
+	/// Always schedule boundary sync with short retries. Some apps update changeCount before
+	/// payload data is readable; an immediate read at control start/stop can miss a fast copy.
+	private func scheduleBoundaryPasteboardSend(using connection: NetworkConnection, reason: String) {
+		boundarySendGeneration &+= 1
+		let generation = boundarySendGeneration
+		boundarySendCompletedGeneration = nil
+		activeBoundaryContext = BoundarySendContext(
+			connection: connection,
+			baseline: sessionBaselineHash,
+			generation: generation
+		)
+
+		debugLog("Scheduling boundary pasteboard send (\(reason))", module: .clipboard)
+		PasteboardMonitor.shared.setAggressiveMonitoring(true)
+
+		// Yield one run-loop turn so event-tap setup can finish before the first read.
 		DispatchQueue.main.async { [weak self] in
-			guard let self else { return }
-			guard self.mode == .controllingRemote else { return }
-			guard self.shouldSendPasteboardSinceSessionBaseline() else { return }
-			self.sendPasteboardIfNeeded(using: connection)
-			self.pasteboardDirtySinceBaseline = false
-			self.sessionBaselineHash = PasteboardContentHash(from: NSPasteboard.general)
+			self?.performBoundaryPasteboardSendAttempt()
+		}
+		for delay in Self.boundaryRetryDelays {
+			DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+				self?.performBoundaryPasteboardSendAttempt()
+			}
+		}
+
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak self] in
+			guard let self, generation == self.boundarySendGeneration else { return }
+			self.activeBoundaryContext = nil
+			if self.mode == .idleRecording {
+				PasteboardMonitor.shared.setAggressiveMonitoring(false)
+			}
 		}
 	}
 
-	private func sendPasteboardOnStopIfNeeded(using connection: NetworkConnection) {
-		guard mode == .controlledByRemote else { return }
-		// Stop-time sync must not rely on dirty polling alone: compare against the session
-		// baseline captured in serverDidStartBeingControlled (legacy beginTransfers read live pasteboard).
-		guard shouldSendPasteboardSinceSessionBaseline() else {
-			debugLog("Skip stop pasteboard send: unchanged since session baseline", module: .clipboard)
+	private func performBoundaryPasteboardSendAttempt() {
+		guard let context = activeBoundaryContext,
+			  context.generation == boundarySendGeneration,
+			  boundarySendCompletedGeneration != context.generation else {
 			return
 		}
-		debugLog("Sending pasteboard on stop control", module: .clipboard)
-		sendPasteboardIfNeeded(using: connection)
+
+		PasteboardMonitor.shared.syncPoll()
+
+		guard shouldSendPasteboard(since: context.baseline) else {
+			return
+		}
+		guard pasteboardHasTransferableContent() else {
+			debugLog("Deferring boundary pasteboard send: content not ready yet", module: .clipboard)
+			return
+		}
+
+		debugLog("Sending pasteboard at control boundary", module: .clipboard)
+		sendPasteboardIfNeeded(using: context.connection)
+		boundarySendCompletedGeneration = context.generation
 		pasteboardDirtySinceBaseline = false
 		sessionBaselineHash = PasteboardContentHash(from: NSPasteboard.general)
 	}
 
-	private func shouldSendPasteboardSinceSessionBaseline() -> Bool {
+	private func shouldSendPasteboard(since baseline: PasteboardContentHash?) -> Bool {
 		if pasteboardDirtySinceBaseline {
 			return true
 		}
 		let current = PasteboardContentHash(from: NSPasteboard.general)
-		if let baseline = sessionBaselineHash, current != baseline {
+		if let baseline, current != baseline {
 			return true
+		}
+		return false
+	}
+
+	private func pasteboardHasTransferableContent() -> Bool {
+		let pasteboard = NSPasteboard.general
+		let fileURLs = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+		if !fileURLs.filter({ $0.isFileURL }).isEmpty {
+			return true
+		}
+
+		for type in pasteboard.types ?? [] {
+			let typeString = type.rawValue
+			if TPTypeNeedsIgnoring(typeString) {
+				continue
+			}
+			if let data = pasteboard.data(forType: type), !data.isEmpty {
+				return true
+			}
 		}
 		return false
 	}

@@ -18,14 +18,16 @@ private enum TPStatusBarIconState {
     /// Remote-control session in progress (controlling or being controlled).
     case active
     
-    var imageName: String {
+    /// SF Symbol used for the menu-bar item. Symbols render as native template
+    /// images, so they match macOS styling and adapt to light/dark menu bars.
+    var symbolName: String {
         switch self {
         case .disconnected:
-            return "status-disconnected"
+            return "point.3.connected.trianglepath.dotted"
         case .connected:
-            return "status-connected"
+            return "point.3.filled.connected.trianglepath.dotted"
         case .active:
-            return "status-active"
+            return "cursorarrow.rays"
         }
     }
 }
@@ -171,7 +173,11 @@ class TPStatusItemController: NSObject {
     }
     
     private func applyIconState(_ iconState: TPStatusBarIconState, to statusItem: NSStatusItem) {
-        guard let image = NSImage(named: iconState.imageName) else { return }
+        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+        guard let image = NSImage(
+            systemSymbolName: iconState.symbolName,
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(config) else { return }
         image.isTemplate = true
         
         NSDisableScreenUpdates()

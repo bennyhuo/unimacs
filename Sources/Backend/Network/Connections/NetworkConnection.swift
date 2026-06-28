@@ -11,6 +11,9 @@ import Foundation
     @objc func connection(_ connection: NetworkConnection, receivedMessage message: TPMessage)
 }
 
+// Note: this class sits on top of `MessageChannel`, so it is transport-agnostic
+// (legacy ObjC socket or Network.framework). It only does message framing.
+
 /// Result type for message sending operations
 enum SendMessageResult {
     case success
@@ -40,13 +43,15 @@ enum NetworkConnectionError: Error, LocalizedError {
 /// Swift implementation of TPNetworkConnection with async/await support
 /// This class manages a network connection and provides async message sending
 @objcMembers
-class NetworkConnection: NSObject, TPTCPSocketDelegate {
+class NetworkConnection: NSObject, MessageChannelDelegate {
     
     // MARK: - Properties
     
-    /// The underlying socket
-    private let _socket: TPTCPSocket
-    var socket: TPTCPSocket { _socket }
+    /// The underlying transport channel (legacy socket or Network.framework).
+    private let _channel: MessageChannel
+
+    /// Current transport state (used by callers for logging / liveness checks).
+    var channelState: TPSocketState { _channel.state }
     
     /// Unique identifier for this connection
     let connectionId: String
@@ -57,7 +62,7 @@ class NetworkConnection: NSObject, TPTCPSocketDelegate {
     /// The connected remote host
     var connectedHost: TPRemoteHost? {
         didSet {
-            if let host = connectedHost, let remoteAddress = _socket.remoteAddress {
+            if let host = connectedHost, let remoteAddress = _channel.remoteAddress {
                 host.address = remoteAddress
             }
         }
@@ -89,17 +94,17 @@ class NetworkConnection: NSObject, TPTCPSocketDelegate {
     
     // MARK: - Initialization
     
-    init(socket: TPTCPSocket) {
-        self._socket = socket
+    init(channel: MessageChannel) {
+        self._channel = channel
         self.connectionId = Self.generateConnectionId()
         self._capabilities = TPLocalHost.shared.capabilities
         
         super.init()
         
-        _socket.delegate = self
-		networkInterfaceName = NetworkUtils.interfaceName(forIPAddress: _socket.localAddress)
+        _channel.delegate = self
+		networkInterfaceName = NetworkUtils.interfaceName(forIPAddress: _channel.localAddress)
         
-        infoLog("[Conn:\(connectionId)] Connection initialized, local=\(_socket.localAddress ?? "nil"), remote=\(_socket.remoteAddress ?? "nil")")
+        infoLog("[Conn:\(connectionId)] Connection initialized, local=\(_channel.localAddress ?? "nil"), remote=\(_channel.remoteAddress ?? "nil")")
     }
     
     // MARK: - Static Methods
@@ -126,23 +131,23 @@ class NetworkConnection: NSObject, TPTCPSocketDelegate {
         if isConnected {
             return true
         }
-        guard _socket.remoteAddress == host.address else {
+        guard _channel.remoteAddress == host.address else {
             return false
         }
         return true
     }
     
-    /// Whether the socket is currently connected
+    /// Whether the channel is currently connected
     var isConnected: Bool {
-        return _socket.socketState == .connectedState
+        return _channel.state == .connectedState
     }
     
     /// Disconnect the connection
     func disconnect() {
         let hostName = connectedHost?.computerName ?? "unknown"
-        let socketState = _socket.socketState
+        let socketState = _channel.state
         debugLog("[Conn:\(connectionId)] disconnect() called, host=\(hostName), socketState=\(socketState.rawValue)", module: .network)
-        _socket.close()
+        _channel.close()
         Task {
             await pendingMessagesManager.clear()
         }
@@ -155,7 +160,7 @@ class NetworkConnection: NSObject, TPTCPSocketDelegate {
     /// - Returns: Whether the message was sent/queued successfully
     @discardableResult
     func sendMessageAsync(_ message: TPMessage) async -> Bool {
-        let state = _socket.socketState
+        let state = _channel.state
         
         switch state {
 case .connectedState:
@@ -190,7 +195,7 @@ case .connectingState:
     /// - Returns: Whether the message was sent/queued successfully
     @discardableResult
     func send(_ message: TPMessage) -> Bool {
-        let state = _socket.socketState
+        let state = _channel.state
         
         switch state {
 case .connectedState:
@@ -220,12 +225,12 @@ case .connectingState:
         let infoDesc = messageInfoDescription(message)
         debugLog("[Conn:\(connectionId)] Sending message: type=\(msgTypeDesc)\(infoDesc)", module: .network)
 
-        let result = _socket.send(message.rawData)
+        let result = _channel.send(message.rawData)
 
         if result {
             debugLog("[Conn:\(connectionId)] Message sent successfully: type=\(msgTypeDesc)", module: .network)
         } else {
-            let socketState = _socket.socketState
+            let socketState = _channel.state
             errorLog("[Conn:\(connectionId)] Failed to send message: type=\(msgTypeDesc), socketState=\(socketState.rawValue)", module: .network)
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
@@ -285,17 +290,43 @@ case .connectingState:
     
     // MARK: - Fire and Forget
     
-    /// Send a message without waiting for result (fire and forget)
-    /// This is the preferred method for control messages that don't need confirmation
+    /// Send a message without waiting for the result (fire and forget), preserving order.
+    ///
+    /// This is the preferred path for high-frequency control traffic — especially input
+    /// events captured inside the CGEventTap callback. It enqueues directly onto the single
+    /// serial `sendQueue`, so:
+    ///   - submission order == on-wire order (no `Task` reordering), and
+    ///   - the caller (e.g. the event-tap callback on the main run loop) never blocks on the
+    ///     socket write. Blocking it would stall input capture (the OS disables a slow tap)
+    ///     and freeze the main run loop while a large transfer saturates the link.
     func sendAsync(_ message: TPMessage) {
-        Task {
-            await sendMessageAsync(message)
+        let state = _channel.state
+
+        switch state {
+        case .connectedState:
+            sendQueue.async { [weak self] in
+                self?.performSend(message)
+            }
+
+        case .connectingState:
+            debugLog("[Conn:\(connectionId)] Queuing pending message: \(message)")
+            Task { [weak self] in
+                await self?.pendingMessagesManager.append(message)
+            }
+
+        default:
+            warningLog("[Conn:\(connectionId)] Cannot send message, socket not connected (state=\(state.rawValue))", module: .network)
         }
     }
     
-    // MARK: - TPTCPSocketDelegate
-    
-    func tcpSocket(_ tcpSocket: TPTCPSocket, gotData data: Data) {
+    // MARK: - MessageChannelDelegate
+
+    // NetworkConnection is attached to a channel only after it is connected, so
+    // these two are not expected to fire on it; keep them as no-ops for safety.
+    func channelDidConnect(_ channel: MessageChannel) {}
+    func channelDidFailToConnect(_ channel: MessageChannel) {}
+
+    func channel(_ channel: MessageChannel, didReceiveData data: Data) {
         debugLog("[Conn:\(connectionId)] Got raw data (\(data.count) bytes), buffer size=\(msgBuffer.count)", module: .network)
         
         guard !data.isEmpty else {
@@ -324,11 +355,11 @@ case .connectingState:
         }
     }
     
-    func tcpSocketConnectionClosed(_ tcpSocket: TPTCPSocket) {
+    func channelDidDisconnect(_ channel: MessageChannel) {
         let hostName = connectedHost?.computerName ?? "unknown"
-        let remoteAddr = _socket.remoteAddress ?? "nil"
-        let socketState = _socket.socketState
-        warningLog("[Conn:\(connectionId)] Connection closed by socket callback, host=\(hostName), remote=\(remoteAddr), socketState=\(socketState.rawValue), bufferSize=\(msgBuffer.count)", module: .network)
+        let remoteAddr = _channel.remoteAddress ?? "nil"
+        let socketState = _channel.state
+        warningLog("[Conn:\(connectionId)] Connection closed by channel callback, host=\(hostName), remote=\(remoteAddr), socketState=\(socketState.rawValue), bufferSize=\(msgBuffer.count)", module: .network)
         msgBuffer.removeAll()
         
         delegate?.connectionDisconnected(self)

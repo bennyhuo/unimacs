@@ -52,12 +52,6 @@
 				remove.tiff,
 				"sharedscreen-on.tiff",
 				sharedscreen.tiff,
-				"status-active.png",
-				"status-active@2x.png",
-				"status-connected.png",
-				"status-connected@2x.png",
-				"status-disconnected.png",
-				"status-disconnected@2x.png",
 				"switch-sound.wav",
 				teleport.icns,
 				whitelogo.png,
@@ -68,6 +62,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/TeleportApp.swift,
+				Backend/EventTaps/TPCursorVisibilityController.swift,
 				Backend/EventTaps/TPDirectEventTapsController.swift,
 				Backend/EventTaps/TPEventsController.swift,
 				Backend/EventTaps/TPEventTapsController.swift,
@@ -78,8 +73,10 @@
 				Backend/Network/Bonjour/Publisher.swift,
 				Backend/Network/Bonjour/Resolver.swift,
 				Backend/Network/Bonjour/TXTRecord.swift,
+				Backend/Network/Connections/MessageChannel.swift,
 				Backend/Network/Connections/NetworkConnection.swift,
 				Backend/Network/Connections/NetworkRunLoopThread.swift,
+				Backend/Network/Connections/NWMessageChannel.swift,
 				Backend/Network/Connections/TPConnectionsDelegate.swift,
 				Backend/Network/Connections/TPConnectionsManager.swift,
 				Backend/Network/Connections/TPTCPSecureSocket.h,
@@ -111,7 +108,7 @@
 				Frontend/Bezel/TPBezelWindow.swift,
 				Frontend/EdgeAppearanceAnimator.swift,
 				Frontend/HotBorder/HotBorder.swift,
-				Frontend/HotBorder/TPHotBorderView.swift,
+				Frontend/HotBorder/HotBorderMonitor.swift,
 				Frontend/StatusItem/TPStatusItemController.swift,
 				Frontend/TPBezierPath.swift,
 				Frontend/Transfers/TPTransferProgressController.swift,
@@ -309,18 +306,9 @@
 			developmentRegion = en;
 			hasScannedForEncodings = 1;
 			knownRegions = (
-				it,
 				Base,
-				ja,
-				cs,
-				es,
-				da,
-				fr,
-				de,
 				en,
-				Japanese,
-				German,
-				French,
+				English,
 			);
 			mainGroup = 089C166AFE841209C02AAC07 /* teleport */;
 			preferredProjectObjectVersion = 46;
@@ -416,7 +404,10 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				OTHER_LDFLAGS = "-Wl,-rpath,@loader_path/../Frameworks";
+				OTHER_LDFLAGS = (
+					"-Wl,-rpath,@loader_path/../Frameworks",
+					"-F$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.bennyhuo.teleport.rl;
 				PRODUCT_NAME = "${APP_DISPLAY_NAME}";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -427,10 +418,7 @@
 				SWIFT_UPCOMING_FEATURE_ISOLATED_DEFAULT_VALUES = NO;
 				SWIFT_UPCOMING_FEATURE_REGION_BASED_ISOLATION = NO;
 				SWIFT_VERSION = 5.0;
-				SYSTEM_FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
-				);
+				SYSTEM_FRAMEWORK_SEARCH_PATHS = "$(inherited)";
 			};
 			name = Release;
 		};
@@ -464,7 +452,10 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				OTHER_LDFLAGS = "-Wl,-rpath,@loader_path/../Frameworks";
+				OTHER_LDFLAGS = (
+					"-Wl,-rpath,@loader_path/../Frameworks",
+					"-F$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.bennyhuo.teleport.dev;
 				PRODUCT_NAME = "${APP_DISPLAY_NAME}";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -477,10 +468,7 @@
 				SWIFT_UPCOMING_FEATURE_ISOLATED_DEFAULT_VALUES = NO;
 				SWIFT_UPCOMING_FEATURE_REGION_BASED_ISOLATION = NO;
 				SWIFT_VERSION = 5.0;
-				SYSTEM_FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
-				);
+				SYSTEM_FRAMEWORK_SEARCH_PATHS = "$(inherited)";
 			};
 			name = Debug;
 		};
@@ -599,7 +587,10 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				OTHER_LDFLAGS = "-Wl,-rpath,@loader_path/../Frameworks";
+				OTHER_LDFLAGS = (
+					"-Wl,-rpath,@loader_path/../Frameworks",
+					"-F$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.bennyhuo.teleport;
 				PRODUCT_NAME = "${APP_DISPLAY_NAME}";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -612,10 +603,7 @@
 				SWIFT_UPCOMING_FEATURE_ISOLATED_DEFAULT_VALUES = NO;
 				SWIFT_UPCOMING_FEATURE_REGION_BASED_ISOLATION = NO;
 				SWIFT_VERSION = 5.0;
-				SYSTEM_FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
-				);
+				SYSTEM_FRAMEWORK_SEARCH_PATHS = "$(inherited)";
 			};
 			name = Tests;
 		};
@@ -736,7 +724,10 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				OTHER_LDFLAGS = "-Wl,-rpath,@loader_path/../Frameworks";
+				OTHER_LDFLAGS = (
+					"-Wl,-rpath,@loader_path/../Frameworks",
+					"-F$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.bennyhuo.teleport;
 				PRODUCT_NAME = "${APP_DISPLAY_NAME}";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -747,10 +738,7 @@
 				SWIFT_UPCOMING_FEATURE_ISOLATED_DEFAULT_VALUES = NO;
 				SWIFT_UPCOMING_FEATURE_REGION_BASED_ISOLATION = NO;
 				SWIFT_VERSION = 5.0;
-				SYSTEM_FRAMEWORK_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
-				);
+				SYSTEM_FRAMEWORK_SEARCH_PATHS = "$(inherited)";
 			};
 			name = Distribute;
 		};

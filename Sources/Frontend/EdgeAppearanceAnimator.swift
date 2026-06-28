@@ -75,9 +75,11 @@ final class EdgeAppearanceAnimator {
         
         guard let rootLayer = contentView.layer else { return }
         
-        // Create indicator layer
+        // Create indicator layer. Use a refined accent-tinted glow (lifted
+        // toward white) instead of a flat alarm red, to match the hot border look.
+        let hintColor = NSColor.controlAccentColor.blended(withFraction: 0.3, of: .white) ?? .controlAccentColor
         let indicatorLayer = CALayer()
-        indicatorLayer.backgroundColor = NSColor.systemRed.cgColor
+        indicatorLayer.backgroundColor = hintColor.cgColor
         
         var layerFrame = rootLayer.bounds.insetBy(
             dx: horizontal ? blurRadius : 0,

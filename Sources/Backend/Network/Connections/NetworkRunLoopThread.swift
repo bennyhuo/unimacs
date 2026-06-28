@@ -65,21 +65,28 @@ final class NetworkRunLoopThread {
 
     /// Run a block on the network thread and wait for its result.
     /// Safe to call from the network thread itself (runs inline to avoid deadlock).
+    ///
+    /// The closure is `@escaping` *on purpose*: it is handed to
+    /// `CFRunLoopPerformBlock`, which can keep the performed block retained for a
+    /// short moment after it calls `sem.signal()` — i.e. past the point where our
+    /// `sem.wait()` returns. Wrapping a non-escaping closure with
+    /// `withoutActuallyEscaping` here tripped the runtime escape check
+    /// ("closure argument was escaped in withoutActuallyEscaping block") and
+    /// crashed. The `sem.wait()` still guarantees the block has fully executed
+    /// before we read `result`, so the semantics are unchanged.
     @discardableResult
-    func sync<T>(_ block: () -> T) -> T {
+    func sync<T>(_ block: @escaping () -> T) -> T {
         if isCurrent {
             return block()
         }
-        return withoutActuallyEscaping(block) { escaping in
-            var result: T?
-            let sem = DispatchSemaphore(value: 0)
-            CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) {
-                result = escaping()
-                sem.signal()
-            }
-            CFRunLoopWakeUp(runLoop)
-            sem.wait()
-            return result!
+        var result: T?
+        let sem = DispatchSemaphore(value: 0)
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) {
+            result = block()
+            sem.signal()
         }
+        CFRunLoopWakeUp(runLoop)
+        sem.wait()
+        return result!
     }
 }

@@ -23,6 +23,16 @@ class Settings {
     static let disconnectOnNetworkConfigChangeKey: String = "disconnectOnNetworkConfigChange"
     static let wrapOnStopControlKey: String = "wrapOnStopControl"
 
+    /// When enabled, input events are streamed directly to the remote (full gesture
+    /// support). When disabled, the compatibility event-taps mode is used instead.
+    static let useDirectEventTapsKey: String = "useDirectEventTaps"
+
+    /// When enabled (Scheme A, the default), the local cursor is hidden by bringing
+    /// teleport to the foreground behind a transparent shield window and using the
+    /// public cursor API (works on macOS 26+). When disabled (Scheme B), the legacy
+    /// private background hack is used instead.
+    static let useCursorShieldWindowKey: String = "useCursorShieldWindow"
+
 	
     // MARK: - Switching Behavior
 
@@ -47,12 +57,14 @@ class Settings {
     static let inhibitionPeriodKey: String = "hotBorderActivationDelay"
     static let syncModifiersKey: String = "syncModifiers"
     static let visibleBordersKey: String = "visibleBorders"
+    static let hotBorderStyleKey: String = "hotBorderStyle"
 
 	
     // MARK: - Networking Ports
 
     static let commandPortKey: String = "commandPort"
     static let transferPortKey: String = "transferPort"
+    static let useSwiftNetworkStackKey: String = "useSwiftNetworkStack"
     
     // MARK: - Transfer Settings
     

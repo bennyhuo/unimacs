@@ -172,10 +172,29 @@ protocol TPNetworkConfigurationWatcherDelegate: AnyObject {
         networkChanged()
     }
     
+    /// Interfaces teleport actually binds to (matches `updateLocalIpAddresses`). AWDL/AirDrop
+    /// (`awdl*`, `llw*`), tunnels (`utun*`) and similar flap constantly — especially their IPv6
+    /// keys — and must not drive reconnect/notification storms.
+    private func isRelevantInterfaceKey(_ keyStr: String) -> Bool {
+        let prefix = "State:/Network/Interface/"
+        guard keyStr.hasPrefix(prefix) else { return false }
+        let name = keyStr.dropFirst(prefix.count).prefix { $0 != "/" }
+        return name.hasPrefix("en") || name.hasPrefix("bridge")
+    }
+
     // MARK: - Network Change Callback
     @MainActor
     private func networkChangeCallback(store: SCDynamicStore, changedKeys: [String]) {
         networkDebugLog("_networkChangeCallBack triggered with \(changedKeys.count) changed keys")
+        
+        // Drop changes on interfaces we never bind to (awdl/llw/utun/IPv6 link-local churn).
+        // Without this, AirDrop/AWDL interface flapping floods networkChanged() and starves the
+        // main thread (the "potentially harmful notification post rate" warning).
+        let changedKeys = changedKeys.filter { isRelevantInterfaceKey($0) }
+        if changedKeys.isEmpty {
+            networkDebugLog("  -> no relevant interface changes (ignoring awdl/llw/utun/IPv6 churn)")
+            return
+        }
         
         for (index, keyStr) in changedKeys.enumerated() {
             networkDebugLog("  Changed key[\(index)]: \(keyStr)")

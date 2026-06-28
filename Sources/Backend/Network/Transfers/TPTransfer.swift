@@ -275,6 +275,13 @@ class TPOutgoingTransfer: TPTransfer {
                     }
                 }
                 
+                // Detach the socket from this thread's run loop *before* hopping to main.
+                // Completion runs on main and calls close(); if the socket still owned this
+                // (now blocked, waiting on the synchronous hop) thread's run loop, close()
+                // would wait 2s for it to respond and stall the main run loop — freezing
+                // input capture and the transfer progress UI. The receive thread does the same.
+                _socket?._setRunLoop(nil)
+
                 if UInt64(sendRange.location) == _totalDataLength {
                     self.performSelector(onMainThread: #selector(_senderDataTransferCompleted), with: nil, waitUntilDone: true)
                 } else {
@@ -291,6 +298,7 @@ class TPOutgoingTransfer: TPTransfer {
                     CFRunLoopRunInMode(.defaultMode, 0.0, false)
                     if !sent { break }
                 }
+                _socket?._setRunLoop(nil)
                 self.performSelector(onMainThread: #selector(_senderDataTransferCompleted), with: nil, waitUntilDone: true)
             }
         }
@@ -338,7 +346,7 @@ class TPOutgoingTransfer: TPTransfer {
     }
     
     override func tcpSecureSocketShouldEnableEncryption(_ tcpSocket: TPTCPSecureSocket) -> Bool {
-        return shouldBeEncrypted && TPConnectionsManager.shared.tcpSecureSocketShouldEnableEncryption(tcpSocket)
+        return shouldBeEncrypted && TPConnectionsManager.shared.shouldEnableEncryption(forRemoteAddress: tcpSocket.remoteAddress)
     }
     
     override func tcpSocketConnectionSucceeded(_ tcpSocket: TPTCPSocket) {
@@ -520,7 +528,7 @@ class TPIncomingTransfer: TPTransfer {
     }
     
     override func tcpSecureSocketShouldEnableEncryption(_ tcpSocket: TPTCPSecureSocket) -> Bool {
-        return _shouldEncrypt && TPConnectionsManager.shared.tcpSecureSocketShouldEnableEncryption(tcpSocket)
+        return _shouldEncrypt && TPConnectionsManager.shared.shouldEnableEncryption(forRemoteAddress: tcpSocket.remoteAddress)
     }
     
     func tcpSocket(_ listenSocket: TPTCPSocket, connectionAccepted childSocket: TPTCPSocket) {

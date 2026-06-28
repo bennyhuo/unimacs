@@ -217,8 +217,9 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
         debugLog("locking screens", module: .control)
         let message = TPMessage.create(with: .controlLock)
         
-        // Send via DeviceConnectionManager (unified connection management)
-        DeviceConnectionManager.shared.sendMessageToAllConnectedDevices(message)
+        // Only lock the machines we control (C -> S). Never broadcast: a server-role peer must
+        // not relay its own auto-lock back onto the client that is still being used.
+        sendMessageToControlledPeers(message)
 
         if TPServerController.shared.allowControl {
             TPServerController.shared.startSharing()
@@ -230,8 +231,8 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
         invalidateTimer()
         let message = TPMessage.create(with: .controlScreenSleep)
         
-        // Send via DeviceConnectionManager (unified connection management)
-        DeviceConnectionManager.shared.sendMessageToAllConnectedDevices(message)
+        // Only put the machines we control to sleep (C -> S), never the reverse.
+        sendMessageToControlledPeers(message)
 
         if TPServerController.shared.allowControl {
             TPServerController.shared.startSharing()
@@ -269,8 +270,8 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
     @objc func computerWillSleep(_ notification: Notification) {
         let message = TPMessage.create(with: .controlDeviceSleep)
         
-        // Send via DeviceConnectionManager (unified connection management)
-        DeviceConnectionManager.shared.sendMessageToAllConnectedDevices(message)
+        // Only the controller propagates its sleep to the machines it controls (C -> S).
+        sendMessageToControlledPeers(message)
         
         if TPClientController.shared.isControlling {
             TPClientController.shared.stopControl()
@@ -360,15 +361,27 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
     }
     
     private func sendWakeEvent() {
-        // `controlWake` is one-directional: only the controller keeps the controlled machine's
-        // screen awake. With persistent connections, broadcasting to every connected peer (and
-        // having receivers wake + re-broadcast via screensDidWake) caused an infinite wake storm.
-        guard TPClientController.shared.isControlling,
-              let connection = TPClientController.shared.currentConnection else {
-            return
+        // Keep every paired peer we control awake while a persistent connection is up — even
+        // when we are not actively driving it — so an idle remote screen does not auto-lock /
+        // sleep underneath us. `controlWake` stays strictly one-directional (C -> S): it goes
+        // only to peers in our peered host list, and the controlled side does not control us
+        // back, so there is no wake ping-pong / storm.
+        sendMessageToControlledPeers(TPMessage.create(with: .controlWake))
+    }
+
+    /// Send a control message strictly in the controller -> controlled (C -> S) direction:
+    /// only to the peers this machine controls (its connected, peered hosts).
+    ///
+    /// Lock / sleep / wake notifications must never flow the other way. A connected machine
+    /// that merely *shares* its screen (server role) should not be able to drive the screen
+    /// state of the machine controlling it. Broadcasting to every connection let an idle server
+    /// that auto-locked send `controlLock` back to the still-active client and lock it too.
+    private func sendMessageToControlledPeers(_ message: TPMessage) {
+        let peeredHosts = TPHostsManager.shared.hosts(with: .peered) as? [TPRemoteHost] ?? []
+        for host in peeredHosts {
+            guard let connection = DeviceConnectionManager.shared.connection(for: host) else { continue }
+            connection.sendAsync(message)
         }
-        let message = TPMessage.create(with: .controlWake)
-        connection.sendAsync(message)
     }
     
     // MARK: - Accessibility & Encryption Checks

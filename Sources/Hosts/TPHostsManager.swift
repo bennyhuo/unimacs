@@ -111,24 +111,40 @@ class TPHostsManager: NSObject {
         }
     }
 
-    func addBonjourHost(_ bonjourHost: TPRemoteHost) {
-        let knownHost = self.host(withIdentifier: bonjourHost.identifier)
-        var shouldNotify = true
-        var shouldAutoConnect = false
+    /// Reconcile a Bonjour-resolved host into the canonical host table.
+    ///
+    /// IMPORTANT: a remote is keyed by `identifier` (== `computerName`), so the saved/known host
+    /// object — the one that carries the user's desktop placement (`desktopOrigin`) — is the only
+    /// authoritative representation. We therefore parse the Bonjour record *into the known host in
+    /// place* and never fabricate a throwaway `TPRemoteHost` to stand in for it. (Constructing one
+    /// would also fire a spurious `.hostDidUpdate` with `desktopOrigin == .zero` via its property
+    /// setters, which used to fling the hot border to the wrong screen edge.) Only when the host is
+    /// genuinely unknown do we create a new object, which then becomes the authoritative one.
+    ///
+    /// - Returns: the authoritative `TPRemoteHost` for this record (existing or newly created).
+    @discardableResult
+    func addBonjourHost(record: TXTRecord, ipAddress: IpAddress?, compatible: Bool) -> TPRemoteHost {
+        // Hosts are keyed by `identifier` (== `computerName`), which corresponds to the TXT `name`
+        // field, not the `id` field.
+        let identifier = record.name
 
-        if let knownHost = knownHost {
-            if bonjourHost.address != nil {
+        if let knownHost = self.host(withIdentifier: identifier) {
+            var shouldNotify = true
+            var shouldAutoConnect = false
+
+            if let ipAddress = ipAddress {
                 let state = knownHost.hostState
 
-				// Refresh cached reachability from Bonjour; live TCP is not torn down on address change.
-                knownHost.address = bonjourHost.address
-                knownHost.port = bonjourHost.port
+                // Refresh cached reachability from Bonjour; live TCP is not torn down on address change.
+                knownHost.address = ipAddress.address
+                knownHost.port = ipAddress.port
                 // A Bonjour TXT record may omit/truncate the screens field (TXT size limits,
                 // multi-monitor hosts). Never overwrite authoritative screen geometry obtained
                 // in-band (via identification) with an empty Bonjour value, or the host's
                 // desktop rect collapses to .zero and its hot border can never be created.
-                if !bonjourHost.screens.isEmpty {
-                    knownHost.screens = bonjourHost.screens
+                let parsedScreens = TPScreen.screens(from: record.screens)
+                if !parsedScreens.isEmpty {
+                    knownHost.screens = parsedScreens
                 }
 
                 switch state {
@@ -149,19 +165,31 @@ class TPHostsManager: NSObject {
             } else {
                 knownHost.hostState = .incompatible
             }
-        } else {
-            _hosts[bonjourHost.identifier] = bonjourHost
-        }
 
-        if shouldNotify {
-            self.notifyChanges()
-        }
-        
-        // Auto-connect to paired device that just came online
-        if shouldAutoConnect, let knownHost = knownHost {
-            Task { @MainActor in
-                DeviceConnectionManager.shared.connect(to: knownHost)
+            if shouldNotify {
+                self.notifyChanges()
             }
+
+            // Auto-connect to paired device that just came online
+            if shouldAutoConnect {
+                Task { @MainActor in
+                    DeviceConnectionManager.shared.connect(to: knownHost)
+                }
+            }
+
+            return knownHost
+        } else {
+            let newHost: TPRemoteHost
+            if let ipAddress = ipAddress {
+                newHost = TPRemoteHost(with: record, ipAddress: ipAddress)
+            } else {
+                newHost = TPRemoteHost(identifier: identifier, address: "", port: 0)
+                newHost.update(with: record)
+            }
+            newHost.hostState = compatible ? .shared : .incompatible
+            _hosts[newHost.identifier] = newHost
+            self.notifyChanges()
+            return newHost
         }
     }
 

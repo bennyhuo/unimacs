@@ -39,18 +39,11 @@ open class TPEventsController: NSObject {
     
     class func instance(for remoteHost: TPRemoteHost?) -> TPEventsController? {
         guard let remoteHost = remoteHost else { return nil }
-        if TPLocalHost.shared.pairWith(host: remoteHost, hasCapability: .directEventTaps) {
-            // osVersion is encoded as: major * 100 + minor (e.g., 1502 = macOS 15.2)
-            let localMajorVersion = TPLocalHost.shared.osVersion / 100
-            let remoteMajorVersion = remoteHost.osVersion / 100
-            // only allow direct event taps between same major OS versions
-            if localMajorVersion == remoteMajorVersion {
-                debugLog("Using TPDirectEventTapsController")
-                return TPDirectEventTapsController.default()
-            } else {
-                debugLog("Using TPEventTapsController")
-                return TPEventTapsController.default()
-            }
+        // The mode is now user-selectable instead of being inferred from OS versions.
+        let preferDirect = TPPreferencesManager.shared().bool(forPref: Settings.useDirectEventTapsKey)
+        if preferDirect, TPLocalHost.shared.pairWith(host: remoteHost, hasCapability: .directEventTaps) {
+            debugLog("Using TPDirectEventTapsController")
+            return TPDirectEventTapsController.default()
         } else if TPLocalHost.shared.pairWith(host: remoteHost, hasCapability: .eventTaps) {
             debugLog("Using TPEventTapsController")
             return TPEventTapsController.default()
@@ -204,6 +197,7 @@ open class TPEventsController: NSObject {
         currentMouseLocation.y = mainScreenRect.maxY - currentMouseLocation.y
         currentMouseLocation.y += CGFloat(mouseDelta.y)
         
+        var insideScreen = false
         for (i, screen) in screens.enumerated() {
             let screenFrame = screen.frame
             var relativePoint = currentMouseLocation
@@ -212,45 +206,60 @@ open class TPEventsController: NSObject {
             
             if relativePoint.x >= 0 && relativePoint.y >= 0 && relativePoint.x < screenFrame.width && relativePoint.y < screenFrame.height {
                 currentScreenIndex = i
-                return
+                insideScreen = true
+                break
             }
         }
         
-        // Mouse cursor is outside
-        let screen = screens[currentScreenIndex]
-        let screenFrame = screen.frame
-        var relativePoint = currentMouseLocation
-        relativePoint.x -= screenFrame.minX
-        relativePoint.y -= (mainScreenRect.maxY - screenFrame.maxY)
+        if !insideScreen {
+            // Mouse cursor is outside every screen: clamp it back onto the screen
+            // it most recently belonged to.
+            let screen = screens[currentScreenIndex]
+            let screenFrame = screen.frame
+            var relativePoint = currentMouseLocation
+            relativePoint.x -= screenFrame.minX
+            relativePoint.y -= (mainScreenRect.maxY - screenFrame.maxY)
+            
+            relativePoint.x = max(0, min(relativePoint.x, screenFrame.width - 1.0))
+            relativePoint.y = max(0, min(relativePoint.y, screenFrame.height - 1.0))
+            
+            currentMouseLocation = relativePoint
+            currentMouseLocation.x += screenFrame.minX
+            currentMouseLocation.y += (mainScreenRect.maxY - screenFrame.maxY)
+        }
         
-        relativePoint.x = max(0, min(relativePoint.x, screenFrame.width - 1.0))
-        relativePoint.y = max(0, min(relativePoint.y, screenFrame.height - 1.0))
-        
-        currentMouseLocation = relativePoint
-        currentMouseLocation.x += screenFrame.minX
-        currentMouseLocation.y += (mainScreenRect.maxY - screenFrame.maxY)
-        
-        // When locked, HotBorder will never receive mouseEnter events.
-        // Detect geometric entry and ask the client to stop control (same as a normal hot-border exit).
-        if MainActor.assumeIsolated({ SystemStatusObserver.shared.isLocked }) {
-            let mouseLocationInvertY = CGPoint(x: currentMouseLocation.x, y: mainScreenRect.maxY - currentMouseLocation.y)
-            MainActor.assumeIsolated {
-                TPServerController.shared.handleLockedReturnHotBorder(at: mouseLocationInvertY)
-            }
+        // Drive the controlled-side return border geometrically from the injected
+        // virtual cursor (locked or not). The hot-border window never receives
+        // real mouseEntered events for an injected cursor, so detection is unified
+        // through HotBorderMonitor instead of relying on window events.
+        //
+        // This must run whether the injected cursor is inside a screen or not: the
+        // return hot border is a thin strip *inside* the screen along an edge, so
+        // the cursor is still on-screen when it reaches it. Evaluating only in the
+        // off-screen/clamped branch meant edge strips (notably the top edge, whose
+        // clamped point lands on the rect's exclusive max-Y) never fired, so
+        // control could not be returned.
+        // `currentMouseLocation` here is top-left origin; convert back to Cocoa
+        // global (bottom-left origin) for the geometric test.
+        let mouseLocationInvertY = CGPoint(x: currentMouseLocation.x, y: mainScreenRect.maxY - currentMouseLocation.y)
+        MainActor.assumeIsolated {
+            HotBorderMonitor.shared.evaluateInjectedCursor(atGlobalPoint: mouseLocationInvertY)
         }
     }
     
     open func event(_ event: NSEvent?, hasRequiredKeyIfNeeded needed: Bool, withTag tag: NSEvent.EventType) -> Bool {
-        guard let event = event else { return false }
-        
         if !needed {
             return true
         }
         
-        let keyMask = NSEvent.EventTypeMask(type: tag)
-        debugLog("keyMask: \(keyMask.rawValue) modifiersFlags: \(event.modifierFlags.rawValue)")
-        if (UInt64(event.modifierFlags.rawValue) & keyMask.rawValue) != 0 {
-            return true
+        // Geometric (HotBorderMonitor) firing has no NSEvent; fall back to the
+        // current global modifier state below. With an event, prefer its flags.
+        if let event = event {
+            let keyMask = NSEvent.EventTypeMask(type: tag)
+            debugLog("keyMask: \(keyMask.rawValue) modifiersFlags: \(event.modifierFlags.rawValue)")
+            if (UInt64(event.modifierFlags.rawValue) & keyMask.rawValue) != 0 {
+                return true
+            }
         }
         
         let flags = NSEvent.modifierFlags

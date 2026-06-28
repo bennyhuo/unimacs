@@ -60,7 +60,16 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
     }
     
 	@MainActor
-	private func _updateTriggers(for host: TPRemoteHost, showVisualHint: Bool) {
+	private func _updateTriggers(for notifyingHost: TPRemoteHost, showVisualHint: Bool) {
+		// A remote is represented by several transient TPRemoteHost objects that all share the
+		// same key (identifier == computerName): the canonical saved host in TPHostsManager,
+		// which carries the user's desktop placement (`desktopOrigin`), plus throwaway objects
+		// created by Bonjour resolution and inbound identification. Those throwaways default
+		// `desktopOrigin` to .zero (the remote never encodes *our* local layout of it) yet they
+		// still post `.hostDidUpdate`. If we trust the notifying object blindly, a stray
+		// origin=.zero host flings the hot border to a wrong screen edge. Always drive the hot
+		// border from the canonical known host so placement stays stable.
+		let host = TPHostsManager.shared.host(withIdentifier: notifyingHost.identifier) ?? notifyingHost
 		let canControl = TPMainController.shared().canControlHost(withIdentifier: host.identifier)
 		let isOnlineOrControlled = host.isInState(.controlled)
 			|| DeviceConnectionManager.shared.isReachableForControl(host)
@@ -78,7 +87,7 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 		let localDesktopFrame = TPLocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
 		
 		let hasValidRemotePlacement = (host.hostDesktopRect != .zero)
-		
+
 		if let existingHotBorder = hotBorder, hasValidRemotePlacement {
 			if shouldEnableTriggers {
 				// IMPORTANT: once we allow 1↔N / N↔M mappings, the hot border must be sized from the
@@ -187,7 +196,7 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 			)
 			
 			// Preferred: normalized position within the hot border window.
-			let contentSize = hotBorder.contentView?.bounds.size ?? hotBorder.frame.size
+			let contentSize = hotBorder.frame.size
 			let rawRelative = NSPoint(
 				x: contentSize.width > 0 ? (location.x / contentSize.width) : 0,
 				y: contentSize.height > 0 ? (location.y / contentSize.height) : 0
@@ -396,7 +405,7 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 			let hotBorder = _hotBorders[controlledHost.identifier] {
 			// Preferred: normalized within the hot border window.
 			let rel = relativeValue.pointValue
-			let contentSize = hotBorder.contentView?.bounds.size ?? hotBorder.frame.size
+			let contentSize = hotBorder.frame.size
 			let localPoint = NSPoint(x: rel.x * contentSize.width, y: rel.y * contentSize.height)
 			let warpedPoint = hotBorder.screenPoint(fromLocalPoint: localPoint, flipped: true)
 			
@@ -429,8 +438,6 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 				eventsController?.warpMouse(toPosition: warpedPoint)
 			}
 		}
-		
-		self.eventsController?.cleanupGettingEvents()
 	}
 	
 	override func stopControl() {
@@ -440,7 +447,8 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 	
 	@MainActor
 	override func stopControl(withDisconnect disconnect: Bool) {
-		if _state == .controllingState {
+		let wasControlling = _state == .controllingState
+		if wasControlling {
 			TPClipboardTransferCoordinator.shared.clientDidStopControl()
 			TPMainController.shared().leaveFrontmost()
 			TPBezelController.default().hideBezel()
@@ -456,6 +464,9 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 		cancelPendingControlRequest()
 		_state = .idleState
 		self.updateTriggersAndShowVisualHint(false)
+		if wasControlling {
+			self.eventsController?.cleanupGettingEvents()
+		}
 		super.stopControl(withDisconnect: disconnect)
 	}
 	
@@ -469,8 +480,11 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 	}
 	
 	func gotEvent(withEventData eventData: Data) {
-		// Events 
-		self.currentConnection?.send(TPMessage.create(with: .event, andData: eventData))
+		// Events are produced inside the CGEventTap callback on the main run loop. Send them
+		// through the ordered, non-blocking path so a slow/saturated control socket (e.g. while a
+		// large clipboard transfer is in flight) can never stall input capture or the main run
+		// loop. Ordering is still guaranteed by the single serial send queue.
+		self.currentConnection?.sendAsync(TPMessage.create(with: .event, andData: eventData))
 	}
 	
 	@MainActor
@@ -576,7 +590,13 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
             }
             return true
         case .controlStop:
-            guard shouldHandleControlMessage(from: host, on: connection) else { return false }
+            // Only the controlling side may consume controlStop. On a machine that is *being
+            // controlled* (server role), the idle client delegate must not swallow this message,
+            // otherwise TPServerController never receives it and stays stuck in .controlled
+            // (leaving the menu-bar icon stuck on "active").
+            guard _state == .controllingState, self.currentConnection === connection else {
+                return false
+            }
             self.requestedStopControl(withInfoDict: message.infoDict)
             return true
         default:

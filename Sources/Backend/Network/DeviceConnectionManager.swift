@@ -235,7 +235,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         
         // Verify the actual socket is connected
         if !connection.isConnected {
-			warningLog("Connection for \(host.computerName) has disconnected socket (socketState=\(connection.socket.socketState.rawValue)), cleaning up", module: .network)
+			warningLog("Connection for \(host.computerName) has disconnected socket (socketState=\(connection.channelState.rawValue)), cleaning up", module: .network)
             Task { @MainActor in
                 self.cleanupStaleConnection(for: host.identifier)
             }
@@ -257,7 +257,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         
         // Verify the actual socket is connected
         if !connection.isConnected {
-            warningLog("Connection for host \(hostId) has disconnected socket (socketState=\(connection.socket.socketState.rawValue)), cleaning up", module: .network)
+            warningLog("Connection for host \(hostId) has disconnected socket (socketState=\(connection.channelState.rawValue)), cleaning up", module: .network)
             Task { @MainActor in
                 self.cleanupStaleConnection(for: hostId)
             }
@@ -368,7 +368,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
 
     /// When "Share this Mac" is on, this machine listens only and waits for peers to connect in.
     private func shouldInitiateOutboundConnection() -> Bool {
-        !TPServerController.shared.allowControl
+        !TPPreferencesManager.shared().bool(forPref: ALLOW_CONTROL)
     }
 
     /// Whether a paired host is eligible for an outbound persistent connection attempt.
@@ -687,7 +687,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         }
         
         // Check if socket is still connected
-        let socketState = connection.socket.socketState
+        let socketState = connection.channelState
         let isConnected = connection.isConnected
         debugLog("[KeepAlive] hostId=\(hostId) socketState=\(socketState.rawValue) isConnected=\(isConnected)", module: .network, connectionId: connection.connectionId)
         
@@ -701,6 +701,15 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     
     /// Register a connection (called when connection is established)
     fileprivate func registerConnection(_ connection: NetworkConnection, for host: TPRemoteHost) {
+        // The two peers can each dial out *and* accept, producing two live links to the same
+        // host. Keep the already-established one as the persistent connection so keep-alive and
+        // `currentConnection` don't churn mid-session. The duplicate stays owned by
+        // TPConnectionsManager and is neutralised by the identity guard in connectionDisconnected.
+        if let existing = connections[host.identifier], existing !== connection, existing.isConnected {
+            warningLog("Duplicate connection to \(host.computerName); keeping the established link", module: .network, connectionId: connection.connectionId)
+            return
+        }
+
         connections[host.identifier] = connection
         connectedHosts.insert(host.identifier)
         
@@ -815,9 +824,18 @@ extension DeviceConnectionManager: NetworkConnectionDelegate {
             let host = connection.connectedHost
             let hostId = host?.identifier ?? ""
             
-            warningLog("[DISCONNECTED] host=\(host?.computerName ?? "unknown") hostId=\(hostId) socketState=\(connection.socket.socketState.rawValue)", module: .network, connectionId: connection.connectionId)
+            warningLog("[DISCONNECTED] host=\(host?.computerName ?? "unknown") hostId=\(hostId) socketState=\(connection.channelState.rawValue)", module: .network, connectionId: connection.connectionId)
             
             guard !hostId.isEmpty else { return }
+            
+            // Only tear down host-level state if this is the connection we actually track.
+            // A stale/duplicate link (the other dial direction, or a connection already replaced
+            // by a reconnect) dropping must not wipe out a live registered connection — otherwise
+            // the menu-bar icon and hot border flip to "disconnected" while control is still up.
+            guard connections[hostId] === connection else {
+                warningLog("[DISCONNECTED] ignoring stale/duplicate connection for \(hostId); a live connection is still registered", module: .network, connectionId: connection.connectionId)
+                return
+            }
             
             handleDisconnection(for: hostId, host: host)
         }

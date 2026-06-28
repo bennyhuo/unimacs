@@ -26,17 +26,8 @@ private let MAX_STRING = 20
 // ESC_KEYCODE is defined in TPEventsController.swift
 
 // External C functions
-@_silgen_name("CGSSetConnectionProperty")
-func CGSSetConnectionProperty(_ cid: Int32, _ targetCid: Int32, _ key: CFString, _ value: CFBoolean)
-
-@_silgen_name("_CGSDefaultConnection")
-func _CGSDefaultConnection() -> Int32
-
 @_silgen_name("CGSCurrentEventTimestamp")
 func CGSCurrentEventTimestamp() -> CGEventTimestamp
-
-@_silgen_name("CGCursorIsVisible")
-func isCursorVisible() -> Bool
 
 // Event type names for debugging
 private let eventTypeName: [String] = [
@@ -71,28 +62,6 @@ private let eventTypeName: [String] = [
     
     // MARK: - Helper Methods
     
-    private static func setCursorVisibility(_ visible: Bool) {
-		// Hack to make background cursor setting work
-		let propertyString = "SetsCursorInBackground" as CFString
-		CGSSetConnectionProperty(_CGSDefaultConnection(), _CGSDefaultConnection(), propertyString, kCFBooleanTrue)
-		
-        var error: CGError
-        if visible {
-            error = CGDisplayShowCursor(CGMainDisplayID())
-        } else {
-            error = CGDisplayHideCursor(CGMainDisplayID())
-        }
-        
-        if error != .success {
-			debugLog("error: \(error)")
-//            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-//                if error != .success {
-//                    setCursorVisibility(visible)
-//                }
-//            }
-        }
-    }
-    
     @objc public class func _eventName(from type: CGEventType) -> String {
         let index = Int(type.rawValue)
         if index < eventTypeName.count {
@@ -115,8 +84,10 @@ private let eventTypeName: [String] = [
             }
         }
         
-        Self.setCursorVisibility(false)
-        
+        MainActor.assumeIsolated {
+            TPCursorVisibilityController.shared.beginControlSession(reason: "startGettingEvents")
+        }
+
         if eventPort == nil {
             let runLoop = CFRunLoopGetCurrent()
             
@@ -169,22 +140,21 @@ private let eventTypeName: [String] = [
             } else {
                 _sendEvent(toListener: event)
             }
-            
-            // Cursor visibility check removed - CGCursorIsVisible() is deprecated in macOS 26
-			if isCursorVisible() {
-				Self.setCursorVisibility(false)
-			}
+
+            MainActor.assumeIsolated {
+                TPCursorVisibilityController.shared.handleEventTapTick(isControlling: true, eventType: type)
+            }
 
             return nil
         } else {
             if type.rawValue >= CGEventType.tapDisabledByTimeout.rawValue {
                 return nil
             }
-            
-			if !isCursorVisible() {
-				Self.setCursorVisibility(true)
-			}
-            
+
+            MainActor.assumeIsolated {
+                TPCursorVisibilityController.shared.handleEventTapTick(isControlling: false, eventType: type)
+            }
+
             return Unmanaged.passRetained(event)
         }
     }
@@ -213,7 +183,9 @@ private let eventTypeName: [String] = [
     
     @objc public override func cleanupGettingEvents() {
         super.cleanupGettingEvents()
-        Self.setCursorVisibility(true)
+        MainActor.assumeIsolated {
+            TPCursorVisibilityController.shared.endControlSession(reason: "cleanupGettingEvents")
+        }
     }
     
     private func processEmergencyStopEvent(_ event: CGEvent) {

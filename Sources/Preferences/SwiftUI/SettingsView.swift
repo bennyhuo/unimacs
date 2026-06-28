@@ -201,6 +201,28 @@ struct SettingsTabView: View {
                 // Switching Section
                 SettingsSection(title: "Switching") {
                     SettingsRow(
+                        title: "Direct event taps (full gestures)",
+                        description: "Stream input events directly to the remote Mac for full gesture support. Turn off to use the compatibility mode. Takes effect on next reconnect."
+                    ) {
+                        Toggle("", isOn: $viewModel.useDirectEventTaps)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+
+                    Divider()
+
+                    SettingsRow(
+                        title: "Hide cursor via foreground shield",
+                        description: "Bring teleport to the front behind a transparent shield to hide the local cursor with public APIs (required on macOS 26). Turn off to use the legacy background method. Takes effect on next control session."
+                    ) {
+                        Toggle("", isOn: $viewModel.useCursorShieldWindow)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+
+                    Divider()
+
+                    SettingsRow(
                         title: "Require modifier key",
                         description: "Only switch when holding a modifier key"
                     ) {
@@ -235,6 +257,17 @@ struct SettingsTabView: View {
                             .labelsHidden()
                             .toggleStyle(.switch)
                     }
+
+                    Divider()
+
+                    SettingsRow(
+                        title: "Use Swift network stack (experimental)",
+                        description: "Use Network.framework for the control connection; off falls back to the legacy socket. Takes effect on next reconnect."
+                    ) {
+                        Toggle("", isOn: $viewModel.useSwiftNetworkStack)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
                 }
                 
                 // Notifications Section
@@ -260,6 +293,35 @@ struct SettingsTabView: View {
                         Toggle("", isOn: $viewModel.playSwitchSound)
                             .labelsHidden()
                             .toggleStyle(.switch)
+                    }
+                    
+                    Divider()
+                    
+                    SettingsRow(
+                        title: "Show hot border visuals",
+                        description: "Display the edge glow and activation effect at switching borders. For debugging; takes effect on the next connection."
+                    ) {
+                        Toggle("", isOn: $viewModel.showHotBorderVisuals)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+                    
+                    if viewModel.showHotBorderVisuals {
+                        Divider()
+                        
+                        SettingsRow(
+                            title: "Hot border style",
+                            description: viewModel.hotBorderStyle.description
+                        ) {
+                            Picker("", selection: $viewModel.hotBorderStyle) {
+                                ForEach(HotBorderVisualStyle.allCases) { style in
+                                    Text(style.displayName).tag(style)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .frame(width: 220)
+                        }
                     }
                 }
                 

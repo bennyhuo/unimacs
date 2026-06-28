@@ -45,11 +45,34 @@ final class SettingsViewModel: ObservableObject {
     @Published var switchDelay: Double {
         didSet { prefs.setValue(switchDelay, forKey: Settings.switchDelayKey) }
     }
+
+    /// When enabled, input events are streamed directly to the remote for full
+    /// gesture support. When disabled, the compatibility event-taps mode is used.
+    /// Takes effect on the next (re)connect.
+    @Published var useDirectEventTaps: Bool {
+        didSet { prefs.setValue(useDirectEventTaps, forKey: Settings.useDirectEventTapsKey) }
+    }
+
+    /// Cursor hiding strategy while controlling a remote Mac. When enabled
+    /// (Scheme A, the default), teleport is brought to the foreground behind a
+    /// transparent shield window and the public cursor-hiding API is used, which
+    /// works reliably on macOS 26+. When disabled (Scheme B), the legacy private
+    /// background hack is used instead. Takes effect on the next control session.
+    @Published var useCursorShieldWindow: Bool {
+        didSet { prefs.setValue(useCursorShieldWindow, forKey: Settings.useCursorShieldWindowKey) }
+    }
     
     // MARK: - Network
     
     @Published var disconnectOnNetworkChange: Bool {
         didSet { prefs.setValue(disconnectOnNetworkChange, forKey: Settings.disconnectOnNetworkConfigChangeKey) }
+    }
+
+    /// Experimental: use the Swift Network.framework stack for the control
+    /// connection instead of the legacy ObjC socket. Takes effect on the next
+    /// (re)connect.
+    @Published var useSwiftNetworkStack: Bool {
+        didSet { prefs.setValue(useSwiftNetworkStack, forKey: Settings.useSwiftNetworkStackKey) }
     }
     
     // MARK: - Notifications
@@ -74,6 +97,17 @@ final class SettingsViewModel: ObservableObject {
     
     @Published var logLevel: LogLevel {
         didSet { prefs.setValue(logLevel.rawValue, forKey: Settings.logLevelKey) }
+    }
+
+    /// Show the hot border debug visuals (edge glow + activation effect).
+    /// Takes effect the next time hot borders are rebuilt (host/connection change).
+    @Published var showHotBorderVisuals: Bool {
+        didSet { prefs.setValue(showHotBorderVisuals, forKey: Settings.visibleBordersKey) }
+    }
+
+    /// Visual style for the hot border decoration.
+    @Published var hotBorderStyle: HotBorderVisualStyle {
+        didSet { prefs.setValue(hotBorderStyle.rawValue, forKey: Settings.hotBorderStyleKey) }
     }
     
     // MARK: - Log Module Settings
@@ -262,8 +296,11 @@ final class SettingsViewModel: ObservableObject {
         switchKeyTag = ModifierKeyTag(rawValue: prefs.int(forPref: Settings.switchKeyTagKey)) ?? .option
         delayedSwitch = prefs.bool(forPref: Settings.delayedSwitchKey)
         switchDelay = Double(prefs.float(forPref: Settings.switchDelayKey))
+        useDirectEventTaps = prefs.bool(forPref: Settings.useDirectEventTapsKey)
+        useCursorShieldWindow = prefs.bool(forPref: Settings.useCursorShieldWindowKey)
         
         disconnectOnNetworkChange = prefs.bool(forPref: Settings.disconnectOnNetworkConfigChangeKey)
+        useSwiftNetworkStack = prefs.bool(forPref: Settings.useSwiftNetworkStackKey)
         
         hideControlBezel = prefs.bool(forPref: Settings.hideControlBezelKey)
         showSwitchAnimation = prefs.bool(forPref: Settings.showSwitchAnimationKey)
@@ -271,6 +308,8 @@ final class SettingsViewModel: ObservableObject {
         
         enableLogging = prefs.bool(forPref: Settings.enableDebugLogKey)
         logLevel = LogLevel(rawValue: prefs.int(forPref: Settings.logLevelKey)) ?? .debug
+        showHotBorderVisuals = prefs.bool(forPref: Settings.visibleBordersKey)
+        hotBorderStyle = HotBorderVisualStyle(rawValue: prefs.int(forPref: Settings.hotBorderStyleKey)) ?? .glow
         
         // Load transfer threshold, use default if not set
         let savedThreshold = prefs.int(forPref: Settings.transferProgressThresholdKey)
