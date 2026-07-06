@@ -27,9 +27,7 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
     override init() {
         super.init()
         
-        self.state = .idle
-        
-        self.bind("allowControl", toPref: ALLOW_CONTROL)
+        self.state = .shared
         
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(connectionDisconnected(_:)), name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
         
@@ -363,16 +361,10 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
 	@MainActor
     var allowControl: Bool {
         get {
-            return state != .idle
+            return true
         }
         set {
-            if newValue && state != .shared {
-                startSharing()
-                state = .shared
-            } else if !newValue && state != .idle {
-                stopSharing()
-                state = .idle
-            }
+            // Under Unified Cursor Space design, server sharing is always enabled.
         }
     }
     

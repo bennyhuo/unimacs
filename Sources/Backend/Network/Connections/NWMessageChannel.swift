@@ -95,6 +95,18 @@ final class NWMessageChannel: MessageChannel {
 
     private static let connectionTimeout: TimeInterval = 5.0
 
+    /// How long an *established* connection may stay parked in `.waiting` (path lost) before we
+    /// give up and tear it down. NWConnection tries to recover transparently across transient
+    /// network changes by entering `.waiting`; the legacy socket stack fails fast instead, and the
+    /// rest of the app relies on the channel state flipping to disconnected so keep-alive / reset /
+    /// re-publish logic can run. Without this, a `.waiting` connection lingers forever in
+    /// `connectedState` and becomes a zombie that blocks all self-healing.
+    private static let waitingGracePeriod: TimeInterval = 6.0
+
+    /// Max time `send` blocks waiting for NWConnection to process the bytes. Guards against a
+    /// `.waiting`/stuck connection never invoking the `.contentProcessed` completion.
+    private static let sendTimeout: TimeInterval = 5.0
+
     private let queue = DispatchQueue(label: "com.teleport.nwchannel", qos: .userInitiated)
     private var connection: NWConnection?
 
@@ -119,6 +131,8 @@ final class NWMessageChannel: MessageChannel {
     private var hasBecomeReady = false
     private var didReportTermination = false
     private var timeoutWorkItem: DispatchWorkItem?
+    /// Pending `.waiting` grace timer; non-nil means a countdown to termination is in flight.
+    private var waitingWorkItem: DispatchWorkItem?
 
     /// Buffers inbound data that arrives before a delegate is attached.
     private var pendingInbound = Data()
@@ -163,6 +177,10 @@ final class NWMessageChannel: MessageChannel {
         locked { _noDelay = value }
     }
 
+    func activateReceiveCallbacks() {
+        // NWConnection delivers inbound data as soon as the delegate is wired.
+    }
+
     @discardableResult
     func connect(toHost host: String, port: Int32) -> Bool {
         guard !host.isEmpty, let nwPort = NWEndpoint.Port(rawValue: UInt16(truncatingIfNeeded: port)) else {
@@ -196,20 +214,30 @@ final class NWMessageChannel: MessageChannel {
             return false
         }
         let semaphore = DispatchSemaphore(value: 0)
+        let resultLock = NSLock()
         var success = true
         connection.send(content: data, completion: .contentProcessed { error in
             if let error {
+                resultLock.lock()
                 success = false
+                resultLock.unlock()
                 errorLog("[NW] send failed: \(error)", module: .network)
             }
             semaphore.signal()
         })
-        semaphore.wait()
+        // A `.waiting`/stuck connection may never invoke the completion; don't block forever.
+        if semaphore.wait(timeout: .now() + Self.sendTimeout) == .timedOut {
+            errorLog("[NW] send timed out after \(Self.sendTimeout)s", module: .network)
+            return false
+        }
+        resultLock.lock()
+        defer { resultLock.unlock() }
         return success
     }
 
     func close() {
         cancelConnectTimeout()
+        cancelWaitingTimeout()
         locked { _state = .disconnectedState }
         let conn = connection
         queue.async { conn?.cancel() }
@@ -244,10 +272,7 @@ final class NWMessageChannel: MessageChannel {
             case .cancelled:
                 self.handleTermination(error: nil)
             case .waiting(let error):
-                // The legacy stack fails fast; surface stuck outbound connects as failures.
-                if !self.isAccepted {
-                    warningLog("[NW] connection waiting: \(error)", module: .network)
-                }
+                self.handleWaiting(error: error)
             default:
                 break
             }
@@ -256,6 +281,7 @@ final class NWMessageChannel: MessageChannel {
 
     private func handleReady() {
         cancelConnectTimeout()
+        cancelWaitingTimeout()
         locked { _state = .connectedState }
         hasBecomeReady = true
         infoLog("[NW] connected local=\(localAddress ?? "nil") remote=\(remoteAddress ?? "nil")", module: .network)
@@ -271,8 +297,39 @@ final class NWMessageChannel: MessageChannel {
         startReceiveLoop()
     }
 
+    private func handleWaiting(error: NWError) {
+        warningLog("[NW] connection waiting: \(error)", module: .network)
+        // Give the path a short window to recover; if it does not, fail fast like the legacy
+        // stack so we don't leave a zombie connection stuck in `connectedState`. A subsequent
+        // `.ready` cancels this; repeated `.waiting` updates do not extend the window.
+        startWaitingTimeout()
+    }
+
+    private func startWaitingTimeout() {
+        // Already counting down — don't restart, or a flood of `.waiting` updates would push the
+        // deadline out indefinitely.
+        guard waitingWorkItem == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.waitingWorkItem = nil
+            guard self.locked({ self._state }) != .disconnectedState else { return }
+            warningLog("[NW] still waiting after \(Self.waitingGracePeriod)s; terminating connection", module: .network)
+            let conn = self.connection
+            self.handleTermination(error: nil)
+            conn?.cancel()
+        }
+        waitingWorkItem = work
+        queue.asyncAfter(deadline: .now() + Self.waitingGracePeriod, execute: work)
+    }
+
+    private func cancelWaitingTimeout() {
+        waitingWorkItem?.cancel()
+        waitingWorkItem = nil
+    }
+
     private func handleTermination(error: Error?) {
         cancelConnectTimeout()
+        cancelWaitingTimeout()
         guard !didReportTermination else { return }
         didReportTermination = true
 

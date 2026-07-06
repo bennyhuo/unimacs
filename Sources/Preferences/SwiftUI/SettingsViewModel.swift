@@ -20,10 +20,6 @@ final class SettingsViewModel: ObservableObject {
         didSet { prefs.setValue(allowControl, forKey: Settings.allowControlKey) }
     }
     
-    @Published var enableEncryption: Bool {
-        didSet { prefs.setValue(enableEncryption, forKey: Settings.enabledEncryptionKey) }
-    }
-    
     @Published var trustRequestBehavior: TrustRequestBehavior {
         didSet { prefs.setValue(trustRequestBehavior.rawValue, forKey: Settings.trustRequestBehaviorKey) }
     }
@@ -58,6 +54,12 @@ final class SettingsViewModel: ObservableObject {
     /// transparent shield window and the public cursor-hiding API is used, which
     /// works reliably on macOS 26+. When disabled (Scheme B), the legacy private
     /// background hack is used instead. Takes effect on the next control session.
+    /// When enabled, the cursor is warped to the center of the main screen
+    /// after a control session ends. Off by default.
+    @Published var warpCursorOnStopControl: Bool {
+        didSet { prefs.setValue(warpCursorOnStopControl, forKey: Settings.wrapOnStopControlKey) }
+    }
+
     @Published var useCursorShieldWindow: Bool {
         didSet { prefs.setValue(useCursorShieldWindow, forKey: Settings.useCursorShieldWindowKey) }
     }
@@ -289,7 +291,6 @@ final class SettingsViewModel: ObservableObject {
         
         // Load initial values from preferences
         allowControl = prefs.bool(forPref: Settings.allowControlKey)
-        enableEncryption = prefs.bool(forPref: Settings.enabledEncryptionKey)
         trustRequestBehavior = TrustRequestBehavior(rawValue: prefs.int(forPref: Settings.trustRequestBehaviorKey)) ?? .ask
         
         requireKey = prefs.bool(forPref: Settings.requireKeyKey)
@@ -298,6 +299,7 @@ final class SettingsViewModel: ObservableObject {
         switchDelay = Double(prefs.float(forPref: Settings.switchDelayKey))
         useDirectEventTaps = prefs.bool(forPref: Settings.useDirectEventTapsKey)
         useCursorShieldWindow = prefs.bool(forPref: Settings.useCursorShieldWindowKey)
+        warpCursorOnStopControl = prefs.bool(forPref: Settings.wrapOnStopControlKey)
         
         disconnectOnNetworkChange = prefs.bool(forPref: Settings.disconnectOnNetworkConfigChangeKey)
         useSwiftNetworkStack = prefs.bool(forPref: Settings.useSwiftNetworkStackKey)
@@ -325,32 +327,6 @@ final class SettingsViewModel: ObservableObject {
     }
     
     // MARK: - Actions
-    
-    func showCertificate() {
-        let chooserPanel = SFChooseIdentityPanel.shared()
-
-        chooserPanel?.setAlternateButtonTitle(NSLocalizedString("Cancel", comment: "Generic cancel button in dialog"))
-
-        let setInformativeTextSelector = NSSelectorFromString("setInformativeText:")
-        if chooserPanel?.responds(to: setInformativeTextSelector) == true {
-            chooserPanel?.perform(
-                setInformativeTextSelector,
-                with: NSLocalizedString("Select the certificate to be used for encryption. It must have the same encryption algorithm as the one used on the other Macs.", comment: "Informative text in certificate selection panel")
-            )
-        }
-
-        let identities = IdentityManager.loadOrderedIdentities() as! [SecIdentity]
-        let message = NSLocalizedString("Choose certificate", comment: "Title in certificate selection panel")
-
-        // Use runModal instead of beginSheetForWindow (simpler Swift API)
-        let returnCode = chooserPanel?.runModal(forIdentities: identities, message: message) ?? NSApplication.ModalResponse.cancel.rawValue
-
-        if returnCode == NSApplication.ModalResponse.OK.rawValue {
-            if let identity = chooserPanel?.identity() {
-                IdentityManager.setIdentity(identity.takeUnretainedValue())
-            }
-        }
-    }
     
     func resetConnections() {
         TPMainController.shared().resetAllConnections()
@@ -439,6 +415,10 @@ struct TrustedHostInfo: Identifiable {
         self.hasCertificate = remoteHost.isCertified
         self.remoteHost = remoteHost
     }
+    
+    var systemIconName: String {
+        remoteHost.hasCapability(.portable) ? "laptopcomputer" : "desktopcomputer"
+    }
 }
 
 // MARK: - Trusted Hosts ViewModel
@@ -463,19 +443,5 @@ final class TrustedHostsViewModel: ObservableObject {
             }
         }
         loadTrustedHosts()
-    }
-    
-    func showCertificate(for host: TrustedHostInfo) {
-        guard let certificateData = host.remoteHost.certificateData else { return }
-        
-        var certificate: SecCertificate?
-        if let cfData = certificateData as CFData? {
-            certificate = SecCertificateCreateWithData(nil, cfData)
-        }
-        
-        guard let cert = certificate else { return }
-        
-        let panel = SFCertificatePanel.shared()
-        panel?.beginSheet(for: NSApp.keyWindow, modalDelegate: nil, didEnd: nil, contextInfo: nil, certificates: [cert], showGroup: false)
     }
 }

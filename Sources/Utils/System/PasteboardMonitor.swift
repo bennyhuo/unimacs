@@ -66,6 +66,9 @@ class PasteboardMonitor: NSObject {
     private var timer: Timer?
     private var workspaceObserver: NSObjectProtocol?
     private var applicationObserver: NSObjectProtocol?
+    private var appActivateObserver: NSObjectProtocol?
+    private var appDeactivateObserver: NSObjectProtocol?
+    private var isAppActive = false
     
     // Performance optimization
     private let monitoringQueue = DispatchQueue(label: "com.teleport.pasteboard.monitor", qos: .utility)
@@ -87,6 +90,18 @@ class PasteboardMonitor: NSObject {
         self.lastContentHash = PasteboardContentHash(from: pasteboard)
         super.init()
         setupSystemNotifications()
+        
+        if Thread.isMainThread {
+            self.isAppActive = NSApplication.shared.isActive
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let active = NSApplication.shared.isActive
+                self.monitoringQueue.async {
+                    self.isAppActive = active
+                }
+            }
+        }
         debugLog("Pasteboard Monitor Initialized. ChangeCount: \(lastChangeCount)", module: .clipboard)
     }
     
@@ -117,6 +132,24 @@ class PasteboardMonitor: NSObject {
         ) { [weak self] _ in
             self?.adjustMonitoringFrequency(isActive: false)
         }
+        
+        // Monitor local app activation/deactivation to update cache without blocking on main thread sync
+        let defaultCenter = NotificationCenter.default
+        appActivateObserver = defaultCenter.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateAppActiveState(isActive: true)
+        }
+        
+        appDeactivateObserver = defaultCenter.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateAppActiveState(isActive: false)
+        }
     }
     
     private func removeSystemNotifications() {
@@ -128,6 +161,22 @@ class PasteboardMonitor: NSObject {
         if let observer = applicationObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             applicationObserver = nil
+        }
+        
+        if let observer = appActivateObserver {
+            NotificationCenter.default.removeObserver(observer)
+            appActivateObserver = nil
+        }
+        
+        if let observer = appDeactivateObserver {
+            NotificationCenter.default.removeObserver(observer)
+            appDeactivateObserver = nil
+        }
+    }
+    
+    private func updateAppActiveState(isActive: Bool) {
+        monitoringQueue.async { [weak self] in
+            self?.isAppActive = isActive
         }
     }
     
@@ -234,16 +283,6 @@ class PasteboardMonitor: NSObject {
         }
         
         // Additional heuristic: check if we're the frontmost app and content changed very recently
-        // NSApplication.shared.isActive must be called on main thread
-        var isAppActive = false
-        if Thread.isMainThread {
-            isAppActive = NSApplication.shared.isActive
-        } else {
-            DispatchQueue.main.sync {
-                isAppActive = NSApplication.shared.isActive
-            }
-        }
-        
         if isAppActive {
             let timeSinceLastChange = Date().timeIntervalSince1970 - Double(lastChangeCount) * 0.001
             if timeSinceLastChange < 0.1 { // Less than 100ms ago
@@ -288,7 +327,9 @@ class PasteboardMonitor: NSObject {
     
     /// Clear content history (useful when switching contexts)
     func clearHistory() {
-        contentHistory.removeAll()
+        monitoringQueue.async { [weak self] in
+            self?.contentHistory.removeAll()
+        }
     }
     
     /// Get current monitoring statistics

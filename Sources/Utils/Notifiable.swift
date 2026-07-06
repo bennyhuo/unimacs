@@ -13,6 +13,13 @@ class Notifiable : NSObject {
 	}
 	
 	func notifyChange() {
+		if !Thread.isMainThread {
+			DispatchQueue.main.async {
+				self.notifyChange()
+			}
+			return
+		}
+		
 		let newTask = DispatchWorkItem { [weak self] in
 			self?.sendNotification()
 		}

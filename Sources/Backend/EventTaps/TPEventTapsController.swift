@@ -476,7 +476,7 @@ private let eventTypeName: [String] = [
     @objc public override func warpMouse(toPosition position: NSPoint) {
         super.warpMouse(toPosition: position)
         
-        EventTapDebugLog("warp to \(NSStringFromPoint(position))")
+        debugLog("warp to \(NSStringFromPoint(position))", module: .control)
         
         let sourceState: CGEventSourceStateID
         if let source = eventSource {

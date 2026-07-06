@@ -474,6 +474,9 @@ let sizeString = String.sizeString(for: size)
 
 			// Clean up old files, keeping only the current one
 			self.cleanupOldFiles(keeping: destPath)
+
+			// Re-baseline the coordinator so we don't transfer the file back when control stops
+			TPClipboardTransferCoordinator.shared.didApplyIncomingPasteboard()
 		}
 
 		super._receiverDataTransferCompleted()

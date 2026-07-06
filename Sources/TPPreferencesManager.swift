@@ -126,12 +126,14 @@ class TPPreferencesManager: NSObject {
         let controller = NSUserDefaultsController(defaults: defaults, initialValues: nil)
         
         #if DEBUG || PRERELEASE_BUILD
-        let commandPort = 44276
-        let transferPort = 44277
+        var commandPort = 44276
+        var transferPort = 44277
         #else
-        let commandPort = 44176
-        let transferPort = 44177
+        var commandPort = 44176
+        var transferPort = 44177
         #endif
+        
+
         
         controller.initialValues = [
             ALLOW_CONTROL: false,
@@ -147,14 +149,14 @@ class TPPreferencesManager: NSObject {
             COMMAND_PORT: commandPort,
             TRANSFER_PORT: transferPort,
             TRUST_REQUEST_BEHAVIOR: TrustRequestBehavior.ask.rawValue,
-            ENABLED_ENCRYPTION: IdentityManager.hasIdentity(),
+            ENABLED_ENCRYPTION: false,
             SWITCH_KEY_TAG: ALT_KEY_TAG,
             TRUST_LOCAL_CERTIFICATE: true,
             SHOW_SWITCH_ANIMATION: true,
             SHOW_TEXTUAL_STATUS: true,
             ADD_TO_LOGIN_ITEMS: true,
             DISCONNECT_ON_NETWORK_CONFIG_CHANGE: true,
-            WRAP_ON_STOP_CONTROL: true,
+            WRAP_ON_STOP_CONTROL: false,
             PLAY_SWITCH_SOUND: false,
             ENABLE_DEBUG_LOG: false,
             SYNC_MODIFIERS: true,

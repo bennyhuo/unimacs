@@ -68,6 +68,19 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
     // MARK: - Application Delegate
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Enforce a single running instance before any controller, listener or
+        // Bonjour service is brought up. Multiple instances share the same
+        // network identity and cross-wire connections, so the duplicate must
+        // surrender to the instance already running and quit immediately.
+        guard TPSingleInstanceGuard.acquire() else {
+            errorLog("Another instance of teleport is already running; terminating this duplicate.", module: .control)
+            TPSingleInstanceGuard.activateExistingInstance()
+            NSApp.terminate(nil)
+            return
+        }
+        
+        infoLog("=== Application Started/Restarted ===", module: .general)
+
         TPMainController._sharedController = self
         frontProcessNum.lo = 0
         
@@ -176,7 +189,6 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
     
     @objc private func showWarningDialogs() {
         checkAccessibility()
-        checkEncryption()
     }
     
     func applicationWillTerminate(_ notification: Notification) {
@@ -292,10 +304,7 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
 		DomainBrowser.shared.restart()
 		DeviceConnectionManager.shared.autoConnectPairedDevices()
         
-        if let sessionInfoDict = CGSessionCopyCurrentDictionary() as? [String: Any],
-           let onConsole = sessionInfoDict[kCGSessionOnConsoleKey as String] as? Bool,
-           onConsole,
-           TPServerController.shared.allowControl {
+        if TPServerController.shared.allowControl {
             TPServerController.shared.startSharing()
         }
     }
@@ -377,9 +386,30 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
     /// state of the machine controlling it. Broadcasting to every connection let an idle server
     /// that auto-locked send `controlLock` back to the still-active client and lock it too.
     private func sendMessageToControlledPeers(_ message: TPMessage) {
+        // If we are currently being controlled by someone else,
+        // we must never propagate our own lock/sleep/wake events back or onto other peers.
+        // Doing so would cause a feedback loop (lock/wake storm).
+        guard !TPServerController.shared.isControlled else {
+            debugLog("Skipping system notification propagation (\(message.msgType.displayName)) because we are being controlled by a remote peer", module: .control)
+            return
+        }
+
         let peeredHosts = TPHostsManager.shared.hosts(with: .peered) as? [TPRemoteHost] ?? []
+        
+        // If we are controlling a specific host, we only send to that host.
+        if TPClientController.shared.isControlling,
+           let controlledHost = TPClientController.shared.currentConnection?.connectedHost {
+            if let connection = DeviceConnectionManager.shared.connection(for: controlledHost) {
+                debugLog("Propagating system notification (\(message.msgType.displayName)) to controlled host \(controlledHost.computerName)", module: .control)
+                connection.sendAsync(message)
+            }
+            return
+        }
+        
+        // Otherwise (we are holding the cursor and idle), we propagate to all connected peered hosts
         for host in peeredHosts {
             guard let connection = DeviceConnectionManager.shared.connection(for: host) else { continue }
+            debugLog("Propagating system notification (\(message.msgType.displayName)) to peer \(host.computerName)", module: .control)
             connection.sendAsync(message)
         }
     }
@@ -399,40 +429,10 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
         }
     }
     
-    private func checkEncryption() {
-        if TPPreferencesManager.shared().bool(forPref: ENABLED_ENCRYPTION) {
-            if !IdentityManager.hasIdentity() {
-                let alert = NSAlert()
-                alert.messageText = NSLocalizedString("Encryption requires a certificate", comment: "Text in dialog for certificate missing error")
-                alert.informativeText = NSLocalizedString("In order to activate encryption, teleport needs a valid certificate, but couldn't find one in your Keychain.\nYou'll need to create a certificate and re-activate encryption. Note that the certificate algorithm and key size must match between the server and the clients.\n\nWould you like to launch Certificate Assistant to create a new self-signed certificate?\nRecommended settings: RSA 1024 bits, all others to default values.", comment: "Explanation in dialog for certificate missing error")
-                alert.addButton(withTitle: NSLocalizedString("Launch Assistant", comment: "Button title"))
-                alert.addButton(withTitle: NSLocalizedString("Disable Encryption", comment: "Button title"))
-                
-                let returnCode = present(alert)
-                
-                TPPreferencesManager.shared().setValue(NSNumber(value: false), forKey: ENABLED_ENCRYPTION)
-                
-                if returnCode == NSApplication.ModalResponse.alertFirstButtonReturn {
-                    NSWorkspace.shared.launchApplication(
-                        withBundleIdentifier: "com.apple.CertificateAssistant",
-                        options: .default,
-                        additionalEventParamDescriptor: nil,
-                        launchIdentifier: nil
-                    )
-                }
-            }
-        } else {
-            IdentityManager.setIdentity(nil)
-        }
-    }
-    
     @objc private func prefDidChange(_ notification: Notification) {
         guard let prefKey = notification.object as? String else { return }
         
-        if prefKey == ENABLED_ENCRYPTION {
-            checkEncryption()
-            TPLocalHost.shared.notifyChange()
-        } else if prefKey == CERTIFICATE_IDENTIFIER {
+        if prefKey == CERTIFICATE_IDENTIFIER {
             IdentityManager.reloadIdentity()
         }
     }

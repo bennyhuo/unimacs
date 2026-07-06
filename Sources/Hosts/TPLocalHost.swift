@@ -12,10 +12,6 @@ class TPLocalHost: TPHost {
 
     private var backgroundImages: [NSImage] = []
 
-    override var identifier: String {
-        NSWorkspace.shared.computerIdentifier
-    }
-
     override var address: String? {
         "127.0.0.1"
     }
@@ -25,8 +21,9 @@ class TPLocalHost: TPHost {
     }
 
     init() {
+        let hostName = Host.current().localizedName!
         super.init(
-            name: Host.current().localizedName!,
+            name: hostName,
             macAddresses: NetworkUtils.getMacAddresses(),
             osVersion: SystemInfo.osVersion
         )
@@ -120,11 +117,13 @@ class TPLocalHost: TPHost {
 		override func hasCapability(_ capability: TPHostCapability) -> Bool {
 			return switch capability {
 			case .encryption:
-				IdentityManager.hasIdentity() && TPPreferencesManager.shared().bool(forPref: Settings.enabledEncryptionKey)
+				false
 			case .eventTaps:
 				AccessibilityManager.isTrusted
 			case .directEventTaps:
 				AccessibilityManager.isTrusted && !TPPreferencesManager.shared().bool(forPref: Settings.tigerBehaviorKey)
+			case .portable:
+				SystemInfo.isLaptop
 			default:
 				false
 			}

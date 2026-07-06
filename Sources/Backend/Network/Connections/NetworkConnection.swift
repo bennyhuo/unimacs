@@ -40,6 +40,11 @@ enum NetworkConnectionError: Error, LocalizedError {
     }
 }
 
+@objc enum ConnectionOrigin: Int {
+    case dialed
+    case accepted
+}
+
 /// Swift implementation of TPNetworkConnection with async/await support
 /// This class manages a network connection and provides async message sending
 @objcMembers
@@ -47,11 +52,17 @@ class NetworkConnection: NSObject, MessageChannelDelegate {
     
     // MARK: - Properties
     
+    /// The origin of this connection (whether dialed by us or accepted from a peer)
+    let origin: ConnectionOrigin
+    
     /// The underlying transport channel (legacy socket or Network.framework).
     private let _channel: MessageChannel
 
     /// Current transport state (used by callers for logging / liveness checks).
     var channelState: TPSocketState { _channel.state }
+    
+    /// The local IP address for this connection
+    var localAddress: String? { _channel.localAddress }
     
     /// Unique identifier for this connection
     let connectionId: String
@@ -94,7 +105,8 @@ class NetworkConnection: NSObject, MessageChannelDelegate {
     
     // MARK: - Initialization
     
-    init(channel: MessageChannel) {
+    init(channel: MessageChannel, origin: ConnectionOrigin) {
+        self.origin = origin
         self._channel = channel
         self.connectionId = Self.generateConnectionId()
         self._capabilities = TPLocalHost.shared.capabilities
@@ -104,7 +116,7 @@ class NetworkConnection: NSObject, MessageChannelDelegate {
         _channel.delegate = self
 		networkInterfaceName = NetworkUtils.interfaceName(forIPAddress: _channel.localAddress)
         
-        infoLog("[Conn:\(connectionId)] Connection initialized, local=\(_channel.localAddress ?? "nil"), remote=\(_channel.remoteAddress ?? "nil")")
+        infoLog("[Conn:\(connectionId)] Connection initialized, origin=\(origin), local=\(_channel.localAddress ?? "nil"), remote=\(_channel.remoteAddress ?? "nil")")
     }
     
     // MARK: - Static Methods
@@ -319,6 +331,33 @@ case .connectingState:
         }
     }
     
+    func sendAsync(_ message: TPMessage, completion: @escaping () -> Void) {
+        let state = _channel.state
+
+        switch state {
+        case .connectedState:
+            sendQueue.async { [weak self] in
+                self?.performSend(message)
+                DispatchQueue.main.async {
+                    completion()
+                }
+            }
+
+        case .connectingState:
+            debugLog("[Conn:\(connectionId)] Queuing pending message: \(message)")
+            Task { [weak self] in
+                await self?.pendingMessagesManager.append(message)
+                DispatchQueue.main.async {
+                    completion()
+                }
+            }
+
+        default:
+            warningLog("[Conn:\(connectionId)] Cannot send message, socket not connected (state=\(state.rawValue))", module: .network)
+            completion()
+        }
+    }
+    
     // MARK: - MessageChannelDelegate
 
     // NetworkConnection is attached to a channel only after it is connected, so
@@ -397,8 +436,8 @@ case .connectingState:
     private func messageInfoDescription(_ message: TPMessage) -> String {
         let msgType = message.msgType
         
-        // Skip detailed info for high-frequency event messages
-        if msgType == .event {
+        // Skip detailed info for high-frequency event and layout update messages
+        if msgType == .event || msgType == .layoutUpdate {
             return ", dataLen=\(message.dataLength)"
         }
         

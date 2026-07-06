@@ -55,6 +55,10 @@ typedef NS_ENUM(NSInteger, TPSocketState) {
 - (BOOL)connectToHost:(NSString*)host onPort:(int)port;
 - (void)setNativeSocket:(CFSocketNativeHandle)native;
 
+/// Attach the socket to the current run loop and begin delivering read callbacks.
+/// For accepted sockets this must be called only after the delegate chain is ready.
+- (void)activateReceiveCallbacks;
+
 @property (nonatomic, readonly, copy) NSString *localAddress;
 @property (nonatomic, readonly, copy) NSString *remoteAddress;
 @property (nonatomic, readonly) CFSocketNativeHandle nativeHandle;

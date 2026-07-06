@@ -213,11 +213,13 @@ final class LayoutViewModel: ObservableObject {
     // MARK: - Observation
     
     func startObserving() {
+        warningLog("[LayoutSyncUI] startObserving called", module: .control)
         hostObserver = NotificationCenter.default.addObserver(
             forName: NSNotification.Name("TPHostDidUpdateNotification"),
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            warningLog("[LayoutSyncUI] Received TPHostDidUpdateNotification", module: .control)
             self?.loadLayouts()
         }
         
@@ -226,6 +228,7 @@ final class LayoutViewModel: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            warningLog("[LayoutSyncUI] Received TPConnectionStateDidChangeNotification", module: .control)
             self?.loadLayouts()
         }
         
@@ -246,6 +249,7 @@ final class LayoutViewModel: ObservableObject {
     // MARK: - Load Layouts
     
     func loadLayouts() {
+        warningLog("[LayoutSyncUI] loadLayouts called", module: .control)
         // Load local host
         let localHost = TPLocalHost.shared
         localHostLayout = HostLayout(from: localHost)
@@ -258,6 +262,7 @@ final class LayoutViewModel: ObservableObject {
         
         connectedHostLayouts = connectedHosts.map { host in
             var layout = HostLayout(from: host)
+            warningLog("[LayoutSyncUI] Loaded host \(host.computerName) position: \(layout.position)", module: .control)
             
             // Preserve position if currently dragging this host
             if let existingPos = existingPositions[layout.id], dragStartPositions[layout.id] != nil {
@@ -438,6 +443,12 @@ final class LayoutViewModel: ObservableObject {
         // Save the position as desktopOrigin
         host.desktopOrigin = NSPoint(x: layout.position.x, y: layout.position.y)
         TPHostsManager.shared.saveHosts()
+        
+        // Broadcast the new layout with an incremented version number
+        let newVersion = TPHostsManager.shared.incrementLayoutVersion()
+        if let desktop = TPHostsManager.shared.currentUnifiedDesktop(version: newVersion) {
+            TPHostsManager.shared.broadcastUnifiedDesktop(desktop)
+        }
     }
 }
 

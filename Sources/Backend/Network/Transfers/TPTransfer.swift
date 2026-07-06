@@ -100,9 +100,9 @@ enum TPTransferPriority: Int {
 }
 
 @objcMembers
-class TPTransfer: NSObject, TPTCPSecureSocketDelegate {
-    var _listenSocket: TPTCPSecureSocket?
-    var _socket: TPTCPSecureSocket?
+class TPTransfer: NSObject, TPTCPSocketDelegate {
+    var _listenSocket: TPTCPSocket?
+    var _socket: TPTCPSocket?
     let _lock = NSLock()
     
     let uid: String
@@ -198,10 +198,6 @@ class TPTransfer: NSObject, TPTCPSecureSocketDelegate {
     
     func tcpSocketConnectionClosed(_ tcpSocket: TPTCPSocket) {
         // Connection closed - handled by subclasses
-    }
-    
-    func tcpSecureSocketShouldEnableEncryption(_ tcpSocket: TPTCPSecureSocket) -> Bool {
-        return false
     }
     
     override var description: String {
@@ -323,7 +319,7 @@ class TPOutgoingTransfer: TPTransfer {
     }
     
     func setSocket(_ socket: TPTCPSocket) {
-        _socket = socket as? TPTCPSecureSocket
+        _socket = socket
         _socket?.delegate = self
     }
     
@@ -341,12 +337,8 @@ class TPOutgoingTransfer: TPTransfer {
 			type: type,
 			dataLength: totalDataLength(),
 			expectedDataLength: _progressTotalDataLength,
-			shouldEncrypt: shouldBeEncrypted
+			shouldEncrypt: false
 		).infoDict
-    }
-    
-    override func tcpSecureSocketShouldEnableEncryption(_ tcpSocket: TPTCPSecureSocket) -> Bool {
-        return shouldBeEncrypted && TPConnectionsManager.shared.shouldEnableEncryption(forRemoteAddress: tcpSocket.remoteAddress)
     }
     
     override func tcpSocketConnectionSucceeded(_ tcpSocket: TPTCPSocket) {
@@ -393,9 +385,7 @@ class TPIncomingTransfer: TPTransfer {
     
     func _listen(onPort port: UnsafeMutablePointer<Int32>, for host: TPRemoteHost, encrypt shouldEncrypt: Bool) -> Bool {
         if _listenSocket == nil {
-            _listenSocket = TPTCPSecureSocket(delegate: self)
-			let enableEncryption = shouldEncrypt && TPLocalHost.shared.pairWith(host: host, hasCapability: .encryption)
-			_listenSocket?.enableEncryption = enableEncryption
+            _listenSocket = TPTCPSocket(delegate: self)
             
             let result = _listenSocket?.listen(onPort: port, tries: 50) ?? false
             if !result {
@@ -527,13 +517,9 @@ class TPIncomingTransfer: TPTransfer {
         manager?.transferDidCancel(self)
     }
     
-    override func tcpSecureSocketShouldEnableEncryption(_ tcpSocket: TPTCPSecureSocket) -> Bool {
-        return _shouldEncrypt && TPConnectionsManager.shared.shouldEnableEncryption(forRemoteAddress: tcpSocket.remoteAddress)
-    }
-    
     func tcpSocket(_ listenSocket: TPTCPSocket, connectionAccepted childSocket: TPTCPSocket) {
         _socket?.close()
-        _socket = childSocket as? TPTCPSecureSocket
+        _socket = childSocket
         _socket?.setNoDelay(false)
         _socket?.delegate = self
         

@@ -34,16 +34,8 @@ import Cocoa
     }
     
     @MainActor @objc func ask() -> TPAuthenticationResult {
-        let msgString: String
-        let textString: String
-        
-        if TPLocalHost.shared.pairWith(host: _demandingHost, hasCapability: .encryption) {
-            msgString = String(format: NSLocalizedString("Trust request from certified host \u{201C}%@\u{201D}.", comment: "teleport trust request title - certified version"), _demandingHost.computerName)
-            textString = NSLocalizedString("This will allow the demanding host to take control of your mouse and keyword. All keystrokes and transfers will be encrypted with this host.\nIf you didn't request the control, you should Reject it.", comment: "")
-        } else {
-            msgString = String(format: NSLocalizedString("Trust request from uncertified host \u{201C}%@\u{201D}.", comment: "teleport trust request title - uncertified version"), _demandingHost.computerName)
-            textString = NSLocalizedString("This will allow the demanding host to take control of your mouse and keyword. Warning: the keystrokes and transfers will be sent clear on your network. You should enable encryption on both Macs to encrypt these.\nIf you didn't request the control, you should Reject it.", comment: "")
-        }
+        let msgString = String(format: NSLocalizedString("Trust request from host \u{201C}%@\u{201D}.", comment: "teleport trust request title"), _demandingHost.computerName)
+        let textString = NSLocalizedString("This will allow the demanding host to take control of your mouse and keyboard.\nIf you didn't request the control, you should Reject it.", comment: "")
         
         let authenticationAlert = NSAlert()
         authenticationAlert.messageText = msgString

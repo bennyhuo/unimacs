@@ -120,6 +120,7 @@
 				Hosts/TPLocalHost.swift,
 				Hosts/TPRemoteHost.swift,
 				Hosts/TPScreen.swift,
+				Hosts/TPUnifiedDesktop.swift,
 				Preferences/SwiftUI/DeviceDetailView.swift,
 				Preferences/SwiftUI/DevicesView.swift,
 				Preferences/SwiftUI/DevicesViewModel.swift,
@@ -156,6 +157,8 @@
 				Utils/System/SystemInfo.swift,
 				Utils/System/SystemPowerManager.swift,
 				Utils/System/SystemStatusObserver.swift,
+				Utils/System/TPFileLogger.swift,
+				Utils/System/TPSingleInstanceGuard.swift,
 				Utils/UI/BackgroundImageResolver.swift,
 				Utils/UI/Window.swift,
 			);
@@ -296,9 +299,7 @@
 				LastUpgradeCheck = 1140;
 				TargetAttributes = {
 					A7C9DEC8059F496500E67CB3 = {
-						DevelopmentTeam = "";
 						LastSwiftMigration = 1620;
-						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -427,17 +428,19 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				APP_DISPLAY_NAME = "teleport-dev";
+				AUTOMATION_APPLE_EVENTS = NO;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGN_ENTITLEMENTS = teleportDebug.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1.4.0;
 				DEFINES_MODULE = YES;
 				DEVELOPMENT_TEAM = "";
-				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				EXCLUDED_ARCHS = "";
 				FRAMEWORK_SEARCH_PATHS = (
 					"\"$(SYSTEM_LIBRARY_DIR)/Frameworks/Carbon.framework/Versions/A/Frameworks\"",
@@ -459,6 +462,12 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.bennyhuo.teleport.dev;
 				PRODUCT_NAME = "${APP_DISPLAY_NAME}";
 				PROVISIONING_PROFILE_SPECIFIER = "";
+				RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO;
+				RUNTIME_EXCEPTION_ALLOW_JIT = NO;
+				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
+				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
+				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/teleport-Bridging-Header.h";
 				SWIFT_OBJC_INTERFACE_HEADER_NAME = "teleport-Swift.h";

@@ -192,10 +192,6 @@ private func commonLog(
 	let threadLabel = Thread.isMainThread ? "MAIN " : String(format: "T-%-5u", machThreadId)
 	
 	DispatchQueue.global().async {
-		guard TPPreferencesManager.shared().bool(forPref: Settings.enableDebugLogKey) else {
-			return
-		}
-		
 		guard module.isEnabled else {
 			return
 		}
@@ -213,6 +209,18 @@ private func commonLog(
 			level: level,
 			connectionId: connectionId
 		)
+		
+		// Always persist the full log stream to the rotating local file.
+		// This keeps high-frequency connection logs off the console while
+		// remaining available for troubleshooting.
+		TPFileLogger.shared.append(level: level, category: module.displayName, message: formattedMessage)
+		
+		// Console (unified log) only receives key logs: warnings and errors.
+		// When the user enables debug logging, mirror everything to the console
+		// for live development as well.
+		let mirrorToConsole = level >= .warning
+			|| TPPreferencesManager.shared().bool(forPref: Settings.enableDebugLogKey)
+		guard mirrorToConsole else { return }
 		
 		let logger = module.logger
 		switch level {
@@ -343,6 +351,53 @@ func networkDebugLog(
         }
     }
     
+    /// Package the local rotating log files (~/Library/Logs/Teleport/) into a
+    /// single zip archive in the temporary directory.
+    /// - Returns: URL to the zip archive, or nil if no logs exist / archiving failed.
+    @objc func exportLogArchive() -> URL? {
+        let logDir = TPFileLogger.shared.logDirectoryURL
+
+        // Make sure the directory exists and actually contains log files.
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: logDir,
+            includingPropertiesForKeys: nil
+        )) ?? []
+        let logFiles = contents.filter { $0.pathExtension == "log" }
+        guard !logFiles.isEmpty else {
+            NSLog("[LogExporter] No log files to export at \(logDir.path)")
+            return nil
+        }
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
+        let archiveName = "teleport_logs_\(dateFormatter.string(from: Date())).zip"
+        let destinationURL = FileManager.default.temporaryDirectory.appendingPathComponent(archiveName)
+        try? FileManager.default.removeItem(at: destinationURL)
+
+        // NSFileCoordinator with .forUploading produces a zip of the directory.
+        var coordinatorError: NSError?
+        var didSucceed = false
+        NSFileCoordinator().coordinate(
+            readingItemAt: logDir,
+            options: [.forUploading],
+            error: &coordinatorError
+        ) { zippedURL in
+            do {
+                try FileManager.default.copyItem(at: zippedURL, to: destinationURL)
+                didSucceed = true
+            } catch {
+                NSLog("[LogExporter] Failed to copy zipped logs: \(error)")
+            }
+        }
+
+        if let coordinatorError = coordinatorError {
+            NSLog("[LogExporter] Failed to archive logs: \(coordinatorError)")
+            return nil
+        }
+
+        return didSucceed ? destinationURL : nil
+    }
+
     private func logLevelString(from level: OSLogEntryLog.Level) -> String {
         switch level {
         case .debug: return "DEBUG"
@@ -357,7 +412,7 @@ func networkDebugLog(
     /// Share logs via system share sheet (async version with completion)
     @objc func shareLogs(from view: NSView? = nil, completion: (() -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let logURL = self?.exportLogs()
+            let logURL = self?.exportLogArchive()
             
             DispatchQueue.main.async {
                 defer { completion?() }
@@ -382,7 +437,7 @@ func networkDebugLog(
     /// Save logs to user-selected location (async version with completion)
     @objc func saveLogs(completion: (() -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let logURL = self?.exportLogs()
+            let logURL = self?.exportLogArchive()
             
             DispatchQueue.main.async {
                 guard let logURL = logURL else {
@@ -396,9 +451,9 @@ func networkDebugLog(
                 }
                 
                 let savePanel = NSSavePanel()
-                savePanel.allowedContentTypes = [.plainText]
+                savePanel.allowedContentTypes = [.zip]
                 savePanel.nameFieldStringValue = logURL.lastPathComponent
-                savePanel.message = "Choose where to save the log file"
+                savePanel.message = "Choose where to save the log archive"
                 
                 savePanel.begin { response in
                     defer { completion?() }

@@ -15,7 +15,7 @@
 - (void)_receivedData:(CFDataRef)data;
 
 @property (nonatomic, readonly, strong) Class _childSocketClass;
-- (void)_connectionAcceptedWithNativeSocket:(int)nativeSocket;
+- (void)_connectionAcceptedWithNativeSocket:(int)nativeSocket peerAddress:(CFDataRef)peerAddress;
 - (void)_connectionAcceptedWithChildSocket:(TPTCPSocket*)childSocket;
 - (void)_connectionFailed;
 - (void)_connectionSucceeded;

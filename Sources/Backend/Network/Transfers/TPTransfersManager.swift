@@ -104,13 +104,10 @@ class TPTransfersManager: NSObject {
                 delegate.transfersManager(self, beginNewTransfer: transfer)
             }
             
-			if let host = connection.connectedHost {
-				let enableEncryption = transfer.shouldBeEncrypted && TPLocalHost.shared.pairWith(host: host, hasCapability: .encryption)
-				let socket = TPTCPSecureSocket(delegate: transfer)
-				socket.enableEncryption = enableEncryption
+			if let host = connection.connectedHost,
+			   let socket = TPTCPSocket(delegate: transfer) {
 				socket.setNoDelay(false)
 				socket.connect(toHost: host.address, onPort: port)
-			
 				transfer.setSocket(socket)
 			}
         }
@@ -120,6 +117,16 @@ class TPTransfersManager: NSObject {
         _outgoingConnections.removeValue(forKey: transferUID)
         _outgoingTransfers.removeValue(forKey: transferUID)
         _incomingTransfers.removeValue(forKey: transferUID)
+    }
+    
+    func cancelTransfer(withUID transferUID: String) {
+        if let transfer = _outgoingTransfers[transferUID] {
+            transfer._transferDone()
+            transferDidCancel(transfer)
+        } else if let transfer = _incomingTransfers[transferUID] {
+            transfer._transferDone()
+            transferDidCancel(transfer)
+        }
     }
     
     func receiveTransferRequest(withInfoDict infoDict: [AnyHashable: Any], on connection: NetworkConnection, isClient: Bool) {

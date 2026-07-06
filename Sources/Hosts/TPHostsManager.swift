@@ -260,4 +260,137 @@ class TPHostsManager: NSObject {
         NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(notifyChangesNow), object: nil)
         self.perform(#selector(notifyChangesNow), with: nil, afterDelay: 0.1)
     }
+    
+    // MARK: - Unified Desktop Layout Sync
+
+    private let TPLayoutVersionKey = "layoutVersion"
+
+    func layoutVersion() -> UInt64 {
+        let val = TPPreferencesManager.shared().value(forPref: TPLayoutVersionKey)
+        if let num = val as? NSNumber {
+            return num.uint64Value
+        }
+        return 0
+    }
+
+    func incrementLayoutVersion() -> UInt64 {
+        let nextVer = layoutVersion() + 1
+        TPPreferencesManager.shared().setValue(NSNumber(value: nextVer), forKey: TPLayoutVersionKey)
+        return nextVer
+    }
+
+    @MainActor
+    func currentUnifiedDesktop(version: UInt64) -> TPUnifiedDesktop? {
+        var unifiedScreens: [TPUnifiedScreen] = []
+        
+        // 1. Add local host screens
+        let localHost = TPLocalHost.shared
+        for (index, screen) in localHost.screens.enumerated() {
+            unifiedScreens.append(TPUnifiedScreen(
+                ownerHostId: localHost.identifier,
+                screenIndex: index,
+                frame: screen.frame,
+                isMain: index == 0
+            ))
+        }
+        
+        // 2. Add remote host screens
+        let peeredHosts = self.hosts(with: .peered) as? [TPRemoteHost] ?? []
+        for host in peeredHosts {
+            for (index, screen) in host.screens.enumerated() {
+                let globalFrame = CGRect(
+                    x: host.desktopOrigin.x + screen.frame.origin.x,
+                    y: host.desktopOrigin.y + screen.frame.origin.y,
+                    width: screen.frame.width,
+                    height: screen.frame.height
+                )
+                unifiedScreens.append(TPUnifiedScreen(
+                    ownerHostId: host.identifier,
+                    screenIndex: index,
+                    frame: globalFrame,
+                    isMain: index == 0
+                ))
+            }
+        }
+        
+        return TPUnifiedDesktop(version: version, screens: unifiedScreens)
+    }
+
+    @MainActor
+    func broadcastUnifiedDesktop(_ desktop: TPUnifiedDesktop) {
+        guard let data = desktop.toData() else { return }
+        let msg = TPMessage.create(with: .layoutUpdate, andData: data)
+        warningLog("[LayoutSync] Broadcasting layout update, version=\(desktop.version)", module: .control)
+        DeviceConnectionManager.shared.sendMessageToAllConnectedDevices(msg)
+    }
+
+    @MainActor
+    func applyUnifiedDesktop(_ desktop: TPUnifiedDesktop) -> Bool {
+        let currentVer = layoutVersion()
+        guard desktop.version > currentVer else {
+            warningLog("[LayoutSync] Ignoring layout update: incoming version (\(desktop.version)) <= local version (\(currentVer))", module: .control)
+            return false
+        }
+        
+        warningLog("[LayoutSync] Applying layout update: incoming version (\(desktop.version)) > local version (\(currentVer))", module: .control)
+        TPPreferencesManager.shared().setValue(NSNumber(value: desktop.version), forKey: TPLayoutVersionKey)
+        
+        let localId = TPLocalHost.shared.identifier
+        
+        // Symmetrical layout sync: Find the absolute origin of the local host's primary screen
+        // in the incoming layout to translate absolute coordinates into relative local coordinates.
+        var localMainOrigin = CGPoint.zero
+        if let localMainScreen = desktop.screens.first(where: { $0.ownerHostId == localId && $0.screenIndex == 0 }) {
+            localMainOrigin = localMainScreen.frame.origin
+        }
+        
+        for screen in desktop.screens {
+            guard screen.ownerHostId != localId else { continue }
+            guard let host = self.host(withIdentifier: screen.ownerHostId) else { continue }
+            
+            if screen.screenIndex < host.screens.count {
+                let localFrame = host.screens[screen.screenIndex].frame
+                let relativeOrigin = NSPoint(
+                    x: screen.frame.origin.x - localMainOrigin.x,
+                    y: screen.frame.origin.y - localMainOrigin.y
+                )
+                let computedOrigin = NSPoint(
+                    x: relativeOrigin.x - localFrame.origin.x,
+                    y: relativeOrigin.y - localFrame.origin.y
+                )
+                
+                if host.desktopOrigin != computedOrigin {
+                    host.desktopOrigin = computedOrigin
+                    warningLog("[LayoutSync] Updated remote host \(host.computerName) position to \(computedOrigin) from layout update", module: .control)
+                }
+            }
+        }
+        
+        saveHosts()
+        notifyChanges()
+        return true
+    }
+
+    @MainActor
+    func addTrustedHostToHosts(_ host: TPRemoteHost) {
+        if _hosts[host.identifier] == nil {
+            _hosts[host.identifier] = host
+            saveHosts()
+            notifyChanges()
+        }
+    }
+    
+    @MainActor
+    func removeTrustedHostFromHosts(_ host: TPRemoteHost) {
+        if host.isInState(.online) {
+            host.hostState = .shared
+            saveHosts()
+            notifyChanges()
+        } else {
+            if _hosts.removeValue(forKey: host.identifier) != nil {
+                saveHosts()
+                notifyChanges()
+            }
+        }
+    }
 }

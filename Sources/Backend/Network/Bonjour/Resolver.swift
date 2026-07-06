@@ -65,10 +65,6 @@ class Resolver: NSObject, @preconcurrency NetServiceDelegate {
             if record.name != TPLocalHost.shared.identifier {
                 self.host = TPHostsManager.shared.addBonjourHost(record: record, ipAddress: ipAddress, compatible: true)
                 PingManager.pingRemoteAsync(host: ipAddress.address)
-            } else {
-                #if DEBUG_BUILD
-                    self.host = TPHostsManager.shared.addBonjourHost(record: record, ipAddress: ipAddress, compatible: true)
-                #endif
             }
 
             service.startMonitoring()

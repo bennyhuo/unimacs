@@ -23,6 +23,7 @@ struct DeviceInfo: Identifiable, Equatable {
     let linkPhase: DeviceLinkPhase
     let reconnectSecondsRemaining: Int?
     let macAddresses: [String]
+    let isPortable: Bool
     
     // Reference to the actual remote host
     weak var remoteHost: TPRemoteHost?
@@ -51,6 +52,11 @@ struct DeviceInfo: Identifiable, Equatable {
         self.isConnected = linkPhase == .connected
         self.isControlling = state.contains(.controlled)
         self.isBeingControlled = false
+        self.isPortable = host.hasCapability(.portable)
+    }
+    
+    var systemIconName: String {
+        isPortable ? "laptopcomputer" : "desktopcomputer"
     }
     
     var statusText: String {
@@ -123,7 +129,8 @@ struct DeviceInfo: Identifiable, Equatable {
         lhs.linkPhase == rhs.linkPhase &&
         lhs.reconnectSecondsRemaining == rhs.reconnectSecondsRemaining &&
         lhs.isConnected == rhs.isConnected &&
-        lhs.isControlling == rhs.isControlling
+        lhs.isControlling == rhs.isControlling &&
+        lhs.isPortable == rhs.isPortable
     }
 }
 
@@ -134,6 +141,26 @@ final class DevicesViewModel: ObservableObject {
     @Published var pairedDevices: [DeviceInfo] = []
     @Published var nearbyDevices: [DeviceInfo] = []
     @Published var isScanning: Bool = true
+    
+    // MARK: - Local Device Info
+    @Published var localName: String = ""
+    @Published var localOSVersion: String = ""
+    @Published var localScreenCount: Int = 0
+    @Published var localSystemIconName: String = "laptopcomputer"
+    @Published var localIPAddresses: [String] = []
+    @Published var localIPAddress: String = ""
+    @Published var localPort: Int = 0
+    
+    // MARK: - Client (C) Status
+    @Published var isClientControlling: Bool = false
+    @Published var clientControlledHostName: String? = nil
+    @Published var isClientConnecting: Bool = false
+    @Published var clientConnectingHostName: String? = nil
+    
+    // MARK: - Server (S) Status
+    @Published var isServerSharing: Bool = false
+    @Published var isServerControlled: Bool = false
+    @Published var serverControlledHostName: String? = nil
     
     private var cancellables = Set<AnyCancellable>()
     private var countdownTimer: AnyCancellable?
@@ -159,8 +186,22 @@ final class DevicesViewModel: ObservableObject {
                 self?.updateCountdownTimer()
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: NSNotification.Name(TPHostsManager.TPHostsConfigurationDidChangeNotification))
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.loadDevices()
+            }
+            .store(in: &cancellables)
         
         NotificationCenter.default.publisher(for: NSNotification.Name("TPHostDidBecomeActivatedNotification"))
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.loadDevices()
+            }
+            .store(in: &cancellables)
+            
+        DistributedNotificationCenter.default().publisher(for: NSNotification.Name("TPDefaultsDidChangeNotification"))
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.loadDevices()
@@ -210,8 +251,50 @@ final class DevicesViewModel: ObservableObject {
         nearbyDevices = sharedHosts
             .filter { !$0.isInState(.peered) && !$0.computerName.isEmpty }
             .map { DeviceInfo(from: $0) }
+            
+        // Load Local Device Details
+        let localHost = TPLocalHost.shared
+        localName = localHost.computerName
+        localOSVersion = formatOSVersion(localHost.osVersion)
+        localScreenCount = localHost.screens.count
+        localSystemIconName = localHost.hasCapability(.portable) ? "laptopcomputer" : "desktopcomputer"
+        
+        let watcher = TPNetworkConfigurationWatcher.shared
+        let addresses = watcher.localIpAddresses.filter { $0 != "0.0.0.0" }
+        localIPAddresses = addresses.isEmpty ? ["Offline"] : addresses
+        localPort = Int(TPPreferencesManager.shared().port(forPref: COMMAND_PORT))
+        
+        // Client Status
+        let clientController = TPClientController.shared
+        isClientControlling = clientController.isControlling
+        clientControlledHostName = clientController.currentConnection?.connectedHost?.computerName
+        isClientConnecting = clientController.isWaitingForControlAttempt
+        clientConnectingHostName = pairedDevices.first { $0.linkPhase == .connecting || $0.linkPhase == .reconnecting }?.name
+        
+        // Server Status
+        let serverController = TPServerController.shared
+        isServerSharing = serverController.allowControl
+        isServerControlled = serverController.isControlled
+        serverControlledHostName = serverController.currentConnection?.connectedHost?.computerName
+        
+        // Determine displayed IP address
+        let clientConn = clientController.currentConnection
+        let serverConn = serverController.currentConnection
+        let activeIP: String? = (clientConn?.localAddress ?? serverConn?.localAddress)
+        
+        if let activeIP = activeIP, !activeIP.isEmpty {
+            localIPAddress = activeIP
+        } else {
+            localIPAddress = localIPAddresses.first ?? "Offline"
+        }
         
         updateCountdownTimer()
+    }
+    
+    private func formatOSVersion(_ version: Int) -> String {
+        let major = version / 100
+        let minor = version % 100
+        return "macOS \(major).\(minor)"
     }
     
     private func linkPhaseSortRank(_ phase: DeviceLinkPhase) -> Int {
@@ -220,6 +303,24 @@ final class DevicesViewModel: ObservableObject {
         case .connecting, .reconnecting: return 1
         case .disconnected, .unavailable: return 2
         }
+    }
+    
+    // MARK: - Local Device Actions
+    
+    func toggleServerSharing() {
+        let current = TPServerController.shared.allowControl
+        TPServerController.shared.allowControl = !current
+        loadDevices()
+    }
+    
+    func stopClientControl() {
+        TPClientController.shared.stopControl()
+        loadDevices()
+    }
+    
+    func stopServerControl() {
+        TPServerController.shared.stopControl()
+        loadDevices()
     }
     
     // MARK: - Actions
@@ -233,6 +334,14 @@ final class DevicesViewModel: ObservableObject {
         guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
         
         if device.isConnected {
+            if let connection = DeviceConnectionManager.shared.connection(for: host) {
+                connection.sendAsync(TPMessage.create(with: .unpairNotification)) { [weak self] in
+                    self?.disconnect(from: device)
+                }
+            } else {
+                disconnect(from: device)
+            }
+        } else {
             disconnect(from: device)
         }
         
@@ -250,7 +359,7 @@ final class DevicesViewModel: ObservableObject {
     
     func connect(to device: DeviceInfo) {
         guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
-        DeviceConnectionManager.shared.connect(to: host, resetRetryBudget: true)
+        DeviceConnectionManager.shared.connect(to: host, resetRetryBudget: true, ignoreIdRule: true)
     }
     
     func disconnect(from device: DeviceInfo) {

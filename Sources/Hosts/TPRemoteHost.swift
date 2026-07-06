@@ -343,6 +343,7 @@ final class TPRemoteHost: TPHost, NSCopying {
 		if !record.macAddresses.isEmpty {
 			self.macAddresses = record.macAddresses
 		}
+		notifyChange()
 	}
 
     static func from(data: Data) -> TPRemoteHost {

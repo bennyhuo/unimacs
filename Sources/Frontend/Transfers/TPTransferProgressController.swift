@@ -114,8 +114,8 @@ final class TPTransferProgressController: NSObject, TPTransfersManagerDelegate {
 	private func showWindowIfNeeded() {
 		guard let wc = windowController, let window = wc.window else { return }
 		if !window.isVisible {
+			wc.positionInTopRight()
 			wc.showWindow(nil)
-			window.center()
 			window.orderFrontRegardless()
 		}
 	}
@@ -145,37 +145,49 @@ final class TPTransferProgressController: NSObject, TPTransfersManagerDelegate {
 // MARK: - Transfer List Window Controller
 
 private final class TPTransferListWindowController: NSWindowController {
-	private let scrollView = NSScrollView()
 	private let stackView = NSStackView()
 	private var rowViews: [String: TransferRowView] = [:]
 
 	init() {
-		let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 120))
+		let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 120))
+		contentView.wantsLayer = true
+		contentView.layer?.cornerRadius = 16
+		contentView.layer?.masksToBounds = true
+
+		let visualEffectView = NSVisualEffectView()
+		visualEffectView.material = .hudWindow
+		visualEffectView.blendingMode = .behindWindow
+		visualEffectView.state = .active
+		visualEffectView.translatesAutoresizingMaskIntoConstraints = false
+		visualEffectView.wantsLayer = true
+		visualEffectView.layer?.cornerRadius = 16
+		visualEffectView.layer?.masksToBounds = true
+		visualEffectView.layer?.borderWidth = 0.5
+		visualEffectView.layer?.borderColor = NSColor.separatorColor.cgColor
 
 		stackView.orientation = .vertical
-		stackView.spacing = 12
+		stackView.alignment = .leading
+		stackView.spacing = 10
 		stackView.translatesAutoresizingMaskIntoConstraints = false
-		stackView.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
 
-		scrollView.documentView = stackView
-		scrollView.hasVerticalScroller = true
-		scrollView.hasHorizontalScroller = false
-		scrollView.autohidesScrollers = true
-		scrollView.drawsBackground = false
-		scrollView.translatesAutoresizingMaskIntoConstraints = false
+		contentView.addSubview(visualEffectView)
+		visualEffectView.addSubview(stackView)
 
-		contentView.addSubview(scrollView)
 		NSLayoutConstraint.activate([
-			scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-			scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-			scrollView.topAnchor.constraint(equalTo: contentView.topAnchor),
-			scrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-			stackView.widthAnchor.constraint(equalTo: scrollView.widthAnchor)
+			visualEffectView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+			visualEffectView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+			visualEffectView.topAnchor.constraint(equalTo: contentView.topAnchor),
+			visualEffectView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+
+			stackView.leadingAnchor.constraint(equalTo: visualEffectView.leadingAnchor, constant: 14),
+			stackView.trailingAnchor.constraint(equalTo: visualEffectView.trailingAnchor, constant: -14),
+			stackView.topAnchor.constraint(equalTo: visualEffectView.topAnchor, constant: 14),
+			stackView.bottomAnchor.constraint(equalTo: visualEffectView.bottomAnchor, constant: -14)
 		])
 
 		let window = NSWindow(
 			contentRect: contentView.frame,
-			styleMask: [.titled, .closable],
+			styleMask: .borderless,
 			backing: .buffered,
 			defer: false
 		)
@@ -183,8 +195,12 @@ private final class TPTransferListWindowController: NSWindowController {
 		window.title = NSLocalizedString("Transfer", comment: "")
 		window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 		window.contentView = contentView
-		window.minSize = NSSize(width: 420, height: 80)
-		window.maxSize = NSSize(width: 420, height: 400)
+		window.minSize = NSSize(width: 360, height: 60)
+		window.maxSize = NSSize(width: 360, height: 400)
+		window.isOpaque = false
+		window.backgroundColor = .clear
+		window.hasShadow = true
+		window.level = .floating
 
 		super.init(window: window)
 	}
@@ -192,6 +208,17 @@ private final class TPTransferListWindowController: NSWindowController {
 	@available(*, unavailable)
 	required init?(coder: NSCoder) {
 		fatalError("init(coder:) has not been implemented")
+	}
+
+	func positionInTopRight() {
+		guard let window = window else { return }
+		let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens.first
+		guard let screen = screen else { return }
+		let screenFrame = screen.visibleFrame
+		let margin: CGFloat = 20
+		let x = screenFrame.maxX - window.frame.width - margin
+		let y = screenFrame.maxY - window.frame.height - margin
+		window.setFrameOrigin(NSPoint(x: x, y: y))
 	}
 
 	func updateTransfers(_ transfers: [TPTransferProgressController.TransferState]) {
@@ -214,6 +241,7 @@ private final class TPTransferListWindowController: NSWindowController {
 				row = TransferRowView()
 				rowViews[uid] = row
 				stackView.addArrangedSubview(row)
+				row.widthAnchor.constraint(equalTo: stackView.widthAnchor).isActive = true
 			}
 			row.update(with: state)
 		}
@@ -225,16 +253,25 @@ private final class TPTransferListWindowController: NSWindowController {
 	private func adjustWindowHeight(transferCount: Int) {
 		guard let window = window else { return }
 		
-		let rowHeight: CGFloat = 70
-		let padding: CGFloat = 32
-		let spacing: CGFloat = 12
+		let rowHeight: CGFloat = 52
+		let padding: CGFloat = 28
+		let spacing: CGFloat = 10
 		let contentHeight = CGFloat(transferCount) * rowHeight + CGFloat(max(0, transferCount - 1)) * spacing + padding
-		let targetHeight = min(max(contentHeight, 80), 400)
+		let targetHeight = min(max(contentHeight, 60), 400)
 		
 		var frame = window.frame
-		let heightDiff = targetHeight - frame.height
-		frame.size.height = targetHeight
-		frame.origin.y -= heightDiff
+		let screen = window.screen ?? NSScreen.main
+		if let screen = screen {
+			let screenFrame = screen.visibleFrame
+			let margin: CGFloat = 20
+			frame.size.height = targetHeight
+			frame.origin.x = screenFrame.maxX - frame.width - margin
+			frame.origin.y = screenFrame.maxY - targetHeight - margin
+		} else {
+			let heightDiff = targetHeight - frame.height
+			frame.size.height = targetHeight
+			frame.origin.y -= heightDiff
+		}
 		window.setFrame(frame, display: true, animate: false)
 	}
 }
@@ -242,9 +279,12 @@ private final class TPTransferListWindowController: NSWindowController {
 // MARK: - Transfer Row View
 
 private final class TransferRowView: NSView {
+	private let iconImageView = NSImageView()
 	private let titleLabel = NSTextField(labelWithString: "")
 	private let detailLabel = NSTextField(labelWithString: "")
 	private let progressIndicator = NSProgressIndicator(frame: .zero)
+	private let cancelButton = NSButton()
+	private var transferUID: String?
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
@@ -257,10 +297,16 @@ private final class TransferRowView: NSView {
 	}
 
 	private func setupUI() {
-		titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+		wantsLayer = true
+
+		iconImageView.translatesAutoresizingMaskIntoConstraints = false
+		iconImageView.contentTintColor = .controlAccentColor
+		iconImageView.imageScaling = .scaleProportionallyUpOrDown
+
+		titleLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
 		titleLabel.lineBreakMode = .byTruncatingTail
 
-		detailLabel.font = NSFont.systemFont(ofSize: 11)
+		detailLabel.font = NSFont.systemFont(ofSize: 10)
 		detailLabel.textColor = .secondaryLabelColor
 		detailLabel.lineBreakMode = .byTruncatingTail
 
@@ -271,32 +317,64 @@ private final class TransferRowView: NSView {
 		progressIndicator.controlSize = .small
 		progressIndicator.style = .bar
 		progressIndicator.usesThreadedAnimation = true
+		progressIndicator.translatesAutoresizingMaskIntoConstraints = false
 
-		let stack = NSStackView(views: [titleLabel, detailLabel, progressIndicator])
-		stack.orientation = .vertical
-		stack.alignment = .leading
-		stack.spacing = 4
-		stack.translatesAutoresizingMaskIntoConstraints = false
+		cancelButton.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: NSLocalizedString("Cancel", comment: ""))
+		cancelButton.isBordered = false
+		cancelButton.setButtonType(.momentaryPushIn)
+		cancelButton.contentTintColor = .secondaryLabelColor
+		cancelButton.translatesAutoresizingMaskIntoConstraints = false
+		cancelButton.target = self
+		cancelButton.action = #selector(cancelButtonClicked)
 
-		addSubview(stack)
+		let textStack = NSStackView(views: [titleLabel, detailLabel, progressIndicator])
+		textStack.orientation = .vertical
+		textStack.alignment = .leading
+		textStack.spacing = 3
+		textStack.translatesAutoresizingMaskIntoConstraints = false
+
+		addSubview(iconImageView)
+		addSubview(textStack)
+		addSubview(cancelButton)
+
 		NSLayoutConstraint.activate([
-			stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-			stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-			stack.topAnchor.constraint(equalTo: topAnchor),
-			stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-			progressIndicator.widthAnchor.constraint(equalTo: stack.widthAnchor),
-			progressIndicator.heightAnchor.constraint(equalToConstant: 8)
+			iconImageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+			iconImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
+			iconImageView.widthAnchor.constraint(equalToConstant: 24),
+			iconImageView.heightAnchor.constraint(equalToConstant: 24),
+
+			textStack.leadingAnchor.constraint(equalTo: iconImageView.trailingAnchor, constant: 10),
+			textStack.trailingAnchor.constraint(equalTo: cancelButton.leadingAnchor, constant: -12),
+			textStack.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+			cancelButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+			cancelButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+			cancelButton.widthAnchor.constraint(equalToConstant: 20),
+			cancelButton.heightAnchor.constraint(equalToConstant: 20),
+
+			progressIndicator.widthAnchor.constraint(equalTo: textStack.widthAnchor),
+			progressIndicator.heightAnchor.constraint(equalToConstant: 6),
+
+			heightAnchor.constraint(equalToConstant: 52)
 		])
+	}
+
+	@objc private func cancelButtonClicked() {
+		guard let uid = transferUID else { return }
+		TPTransfersManager.shared.cancelTransfer(withUID: uid)
 	}
 
 	func update(with state: TPTransferProgressController.TransferState) {
 		let transfer = state.transfer
+		self.transferUID = transfer.uid
 		let hostName = transfer.remoteHost?.computerName ?? NSLocalizedString("Remote Host", comment: "")
 		
 		if transfer.isIncoming {
 			titleLabel.stringValue = String(format: NSLocalizedString("Receiving from \"%@\"", comment: ""), hostName)
+			iconImageView.image = NSImage(systemSymbolName: "arrow.down.circle.fill", accessibilityDescription: nil)
 		} else {
 			titleLabel.stringValue = String(format: NSLocalizedString("Sending to \"%@\"", comment: ""), hostName)
+			iconImageView.image = NSImage(systemSymbolName: "arrow.up.circle.fill", accessibilityDescription: nil)
 		}
 
 		if state.isCompleted {
@@ -304,12 +382,14 @@ private final class TransferRowView: NSView {
 			progressIndicator.stopAnimation(nil)
 			progressIndicator.isIndeterminate = false
 			progressIndicator.doubleValue = 1
+			cancelButton.isHidden = true
 		} else {
+			cancelButton.isHidden = false
 			let transferred: UInt64 = transfer.isIncoming ? transfer._receivedDataLength : transfer._sentDataLength
 			let total: UInt64 = transfer._progressTotalDataLength
 
 			if total > 0, state.progress >= 0 {
-let transferredStr = String.sizeString(for: transferred)
+				let transferredStr = String.sizeString(for: transferred)
 				let totalStr = String.sizeString(for: total)
 				detailLabel.stringValue = "\(transferredStr) / \(totalStr)"
 
@@ -317,7 +397,7 @@ let transferredStr = String.sizeString(for: transferred)
 				progressIndicator.isIndeterminate = false
 				progressIndicator.doubleValue = Double(max(0, min(1, state.progress)))
 			} else {
-let transferredStr = String.sizeString(for: transferred)
+				let transferredStr = String.sizeString(for: transferred)
 				detailLabel.stringValue = String(format: NSLocalizedString("Transferred %@", comment: ""), transferredStr)
 
 				progressIndicator.isIndeterminate = true

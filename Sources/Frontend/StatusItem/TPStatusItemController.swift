@@ -34,7 +34,7 @@ private enum TPStatusBarIconState {
 
 /// Controller for the menu bar status item
 @objcMembers
-class TPStatusItemController: NSObject {
+class TPStatusItemController: NSObject, NSMenuDelegate {
     
     // MARK: - Singleton
     
@@ -43,6 +43,7 @@ class TPStatusItemController: NSObject {
     // MARK: - Properties
     
     private var statusItem: NSStatusItem?
+    private var statusItemMenu: NSMenu?
     private var controlStatus: TPStatus = .idle
     
     @objc var showStatusItem: Bool {
@@ -83,23 +84,7 @@ class TPStatusItemController: NSObject {
         
         let menu = NSMenu()
         
-        // Share this Mac menu item
-        let sharedMenuItem = NSMenuItem(
-            title: NSLocalizedString("Share this Mac", comment: ""),
-            action: #selector(switchMenuItem(_:)),
-            keyEquivalent: ""
-        )
-        sharedMenuItem.target = self
-        sharedMenuItem.representedObject = ALLOW_CONTROL
-        sharedMenuItem.bind(
-            .value,
-            to: TPPreferencesManager.shared(),
-            withKeyPath: ALLOW_CONTROL,
-            options: nil
-        )
-        menu.addItem(sharedMenuItem)
-        
-        menu.addItem(.separator())
+        // In Unified Cursor Space, sharing is always on. We do not display the "Share this Mac" toggle.
         
         // Configure menu item
         let openPrefPanelMenuItem = NSMenuItem(
@@ -132,7 +117,15 @@ class TPStatusItemController: NSObject {
         quitMenuItem.target = self
         menu.addItem(quitMenuItem)
         
-        statusItem.menu = menu
+        menu.delegate = self
+        self.statusItemMenu = menu
+        
+        if let button = statusItem.button {
+            button.target = self
+            button.action = #selector(statusBarButtonClicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+        
         refreshStatusIcon()
     }
     
@@ -208,5 +201,26 @@ class TPStatusItemController: NSObject {
     
     @objc private func openTeleportPanel() {
         ModernSettingsLauncher.showSettings()
+    }
+    
+    @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
+        let event = NSApp.currentEvent
+        let isRightClick = event?.type == .rightMouseUp
+        let isControlClick = event?.modifierFlags.contains(.control) == true
+        
+        if isRightClick || isControlClick {
+            if let menu = self.statusItemMenu {
+                statusItem?.menu = menu
+                statusItem?.button?.performClick(nil)
+            }
+        } else {
+            openTeleportPanel()
+        }
+    }
+    
+    // MARK: - NSMenuDelegate
+    
+    func menuDidClose(_ menu: NSMenu) {
+        statusItem?.menu = nil
     }
 }

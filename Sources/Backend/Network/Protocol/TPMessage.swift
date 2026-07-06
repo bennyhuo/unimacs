@@ -138,7 +138,13 @@ class TPMessage: NSObject {
     
     var infoDict: [AnyHashable: Any] {
         guard let data = _additionalData else { return [:] }
-		return NSUnarchiver.unarchiveObject(with: data) as! [AnyHashable: Any]
+        if msgType == .layoutUpdate || msgType == .event {
+            return [:]
+        }
+        if let obj = NSUnarchiver.unarchiveObject(with: data) as? [AnyHashable: Any] {
+            return obj
+        }
+        return [:]
     }
     
     // MARK: - Description
@@ -209,6 +215,9 @@ extension TPMsgType {
         case .transferRequest: return "TransferReq"
         case .transferSuccess: return "TransferSuccess"
         case .transferFailure: return "TransferFailure"
+        case .layoutUpdate: return "LayoutUpdate"
+        case .unpairNotification: return "UnpairNotification"
+        case .disconnectNotification: return "DisconnectNotification"
         }
     }
 }

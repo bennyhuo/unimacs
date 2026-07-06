@@ -12,6 +12,7 @@ struct DevicesView: View {
     @StateObject private var viewModel = DevicesViewModel()
     @State private var selectedDeviceId: String?
     @State private var detailDevice: DeviceInfo?
+    @State private var showingLocalDetail = false
     
     var body: some View {
         ScrollView {
@@ -27,6 +28,13 @@ struct DevicesView: View {
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                
+                // This Device Section
+                DevicesSection(title: "This Device", icon: viewModel.localSystemIconName) {
+                    ThisDeviceRow(viewModel: viewModel, onShowDetail: {
+                        showingLocalDetail = true
+                    })
+                }
                 
                 // Paired Devices Section
                 DevicesSection(title: "My Devices", icon: "desktopcomputer") {
@@ -93,6 +101,9 @@ struct DevicesView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .sheet(item: $detailDevice) { device in
             DeviceDetailView(device: device, viewModel: viewModel)
+        }
+        .sheet(isPresented: $showingLocalDetail) {
+            LocalDeviceDetailView(viewModel: viewModel)
         }
         .onAppear {
             viewModel.startObserving()
@@ -170,7 +181,7 @@ struct PairedDeviceRow: View {
         HStack(spacing: 12) {
             // Device icon with status indicator
             ZStack(alignment: .bottomTrailing) {
-                Image(systemName: "desktopcomputer")
+                Image(systemName: device.systemIconName)
                     .font(.system(size: 24))
                     .foregroundColor(device.linkPhase == .connected ? .accentColor : .secondary)
                     .frame(width: 32, height: 32)
@@ -269,7 +280,7 @@ struct NearbyDeviceRow: View {
     var body: some View {
         HStack(spacing: 12) {
             // Device icon
-            Image(systemName: "desktopcomputer")
+            Image(systemName: device.systemIconName)
                 .font(.system(size: 24))
                 .foregroundColor(.accentColor)
                 .frame(width: 32, height: 32)
@@ -338,6 +349,232 @@ struct EmptyDevicesPlaceholder: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
+    }
+}
+
+// MARK: - This Device Row
+
+@available(macOS 13.0, *)
+struct ThisDeviceRow: View {
+    @ObservedObject var viewModel: DevicesViewModel
+    let onShowDetail: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            // Local Device main details: Name, OS version, Screen Count
+            HStack(spacing: 16) {
+                // Device large icon
+                ZStack(alignment: .bottomTrailing) {
+                    Image(systemName: viewModel.localSystemIconName)
+                        .font(.system(size: 24))
+                        .foregroundColor(.accentColor)
+                        .frame(width: 40, height: 40)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.accentColor.opacity(0.1))
+                        )
+                }
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(viewModel.localName)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                    
+                    HStack(spacing: 6) {
+                        Text(viewModel.localOSVersion)
+                        Text("•")
+                        Text("\(viewModel.localScreenCount) Screen" + (viewModel.localScreenCount > 1 ? "s" : ""))
+                    }
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                // Network section: IP and Port
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(viewModel.localIPAddress)
+                        .font(.body)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
+                    
+                    Text("Port: \(viewModel.localPort)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                // Info button
+                Button {
+                    onShowDetail()
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 18))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            
+            // Status row if there is status info
+            if !statusText.isEmpty {
+                Divider()
+                
+                HStack {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(statusColor)
+                            .frame(width: 8, height: 8)
+                        Text(statusText)
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    // Connection actions
+                    if viewModel.isClientControlling {
+                        Button("Disconnect") {
+                            viewModel.stopClientControl()
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.accentColor)
+                    } else if viewModel.isClientConnecting {
+                        Button("Cancel") {
+                            viewModel.stopClientControl()
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.secondary)
+                    } else if viewModel.isServerControlled {
+                        Button("Disconnect") {
+                            viewModel.stopServerControl()
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.accentColor)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+    
+    // Status text and colors
+    private var statusText: String {
+        if viewModel.isClientControlling {
+            if let hostName = viewModel.clientControlledHostName {
+                return "Controlling \"\(hostName)\""
+            }
+            return "Controlling"
+        } else if viewModel.isClientConnecting {
+            if let hostName = viewModel.clientConnectingHostName {
+                return "Connecting to \"\(hostName)\"..."
+            }
+            return "Connecting..."
+        } else if viewModel.isServerControlled {
+            if let hostName = viewModel.serverControlledHostName {
+                return "Controlled by \"\(hostName)\""
+            }
+            return "Controlled"
+        } else {
+            return "Ready"
+        }
+    }
+    
+    private var statusColor: Color {
+        if viewModel.isClientControlling {
+            return .green
+        } else if viewModel.isClientConnecting {
+            return .orange
+        } else if viewModel.isServerControlled {
+            return .orange
+        } else if viewModel.isServerSharing {
+            return .green
+        }
+        return .gray
+    }
+}
+
+// MARK: - Local Device Detail View
+
+@available(macOS 13.0, *)
+struct LocalDeviceDetailView: View {
+    @ObservedObject var viewModel: DevicesViewModel
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            VStack(spacing: 16) {
+                Image(systemName: viewModel.localSystemIconName)
+                    .font(.system(size: 64))
+                    .foregroundColor(.accentColor)
+                
+                Text(viewModel.localName)
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                
+                Text("This Device")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.top, 24)
+            .padding(.bottom, 20)
+            
+            Divider()
+            
+            // Details
+            ScrollView {
+                VStack(spacing: 16) {
+                    DetailSection(title: "System") {
+                        DetailRow(label: "Name", value: viewModel.localName)
+                        DetailRow(label: "OS Version", value: viewModel.localOSVersion)
+                        DetailRow(label: "Screens", value: "\(viewModel.localScreenCount)")
+                    }
+                    
+                    DetailSection(title: "Network") {
+                        DetailRow(label: "Listening Port", value: "\(viewModel.localPort)")
+                        
+                        // List all local IP addresses
+                        HStack(alignment: .top) {
+                            Text("IP Addresses")
+                                .foregroundColor(.secondary)
+                            
+                            Spacer()
+                            
+                            VStack(alignment: .trailing, spacing: 4) {
+                                ForEach(viewModel.localIPAddresses, id: \.self) { ip in
+                                    Text(ip)
+                                        .foregroundColor(.primary)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Show MAC address if available
+                    let macAddresses = TPLocalHost.shared.macAddresses.map { $0.description }
+                    if !macAddresses.isEmpty {
+                        DetailSection(title: "Hardware") {
+                            MacAddressRow(addresses: macAddresses)
+                        }
+                    }
+                }
+                .padding(20)
+            }
+            
+            Divider()
+            
+            // Action
+            HStack {
+                Spacer()
+                Button("Done") {
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(16)
+        }
+        .frame(width: 400, height: 480)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 

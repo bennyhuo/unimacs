@@ -46,76 +46,82 @@
     ([[TPPreferencesManager sharedPreferencesManager] valueForPref:moduleKey] == nil ? YES : \
      [[TPPreferencesManager sharedPreferencesManager] boolForPref:moduleKey])
 
-// Unified debug log format (matches Swift debugLog format)
-// Debug build: [filename:line] [thread] [function] level » message
-// Release build: [thread] level » message (hide code location info)
+// Numeric module ids (must match Swift LogModule rawValue)
+#define LOG_MOD_GENERAL   0
+#define LOG_MOD_NETWORK   1
+#define LOG_MOD_TRANSFER  2
+#define LOG_MOD_CLIPBOARD 3
+#define LOG_MOD_CONTROL   4
+#define LOG_MOD_SECURITY  5
+
+// Numeric levels (must match Swift LogLevel rawValue)
+#define LOG_LVL_DEBUG   0
+#define LOG_LVL_INFO    1
+#define LOG_LVL_WARNING 2
+#define LOG_LVL_ERROR   3
+
+// Bridge into the Swift rotating file logger (implemented via @_cdecl in
+// TPFileLogger.swift). Writes the formatted message to the local log file.
+extern void TPFileLog(int level, int module, const char *message);
+
+// Unified logging core.
+// - The full message is always written to the local rotating log file.
+// - The console (NSLog) only receives "key" logs: warnings and errors
+//   (consoleAlways == YES), plus everything when debug logging is enabled.
+//
+// Debug build:   [filename:line] [thread] [function] <prefix> message
+// Release build: [thread] <prefix> message  (hide code location info)
 
 #ifdef DEBUG
-    #define DebugLogModule(moduleKey, logString, args...) \
+    #define _TPLogModule(levelInt, moduleKey, moduleInt, prefix, consoleAlways, logString, args...) \
     do { \
-        if([[TPPreferencesManager sharedPreferencesManager] boolForPref:ENABLE_DEBUG_LOG] && IS_MODULE_ENABLED(moduleKey)) { \
-            NSLog(@"[%s:%d] [%@] [%s] 🔍 " logString, __FILENAME__, __LINE__, __THREAD_LABEL__, __PRETTY_FUNCTION__, ##args); \
+        if(IS_MODULE_ENABLED(moduleKey)) { \
+            NSString *__tpLogMsg = [NSString stringWithFormat:(@"[%s:%d] [%@] [%s] " prefix " " logString), __FILENAME__, __LINE__, __THREAD_LABEL__, __PRETTY_FUNCTION__, ##args]; \
+            TPFileLog((levelInt), (moduleInt), [__tpLogMsg UTF8String]); \
+            if((consoleAlways) || [[TPPreferencesManager sharedPreferencesManager] boolForPref:ENABLE_DEBUG_LOG]) { \
+                NSLog(@"%@", __tpLogMsg); \
+            } \
         } \
-    } while(0)
-
-    #define ErrorLogModule(moduleKey, logString, args...) \
-    do { \
-        NSLog(@"[%s:%d] [%@] [%s] ❌ " logString, __FILENAME__, __LINE__, __THREAD_LABEL__, __PRETTY_FUNCTION__, ##args); \
-    } while(0)
-
-    #define WarningLogModule(moduleKey, logString, args...) \
-    do { \
-        NSLog(@"[%s:%d] [%@] [%s] ⚠️ " logString, __FILENAME__, __LINE__, __THREAD_LABEL__, __PRETTY_FUNCTION__, ##args); \
-    } while(0)
-
-    #define InfoLogModule(moduleKey, logString, args...) \
-    do { \
-        NSLog(@"[%s:%d] [%@] [%s] ℹ️ " logString, __FILENAME__, __LINE__, __THREAD_LABEL__, __PRETTY_FUNCTION__, ##args); \
     } while(0)
 #else
     // Release build: hide file, line, and function info
-    #define DebugLogModule(moduleKey, logString, args...) \
+    #define _TPLogModule(levelInt, moduleKey, moduleInt, prefix, consoleAlways, logString, args...) \
     do { \
-        if([[TPPreferencesManager sharedPreferencesManager] boolForPref:ENABLE_DEBUG_LOG] && IS_MODULE_ENABLED(moduleKey)) { \
-            NSLog(@"[%@] 🔍 " logString, __THREAD_LABEL__, ##args); \
+        if(IS_MODULE_ENABLED(moduleKey)) { \
+            NSString *__tpLogMsg = [NSString stringWithFormat:(@"[%@] " prefix " " logString), __THREAD_LABEL__, ##args]; \
+            TPFileLog((levelInt), (moduleInt), [__tpLogMsg UTF8String]); \
+            if((consoleAlways) || [[TPPreferencesManager sharedPreferencesManager] boolForPref:ENABLE_DEBUG_LOG]) { \
+                NSLog(@"%@", __tpLogMsg); \
+            } \
         } \
-    } while(0)
-
-    #define ErrorLogModule(moduleKey, logString, args...) \
-    do { \
-        NSLog(@"[%@] ❌ " logString, __THREAD_LABEL__, ##args); \
-    } while(0)
-
-    #define WarningLogModule(moduleKey, logString, args...) \
-    do { \
-        NSLog(@"[%@] ⚠️ " logString, __THREAD_LABEL__, ##args); \
-    } while(0)
-
-    #define InfoLogModule(moduleKey, logString, args...) \
-    do { \
-        NSLog(@"[%@] ℹ️ " logString, __THREAD_LABEL__, ##args); \
     } while(0)
 #endif
 
+// Generic module macros (level chosen by caller via the level-specific wrappers below)
+#define DebugLogModule(moduleKey, logString, args...)   _TPLogModule(LOG_LVL_DEBUG,   moduleKey, LOG_MOD_GENERAL, @"🔍", NO,  logString, ##args)
+#define InfoLogModule(moduleKey, logString, args...)    _TPLogModule(LOG_LVL_INFO,    moduleKey, LOG_MOD_GENERAL, @"ℹ️", NO,  logString, ##args)
+#define WarningLogModule(moduleKey, logString, args...) _TPLogModule(LOG_LVL_WARNING, moduleKey, LOG_MOD_GENERAL, @"⚠️", YES, logString, ##args)
+#define ErrorLogModule(moduleKey, logString, args...)   _TPLogModule(LOG_LVL_ERROR,   moduleKey, LOG_MOD_GENERAL, @"❌", YES, logString, ##args)
+
 // Default module macros (use General module)
-#define DebugLog(logString, args...) DebugLogModule(LOG_MODULE_GENERAL_KEY, logString, ##args)
-#define ErrorLog(logString, args...) ErrorLogModule(LOG_MODULE_GENERAL_KEY, logString, ##args)
-#define WarningLog(logString, args...) WarningLogModule(LOG_MODULE_GENERAL_KEY, logString, ##args)
-#define InfoLog(logString, args...) InfoLogModule(LOG_MODULE_GENERAL_KEY, logString, ##args)
+#define DebugLog(logString, args...)   _TPLogModule(LOG_LVL_DEBUG,   LOG_MODULE_GENERAL_KEY, LOG_MOD_GENERAL, @"🔍", NO,  logString, ##args)
+#define InfoLog(logString, args...)    _TPLogModule(LOG_LVL_INFO,    LOG_MODULE_GENERAL_KEY, LOG_MOD_GENERAL, @"ℹ️", NO,  logString, ##args)
+#define WarningLog(logString, args...) _TPLogModule(LOG_LVL_WARNING, LOG_MODULE_GENERAL_KEY, LOG_MOD_GENERAL, @"⚠️", YES, logString, ##args)
+#define ErrorLog(logString, args...)   _TPLogModule(LOG_LVL_ERROR,   LOG_MODULE_GENERAL_KEY, LOG_MOD_GENERAL, @"❌", YES, logString, ##args)
 
 // Module-specific convenience macros
-#define NetworkDebugLog(logString, args...) DebugLogModule(LOG_MODULE_NETWORK_KEY, logString, ##args)
-#define NetworkErrorLog(logString, args...) ErrorLogModule(LOG_MODULE_NETWORK_KEY, logString, ##args)
-#define NetworkWarningLog(logString, args...) WarningLogModule(LOG_MODULE_NETWORK_KEY, logString, ##args)
-#define NetworkInfoLog(logString, args...) InfoLogModule(LOG_MODULE_NETWORK_KEY, logString, ##args)
+#define NetworkDebugLog(logString, args...)   _TPLogModule(LOG_LVL_DEBUG,   LOG_MODULE_NETWORK_KEY, LOG_MOD_NETWORK, @"🔍", NO,  logString, ##args)
+#define NetworkErrorLog(logString, args...)   _TPLogModule(LOG_LVL_ERROR,   LOG_MODULE_NETWORK_KEY, LOG_MOD_NETWORK, @"❌", YES, logString, ##args)
+#define NetworkWarningLog(logString, args...) _TPLogModule(LOG_LVL_WARNING, LOG_MODULE_NETWORK_KEY, LOG_MOD_NETWORK, @"⚠️", YES, logString, ##args)
+#define NetworkInfoLog(logString, args...)    _TPLogModule(LOG_LVL_INFO,    LOG_MODULE_NETWORK_KEY, LOG_MOD_NETWORK, @"ℹ️", NO,  logString, ##args)
 
-#define TransferDebugLog(logString, args...) DebugLogModule(LOG_MODULE_TRANSFER_KEY, logString, ##args)
-#define TransferErrorLog(logString, args...) ErrorLogModule(LOG_MODULE_TRANSFER_KEY, logString, ##args)
+#define TransferDebugLog(logString, args...) _TPLogModule(LOG_LVL_DEBUG, LOG_MODULE_TRANSFER_KEY, LOG_MOD_TRANSFER, @"🔍", NO,  logString, ##args)
+#define TransferErrorLog(logString, args...) _TPLogModule(LOG_LVL_ERROR, LOG_MODULE_TRANSFER_KEY, LOG_MOD_TRANSFER, @"❌", YES, logString, ##args)
 
-#define SecurityDebugLog(logString, args...) DebugLogModule(LOG_MODULE_SECURITY_KEY, logString, ##args)
-#define SecurityErrorLog(logString, args...) ErrorLogModule(LOG_MODULE_SECURITY_KEY, logString, ##args)
+#define SecurityDebugLog(logString, args...) _TPLogModule(LOG_LVL_DEBUG, LOG_MODULE_SECURITY_KEY, LOG_MOD_SECURITY, @"🔍", NO,  logString, ##args)
+#define SecurityErrorLog(logString, args...) _TPLogModule(LOG_LVL_ERROR, LOG_MODULE_SECURITY_KEY, LOG_MOD_SECURITY, @"❌", YES, logString, ##args)
 
-#define ControlDebugLog(logString, args...) DebugLogModule(LOG_MODULE_CONTROL_KEY, logString, ##args)
+#define ControlDebugLog(logString, args...)  _TPLogModule(LOG_LVL_DEBUG, LOG_MODULE_CONTROL_KEY, LOG_MOD_CONTROL, @"🔍", NO,  logString, ##args)
 
 /* Macros */
 #define DELETE(obj) if(obj) {[obj release]; obj=nil;}

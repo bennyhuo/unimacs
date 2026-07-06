@@ -525,18 +525,13 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
     
     @MainActor
     func connectionDidFail(to host: TPRemoteHost) {
-        if _state == .connectingState {
-            cancelPendingControlRequest()
-            
-            let msgTitle = String(format: NSLocalizedString("Connection to \"%@\" failed.", comment: "Title for connection failure"), host.computerName)
-            let alert = NSAlert()
-            alert.messageText = msgTitle
-            alert.addButton(withTitle: NSLocalizedString("OK", comment: ""))
-            alert.informativeText = NSLocalizedString("The server may be down, or an encryption problem may have occured. If encryption is enabled, please check that the certificate algorithms match.", comment: "")
-            TPMainController.shared().present(alert)
-            
-            self.updateTriggersAndShowVisualHint(false)
-        }
+        guard _state == .connectingState else { return }
+        // Connection attempts can fail repeatedly (e.g. an offline host "reached" over a tunnel
+        // that fakes a TCP handshake, then drops). A modal alert here is far too disruptive, so
+        // just clear the in-flight control attempt and refresh triggers silently.
+        warningLog("Connection to \(host.computerName) failed; clearing pending control attempt", module: .control)
+        cancelPendingControlRequest()
+        self.updateTriggersAndShowVisualHint(false)
     }
     
     /// Clear an in-flight control attempt without tearing down persistent TCP connections.

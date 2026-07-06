@@ -20,12 +20,22 @@ private func _CGSDefaultConnection() -> Int32
 @_silgen_name("CGCursorIsVisible")
 private func cgCursorIsVisible() -> Bool
 
+/// Borderless windows refuse key/main status by default, which makes AppKit
+/// ignore them when deciding which Space to switch to on activation. Allowing
+/// the shield to become key/main lets us anchor `NSApp.activate` to the Space
+/// the user is currently on (the shield is `.canJoinAllSpaces`), instead of
+/// being yanked to the Space that hosts Teleport's regular window.
+private final class TPShieldWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
 @MainActor
 final class TPCursorVisibilityController {
 
     static let shared = TPCursorVisibilityController()
 
-    private var shieldWindows: [NSWindow] = []
+    private var shieldWindows: [TPShieldWindow] = []
     private var shieldScreenFrames: [CGRect] = []
 
     /// Teleport's intent: true = cursor should be shown to the user.
@@ -49,8 +59,16 @@ final class TPCursorVisibilityController {
             // Scheme A relies on shield-window cursor ownership + public
             // CGDisplayHideCursor; the private SetsCursorInBackground hack is
             // neither needed nor effective here.
+            //
+            // Order matters: put the shield windows (canJoinAllSpaces +
+            // fullScreenAuxiliary) on the *current* Space first and make the one
+            // under the cursor key/main, then activate. App activation switches
+            // to the Space of the app's key/main window; by anchoring that to a
+            // shield on the current Space we avoid being yanked to the Space that
+            // hosts Teleport's regular window (e.g. when control starts from
+            // another app's fullscreen window).
+            showShields(makeKey: true)
             TPMainController.shared().goFrontmost()
-            showShields()
         } else {
             applyBackgroundHack()
         }
@@ -97,9 +115,19 @@ final class TPCursorVisibilityController {
     private func hideCursorIfLeaked() {
         guard !desiredCursorVisible else { return }
         guard cgCursorIsVisible() else { return }
-        if !usesShieldWindow {
+
+        // CGDisplayHideCursor only affects the cursor while the caller is the
+        // foreground application (per Apple's docs). Scheme A normally satisfies
+        // this via the shield window + goFrontmost. A few apps refuse to yield
+        // the foreground — most notably Xcode, which holds Secure Event Input —
+        // so NSApp.activate never sticks and the public hide is a silent no-op,
+        // leaving the cursor visible. Fall back to the SetsCursorInBackground
+        // connection property (the mechanism Scheme B relies on) whenever we are
+        // not the active app, so the hide lands regardless of foreground state.
+        if !usesShieldWindow || !NSApp.isActive {
             applyBackgroundHack()
         }
+
         invokeHideCursorAPI()
         unbalancedHideCount += 1
     }
@@ -145,11 +173,26 @@ final class TPCursorVisibilityController {
 
     // MARK: - Scheme A: shield windows
 
-    private func showShields() {
+    /// - Parameter makeKey: when true (control-session start), the shield under
+    ///   the cursor is made key/main so a subsequent `NSApp.activate` stays on
+    ///   the current Space. The per-event tick path passes false and only
+    ///   re-asserts z-order, since stealing key on every pointer event would
+    ///   thrash focus.
+    private func showShields(makeKey: Bool = false) {
         rebuildShieldWindowsIfNeeded()
+
+        if makeKey, let keyWindow = shieldWindowUnderCursor() ?? shieldWindows.first {
+            keyWindow.makeKeyAndOrderFront(nil)
+        }
+
         for window in shieldWindows where !window.isVisible {
             window.orderFrontRegardless()
         }
+    }
+
+    private func shieldWindowUnderCursor() -> TPShieldWindow? {
+        let cursor = NSEvent.mouseLocation
+        return shieldWindows.first { $0.frame.contains(cursor) }
     }
 
     private func hideShields() {
@@ -177,8 +220,8 @@ final class TPCursorVisibilityController {
         shieldScreenFrames = frames
     }
 
-    private func makeShieldWindow() -> NSWindow {
-        let window = NSWindow(
+    private func makeShieldWindow() -> TPShieldWindow {
+        let window = TPShieldWindow(
             contentRect: .zero,
             styleMask: .borderless,
             backing: .buffered,

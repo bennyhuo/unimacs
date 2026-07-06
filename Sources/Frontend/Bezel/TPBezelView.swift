@@ -166,14 +166,6 @@ final class TPBezelView: NSView {
 		titleRect.origin.y -= (NSHeight(bounds) - Layout.yTitleMargin)
 		(titleString() as NSString).draw(in: titleRect, withAttributes: Self.titleAttributes)
 
-		// Eventually draw lock image
-		if let remoteHost,
-		   TPLocalHost.shared.pairWith(host: remoteHost, hasCapability: .encryption),
-		   let lock = Self.lockImage {
-			let lockPoint = NSPoint(x: NSMaxX(bounds) - 26.0, y: NSMaxY(bounds) - 26.0)
-			lock.draw(at: lockPoint, from: .zero, operation: .sourceOver, fraction: 1.0)
-		}
-
 		// Eventually draw text
 		if let text {
 			var textRect = bounds

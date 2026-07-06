@@ -35,6 +35,15 @@ enum TPMsgType: Int {
     case transferRequest
     case transferSuccess
     case transferFailure
+    
+    // Layout synchronization
+    case layoutUpdate
+    
+    // Unpair notification
+    case unpairNotification
+
+    // Manual disconnect notification (peer should not auto-reconnect)
+    case disconnectNotification
 }
 
 public struct TPMouseDelta {

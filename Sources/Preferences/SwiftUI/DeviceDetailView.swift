@@ -22,7 +22,7 @@ struct DeviceDetailView: View {
             VStack(spacing: 16) {
                 // Device icon
                 ZStack(alignment: .bottomTrailing) {
-                    Image(systemName: "desktopcomputer")
+                    Image(systemName: displayDevice.systemIconName)
                         .font(.system(size: 64))
                         .foregroundColor(.accentColor)
                     
@@ -84,30 +84,6 @@ struct DeviceDetailView: View {
                     // Security
                     DetailSection(title: "Security") {
                         DetailRow(label: "Paired", value: displayDevice.isPaired ? "Yes" : "No")
-                        
-                        HStack {
-                            Text("Certificate")
-                                .foregroundColor(.secondary)
-                            
-                            Spacer()
-                            
-                            if displayDevice.hasCertificate {
-                                Button {
-                                    showCertificate()
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "checkmark.seal.fill")
-                                            .foregroundColor(.green)
-                                        Text("View")
-                                    }
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                            } else {
-                                Text("None")
-                                    .foregroundColor(.secondary)
-                            }
-                        }
                     }
                 }
                 .padding(20)
@@ -177,17 +153,6 @@ struct DeviceDetailView: View {
         let major = version / 100
         let minor = version % 100
         return "macOS \(major).\(minor)"
-    }
-    
-    private func showCertificate() {
-        guard let host = device.remoteHost ?? TPHostsManager.shared.host(withIdentifier: device.id),
-              let certData = host.certificateData,
-              let cert = SecCertificateCreateWithData(nil, certData as CFData) else {
-            return
-        }
-        
-        let panel = SFCertificatePanel.shared()
-        panel?.runModal(forCertificates: [cert], showGroup: false)
     }
 }
 
@@ -305,6 +270,7 @@ extension DeviceInfo {
         macAddresses: [String] = [],
         linkPhase: DeviceLinkPhase = .unavailable,
         reconnectSecondsRemaining: Int? = nil,
+        isPortable: Bool = false,
         remoteHost: TPRemoteHost?
     ) {
         self.id = id
@@ -321,6 +287,7 @@ extension DeviceInfo {
         self.macAddresses = macAddresses
         self.linkPhase = linkPhase
         self.reconnectSecondsRemaining = reconnectSecondsRemaining
+        self.isPortable = isPortable
         self.remoteHost = remoteHost
     }
 }

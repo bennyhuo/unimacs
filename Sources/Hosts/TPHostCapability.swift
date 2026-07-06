@@ -5,7 +5,7 @@
 
 import Foundation
 
-let MAX_CAPABILITIES = 3
+let MAX_CAPABILITIES = 4
 
 struct TPHostCapability: OptionSet {
     let rawValue: UInt
@@ -14,4 +14,5 @@ struct TPHostCapability: OptionSet {
     static let encryption       = TPHostCapability(rawValue: 1 << 0)
     static let eventTaps        = TPHostCapability(rawValue: 1 << 1)
     static let directEventTaps  = TPHostCapability(rawValue: 1 << 2)
+    static let portable         = TPHostCapability(rawValue: 1 << 3)
 }

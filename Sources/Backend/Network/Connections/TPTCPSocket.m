@@ -16,6 +16,7 @@
 #include <sys/select.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
+#include <sys/ioctl.h>
 #import <net/if.h>
 
 #define CONNECTION_TIMEOUT 5.0
@@ -28,8 +29,10 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 - (void)_close:(BOOL)dropped;
 - (OSStatus)_sendData:(CFDataRef)data;
 - (void)_receivedData:(CFDataRef)data;
+- (BOOL)_setupSocketAllowReuseAddress:(BOOL)allowReuseAddress activateRunLoop:(BOOL)activateRunLoop;
+- (BOOL)_drainPendingDataBeforeClose;
 
-- (void)_connectionAcceptedWithNativeSocket:(int)nativeSocket;
+- (void)_connectionAcceptedWithNativeSocket:(int)nativeSocket peerAddress:(CFDataRef)peerAddress;
 - (void)_connectionAcceptedWithChildSocket:(TPTCPSocket*)childSocket;
 - (void)_connectionFailed;
 - (void)_connectionSucceeded;
@@ -38,6 +41,10 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 @end
 
 @implementation TPTCPSocket
+{
+	CFDataRef _peerAddressData;
+	BOOL _runLoopDeferred;
+}
 
 - (instancetype) initWithDelegate:(id<TPTCPSocketDelegate>)delegate
 {
@@ -47,6 +54,8 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 	_cfSocket = NULL;
 	_runLoopRef = NULL;
 	_sourceRef = NULL;
+	_peerAddressData = NULL;
+	_runLoopDeferred = NO;
 	_socketState = TPSocketDisconnectedState;
 	_noDelay = NO;
 	_lock = [[NSLock alloc] init];
@@ -70,12 +79,16 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 		_noDelay = noDelay;
 		
 		[_lock lock];
+		if (_cfSocket == NULL || !CFSocketIsValid(_cfSocket)) {
+			[_lock unlock];
+			return;
+		}
 		
 		/* Setup socket flags */
 		int socketOptionFlag = noDelay?1:0;
 		int result = setsockopt(CFSocketGetNative(_cfSocket), IPPROTO_TCP, TCP_NODELAY, &socketOptionFlag, sizeof(int));
 		if(result < 0) {
-			DebugLog(@"error setting no delay");
+			DebugLog(@"error setting no delay (errno=%d)", errno);
 			[_lock unlock];
 			return;
 		}
@@ -113,22 +126,58 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 		
 - (BOOL)_setupSocket
 {
+	return [self _setupSocketAllowReuseAddress:YES activateRunLoop:YES];
+}
+
+- (BOOL)_setupSocketAllowReuseAddress:(BOOL)allowReuseAddress
+{
+	return [self _setupSocketAllowReuseAddress:allowReuseAddress activateRunLoop:YES];
+}
+
+- (BOOL)_setupSocketAllowReuseAddress:(BOOL)allowReuseAddress activateRunLoop:(BOOL)activateRunLoop
+{
 	if(_cfSocket == NULL) {
 		DebugLog(@"cfSocket is NULL");
 		return NO;
 	}
 	
-	/* Setup socket flags */
-	int socketOptionFlag = 1;
-	int result = setsockopt(CFSocketGetNative(_cfSocket), SOL_SOCKET, SO_REUSEADDR, &socketOptionFlag, sizeof(int));
-	if(result < 0) {
-		DebugLog(@"error setting reusability of address");
-		return NO;
+	if (allowReuseAddress) {
+		/* SO_REUSEADDR is only valid before bind/listen; it fails on accepted connected sockets. */
+		int socketOptionFlag = 1;
+		int result = setsockopt(CFSocketGetNative(_cfSocket), SOL_SOCKET, SO_REUSEADDR, &socketOptionFlag, sizeof(int));
+		if(result < 0) {
+			DebugLog(@"error setting reusability of address (errno=%d)", errno);
+			return NO;
+		}
 	}
 	
-	[self _setRunLoop:CFRunLoopGetCurrent()];
+	/* Enable TCP Keep-Alive to detect half-open connections quickly */
+	int keepAliveOption = 1;
+	setsockopt(CFSocketGetNative(_cfSocket), SOL_SOCKET, SO_KEEPALIVE, &keepAliveOption, sizeof(int));
+	
+	int keepAliveIdle = 15;
+	setsockopt(CFSocketGetNative(_cfSocket), IPPROTO_TCP, TCP_KEEPALIVE, &keepAliveIdle, sizeof(int));
+	
+	int keepAliveIntvl = 5;
+	setsockopt(CFSocketGetNative(_cfSocket), IPPROTO_TCP, TCP_KEEPINTVL, &keepAliveIntvl, sizeof(int));
+	
+	int keepAliveCnt = 3;
+	setsockopt(CFSocketGetNative(_cfSocket), IPPROTO_TCP, TCP_KEEPCNT, &keepAliveCnt, sizeof(int));
+	
+	if (activateRunLoop) {
+		[self _setRunLoop:CFRunLoopGetCurrent()];
+	}
 	
 	return YES;
+}
+
+- (void)activateReceiveCallbacks
+{
+	if (!_runLoopDeferred || _cfSocket == NULL)
+		return;
+	
+	_runLoopDeferred = NO;
+	[self _setRunLoop:CFRunLoopGetCurrent()];
 }
 
 - (BOOL)listenOnPort:(int*)port tries:(int)tries
@@ -239,16 +288,24 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 	
 	/* Setup struct sockaddr */
 	struct sockaddr_in address;
+	memset(&address, 0, sizeof(address));
 	address.sin_family = AF_INET;
-#if LEGACY_BUILD
-	struct hostent * hp = gethostbyname([host cString]);
-#else
-	struct hostent * hp = gethostbyname([host cStringUsingEncoding:NSASCIIStringEncoding]);
-#endif
-	if(hp == 0)
-		return NO;
-	bcopy((char *)hp->h_addr,(char *)&address.sin_addr, hp->h_length);
 	address.sin_port = htons(port);
+
+	const char *hostCString = [host UTF8String];
+	if (hostCString == NULL || inet_pton(AF_INET, hostCString, &address.sin_addr) != 1) {
+#if LEGACY_BUILD
+		struct hostent * hp = gethostbyname([host cString]);
+#else
+		struct hostent * hp = gethostbyname([host cStringUsingEncoding:NSUTF8StringEncoding]);
+#endif
+		if(hp == 0) {
+			ErrorLog(@"could not resolve host %@", host);
+			[self _close:NO];
+			return NO;
+		}
+		bcopy((char *)hp->h_addr, (char *)&address.sin_addr, hp->h_length);
+	}
 	
 	/* Connect */
 	CFDataRef addr = CFDataCreate(kCFAllocatorDefault, (void*)&address, sizeof(struct sockaddr_in));
@@ -282,6 +339,11 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 
 - (void)setNativeSocket:(CFSocketNativeHandle)native
 {
+	[self setNativeSocket:native peerAddress:NULL];
+}
+
+- (void)setNativeSocket:(CFSocketNativeHandle)native peerAddress:(CFDataRef)peerAddress
+{
 	/* Setup context */
 	CFSocketContext socketContext;
 	bzero(&socketContext, sizeof(CFSocketContext));
@@ -295,8 +357,25 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 										&socketContext
 										);
 	
-	if(![self _setupSocket])
+	if(_cfSocket == NULL) {
+		ErrorLog(@"CFSocketCreateWithNative failed for accepted socket (errno=%d)", errno);
 		return;
+	}
+	
+	if (peerAddress != NULL) {
+		if (_peerAddressData != NULL) {
+			CFRelease(_peerAddressData);
+		}
+		_peerAddressData = CFDataCreateCopy(kCFAllocatorDefault, peerAddress);
+	}
+	
+	_runLoopDeferred = YES;
+	if(![self _setupSocketAllowReuseAddress:NO activateRunLoop:NO]) {
+		ErrorLog(@"failed to configure accepted socket");
+		_runLoopDeferred = NO;
+		[self _close:NO];
+		return;
+	}
 	
 	/* Auto re-enable callbacks */
 	CFOptionFlags socketFlags = CFSocketGetSocketFlags(_cfSocket);
@@ -383,19 +462,39 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 - (NSString*)remoteAddress
 {
 	CFDataRef dataRef = NULL;
+	CFSocketNativeHandle native = -1;
 	[_lock lock];
 	if (_cfSocket) {
 		dataRef = CFSocketCopyPeerAddress(_cfSocket);
+		native = CFSocketGetNative(_cfSocket);
+	}
+	if (dataRef == NULL && _peerAddressData != NULL) {
+		dataRef = CFDataCreateCopy(kCFAllocatorDefault, _peerAddressData);
 	}
 	[_lock unlock];
 	
 	if(dataRef != NULL) {
-		NSString * localAddress = [self _stringAddressFromCFData:dataRef];
+		NSString *address = [self _stringAddressFromCFData:dataRef];
 		CFRelease(dataRef);
-		return localAddress;
+		if (address != nil) {
+			return address;
+		}
 	}
-	else
-		return nil;
+	
+	if (native >= 0) {
+		struct sockaddr_storage storage;
+		socklen_t length = sizeof(storage);
+		if (getpeername(native, (struct sockaddr *)&storage, &length) == 0 &&
+			storage.ss_family == AF_INET) {
+			char buffer[256];
+			struct sockaddr_in *ipv4 = (struct sockaddr_in *)&storage;
+			if (inet_ntop(AF_INET, &ipv4->sin_addr, buffer, sizeof(buffer))) {
+				return @(buffer);
+			}
+		}
+	}
+	
+	return nil;
 }
 
 - (CFSocketNativeHandle)nativeHandle
@@ -548,6 +647,10 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 		CFRelease(_sourceRef);
 		_sourceRef = NULL;
 	}
+	if (_peerAddressData != NULL) {
+		CFRelease(_peerAddressData);
+		_peerAddressData = NULL;
+	}
 	_runLoopRef = NULL;
 	[_lock unlock];
 }
@@ -571,6 +674,41 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 		_cfSocket = NULL;
 		[_lock unlock];
 	}
+	
+	[_lock lock];
+	if (_peerAddressData != NULL) {
+		CFRelease(_peerAddressData);
+		_peerAddressData = NULL;
+	}
+	[_lock unlock];
+}
+
+- (BOOL)_drainPendingDataBeforeClose
+{
+	[_lock lock];
+	if (_cfSocket == NULL || !CFSocketIsValid(_cfSocket)) {
+		[_lock unlock];
+		return NO;
+	}
+	int native = CFSocketGetNative(_cfSocket);
+	[_lock unlock];
+	
+	if (native < 0)
+		return NO;
+	
+	int pending = 0;
+	if (ioctl(native, FIONREAD, &pending) != 0 || pending <= 0)
+		return NO;
+	
+	NSMutableData *buffer = [NSMutableData dataWithLength:(NSUInteger)pending];
+	ssize_t received = recv(native, buffer.mutableBytes, (size_t)pending, 0);
+	if (received <= 0)
+		return NO;
+	
+	buffer.length = (NSUInteger)received;
+	NetworkDebugLog(@"[Socket] drained %zd pending byte(s) before treating empty callback as close, local=%@, remote=%@", received, [self localAddress], [self remoteAddress]);
+	[self _receivedData:(__bridge CFDataRef)buffer];
+	return YES;
 }
 
 - (void)_receivedData:(CFDataRef)data
@@ -589,10 +727,10 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 		[_delegate tcpSocketDidSendData:self];
 }
 
-- (void)_connectionAcceptedWithNativeSocket:(int)nativeSocket
+- (void)_connectionAcceptedWithNativeSocket:(int)nativeSocket peerAddress:(CFDataRef)peerAddress
 {
 	TPTCPSocket * childSocket = [[[self class] alloc] initWithDelegate:nil];
-	[childSocket setNativeSocket:nativeSocket];
+	[childSocket setNativeSocket:nativeSocket peerAddress:peerAddress];
 	[self _connectionAcceptedWithChildSocket:childSocket];
 }
 
@@ -648,6 +786,8 @@ void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType inType, C
 		case kCFSocketDataCallBack:
 		{
 			if(inData == NULL || CFDataGetLength((CFDataRef)inData) == 0) {
+				if ([tcpSocket _drainPendingDataBeforeClose])
+					break;
 				NetworkDebugLog(@"[Socket] CFSocketDataCallBack: received empty data (connection closed by peer), local=%@, remote=%@", [tcpSocket localAddress], [tcpSocket remoteAddress]);
 				[tcpSocket _connectionClosed];
 			} else {
@@ -658,7 +798,7 @@ void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType inType, C
 		case kCFSocketAcceptCallBack:
 		{
 			int native = *((int*)inData);
-			[tcpSocket _connectionAcceptedWithNativeSocket:native];
+			[tcpSocket _connectionAcceptedWithNativeSocket:native peerAddress:inAddress];
 			break;
 		}	
 		case kCFSocketConnectCallBack:

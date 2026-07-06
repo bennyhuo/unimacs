@@ -26,8 +26,7 @@ private class SocketConnection: NSObject, MessageChannelDelegate {
         
         debugLog("SocketConnection init", module: .network)
         
-        let enableEncryption = TPLocalHost.shared.pairWith(host: remoteHost, hasCapability: .encryption)
-        let channel = MessageTransportFactory.makeChannel(enableEncryption: enableEncryption)
+        let channel = MessageTransportFactory.makeChannel()
         self.channel = channel
         channel.delegate = self
         channel.setNoDelay(true)
@@ -48,17 +47,13 @@ private class SocketConnection: NSObject, MessageChannelDelegate {
     func channelDidConnect(_ channel: MessageChannel) {
         debugLog("SocketConnection channelDidConnect", module: .network)
         
-        // Trust-on-first-use: capture the peer certificate after the handshake.
-        if channel.enableEncryption, let certRef = channel.peerCertificate {
-            host.certificate = certRef
-        }
-        
-        let networkConnection = NetworkConnection(channel: channel)
+        let networkConnection = NetworkConnection(channel: channel, origin: .dialed)
         self.connection = networkConnection
         
         connection?.delegate = self
-        // Fire and forget - identification message
-        connection?.sendAsync(TPConnectionsManager.identificationMessage())
+        let canonicalHost = TPHostsManager.shared.host(withIdentifier: host.identifier) ?? host
+        let isPaired = TPConnectionsManager.believesPaired(with: canonicalHost)
+        connection?.sendAsync(TPConnectionsManager.identificationMessage(isPaired: isPaired))
     }
     
     func channelDidFailToConnect(_ channel: MessageChannel) {
@@ -90,18 +85,27 @@ extension SocketConnection: NetworkConnectionDelegate {
                     connection.connectedHost = remoteHost
                     TPConnectionsManager.shared.socketConnection(self, succeededWithNetworkConnection: connection)
                 }
-			} else {
-				Task { @MainActor in
-					let alert = NSAlert()
-					alert.messageText = NSLocalizedString("Wrong protocol version", comment: "Invalid protocol error title")
-					alert.informativeText = String(format: NSLocalizedString("The Mac you tried to control is using teleport protocol v%d, but you're using v%d.", comment: "Invalid protocol error message"), protocolVersion, PROTOCOL_VERSION)
-					alert.addButton(withTitle: NSLocalizedString("OK", comment: ""))
-					
-					_ = TPMainController.shared().present(alert)
-				}
+            } else {
+                Task { @MainActor in
+                    let alert = NSAlert()
+                    alert.messageText = NSLocalizedString("Wrong protocol version", comment: "Invalid protocol error title")
+                    alert.informativeText = String(format: NSLocalizedString("The Mac you tried to control is using teleport protocol v%d, but you're using v%d.", comment: "Invalid protocol error message"), protocolVersion, PROTOCOL_VERSION)
+                    alert.addButton(withTitle: NSLocalizedString("OK", comment: ""))
+                    
+                    _ = TPMainController.shared().present(alert)
+                }
                 
                 TPConnectionsManager.shared.socketConnectionFailed(self)
             }
+        } else if message.msgType == .authenticationFailure {
+            if let reason = message.infoDict["reason"] as? String, reason == "unpaired_by_peer",
+               let remoteHost = connection.connectedHost {
+                warningLog("[Handshake] Received unpaired_by_peer failure from server. Silently unpairing.", module: .network)
+                Task { @MainActor in
+                    DeviceConnectionManager.shared.handlePeerLifecycleMessage(message, on: connection)
+                }
+            }
+            TPConnectionsManager.shared.socketConnectionFailed(self)
         } else {
             errorLog("received invalid msg type: \(message.msgType) (expected identification - \(TPMsgType.identification.rawValue))", module: .network)
             TPConnectionsManager.shared.socketConnectionFailed(self)
@@ -130,12 +134,28 @@ extension SocketConnection: NetworkConnectionDelegate {
     
     // MARK: - Identification Message
     
-    fileprivate static func identificationMessage() -> TPMessage {
+    fileprivate static func identificationMessage(isPaired: Bool = false) -> TPMessage {
         let infoDict: [String: Any] = [
             TPMsgProtocolVersionKey: NSNumber(value: PROTOCOL_VERSION),
-            TPMsgHostDataKey: TPLocalHost.shared.toData() as Any
+            TPMsgHostDataKey: TPLocalHost.shared.toData() as Any,
+            "isPaired": isPaired
         ]
         return TPMessage.create(with: .identification, andInfoDict: infoDict)
+    }
+
+    /// Whether this machine considers the remote host a paired peer for handshake purposes.
+    /// Uses both the trust store and the persisted peered host table so reconnect after a
+    /// manual disconnect does not fall back to a fresh pairing flow when cert comparison
+    /// alone would fail.
+    fileprivate static func believesPaired(with remoteHost: TPRemoteHost) -> Bool {
+        if TPAuthenticationManager.default.isHostTrusted(remoteHost) {
+            return true
+        }
+        if let knownHost = TPHostsManager.shared.host(withIdentifier: remoteHost.identifier),
+           knownHost.isInState(.peered) {
+            return true
+        }
+        return false
     }
     
     // MARK: - Connect to Host
@@ -168,6 +188,16 @@ extension SocketConnection: NetworkConnectionDelegate {
         }
         return true
     }
+
+    /// Drop an in-flight outbound dial to `hostId` so it does not race an inbound accept from the same peer.
+    func cancelPendingOutbound(forHostIdentifier hostId: String) {
+        NetworkRunLoopThread.shared.async {
+            if let pending = self.pendingConnections.removeValue(forKey: hostId) {
+                debugLog("cancelled pending outbound dial to \(hostId)", module: .network)
+                pending.close()
+            }
+        }
+    }
     
     // MARK: - Listening
     
@@ -179,8 +209,7 @@ extension SocketConnection: NetworkConnectionDelegate {
 
             self.listenDelegate = delegate
 
-            let enableEncryption = TPLocalHost.shared.hasCapability(.encryption)
-            let listener = MessageTransportFactory.makeListener(enableEncryption: enableEncryption)
+            let listener = MessageTransportFactory.makeListener()
             listener.delegate = self
             self.listener = listener
 
@@ -209,7 +238,7 @@ extension SocketConnection: NetworkConnectionDelegate {
             let host = socketConnection.host
             let identifier = host.identifier
 
-            if self.pendingConnections[identifier] != nil {
+            if self.pendingConnections[identifier] === socketConnection {
                 socketConnection.delegate?.connectionToServerFailed(host, infoDict: socketConnection.infoDict)
                 self.pendingConnections.removeValue(forKey: identifier)
             }
@@ -221,7 +250,7 @@ extension SocketConnection: NetworkConnectionDelegate {
             let host = socketConnection.host
             let identifier = host.identifier
 
-            if self.pendingConnections[identifier] != nil {
+            if self.pendingConnections[identifier] === socketConnection {
                 socketConnection.delegate?.connectionToServerSucceeded(networkConnection, infoDict: socketConnection.infoDict)
                 self.pendingConnections.removeValue(forKey: identifier)
             }
@@ -250,42 +279,56 @@ extension SocketConnection: NetworkConnectionDelegate {
 extension TPConnectionsManager: MessageListenerDelegate {
 
     func listener(_ listener: MessageListener, didAcceptChannel channel: MessageChannel) {
-        NetworkRunLoopThread.shared.async {
+        // Must attach NetworkConnection on the network thread immediately. Deferring
+        // via async dropped Identification messages that arrived within ~80 ms while
+        // the run loop queue was busy, and left accept-side SSL negotiating against
+        // a plaintext peer during pairing.
+        NetworkRunLoopThread.shared.sync {
             debugLog("connection accepted on \(channel.remoteAddress ?? "nil")", module: .network)
 
+            guard channel.state == .connectedState else {
+                warningLog("accepted channel not connected (state=\(channel.state.rawValue)); closing inbound link", module: .network)
+                channel.close()
+                return
+            }
+
+            // Wire NetworkConnection before enabling socket read callbacks so the
+            // first Identification bytes are not dropped on accepted legacy sockets.
+            let connection = NetworkConnection(channel: channel, origin: .accepted)
+            connection.delegate = self
+            self.connections.insert(connection)
+            channel.activateReceiveCallbacks()
             channel.setNoDelay(true)
 
-            let connection = NetworkConnection(channel: channel)
-            connection.delegate = self
-            // Fire and forget - identification message
-            connection.sendAsync(TPConnectionsManager.identificationMessage())
-            self.connections.insert(connection)
+            if let address = channel.remoteAddress,
+               let host = TPHostsManager.shared.host(withAddress: address) {
+                if let pending = self.pendingConnections[host.identifier] {
+                    let userInitiated = (pending.infoDict?["ignoreIdRule"] as? Bool) == true
+                    if userInitiated {
+                        warningLog("Rejecting inbound from \(address); local user-initiated outbound to \(host.identifier) takes priority", module: .network)
+                        connection.disconnect()
+                        return
+                    }
+                    debugLog("cancelled pending outbound dial to \(host.identifier)", module: .network)
+                    self.pendingConnections.removeValue(forKey: host.identifier)
+                    pending.close()
+                }
+                Task { @MainActor in
+                    DeviceConnectionManager.shared.notePeerInboundDial(to: host)
+                }
+            }
         }
     }
 
     func listenerShouldEnableEncryption(_ listener: MessageListener, forRemoteAddress address: String?) -> Bool {
-        shouldEnableEncryption(forRemoteAddress: address)
+        false
     }
 }
 
 extension TPConnectionsManager {
-    /// Decide whether to use encryption for a peer at the given address, based on
-    /// the shared encryption capability. Also used by file transfers (which keep
-    /// running on the legacy `TPTCPSecureSocket` regardless of the control stack).
+    /// Retained for file-transfer call sites; control connections are always plaintext.
     @objc func shouldEnableEncryption(forRemoteAddress address: String?) -> Bool {
-        guard let remoteAddress = address else {
-            let encryptionActive = TPPreferencesManager.shared().bool(forPref: ENABLED_ENCRYPTION)
-            warningLog("could not determine remote address, will\(encryptionActive ? "" : " NOT") use encryption as it is configured so locally", module: .network)
-            return encryptionActive
-        }
-
-        if let remoteHost = TPHostsManager.shared.host(withAddress: remoteAddress) {
-            return TPLocalHost.shared.pairWith(host: remoteHost, hasCapability: .encryption)
-        } else {
-            let encryptionActive = TPPreferencesManager.shared().bool(forPref: ENABLED_ENCRYPTION)
-            warningLog("could not determine which host has IP \(remoteAddress), will\(encryptionActive ? "" : " NOT") use encryption as it is configured so locally", module: .network)
-            return encryptionActive
-        }
+        false
     }
 }
 
@@ -303,11 +346,40 @@ extension TPConnectionsManager: NetworkConnectionDelegate {
                     let remoteHost = TPHostsManager.shared.updatedHost(from: hostData)
                     connection.connectedHost = remoteHost
                     TPHostsManager.shared.addClientHost(remoteHost)
+                    
+                    // Check for stale pairing
+                    let peerBelievesPaired: Bool
+                    if let nsNum = infoDict["isPaired"] as? NSNumber {
+                        peerBelievesPaired = nsNum.boolValue
+                    } else {
+                        peerBelievesPaired = infoDict["isPaired"] as? Bool ?? false
+                    }
+                    
+                    let knownHost = TPHostsManager.shared.host(withIdentifier: remoteHost.identifier)
+                    let localBelievesPaired = TPConnectionsManager.believesPaired(with: remoteHost)
+
+                    connection.sendAsync(TPConnectionsManager.identificationMessage(isPaired: localBelievesPaired))
+                    
+                    if peerBelievesPaired && !localBelievesPaired {
+                        let isPeered = knownHost?.isInState(.peered) ?? false
+                        let isTrusted = TPAuthenticationManager.default.isHostTrusted(remoteHost)
+                        warningLog("[Handshake] Peer \(remoteHost.computerName) believes paired but is not paired/trusted locally (isPeered=\(isPeered), isTrusted=\(isTrusted)). Rejecting.", module: .network)
+                        let failureMsg = TPMessage.create(with: .authenticationFailure, andInfoDict: ["reason": "unpaired_by_peer"])
+                        connection.sendAsync(failureMsg)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            connection.disconnect()
+                        }
+                        return
+                    }
+                    
                     listenDelegate?.connectionFromClientAccepted(connection)
                 }
             } else {
                 errorLog("received message with invalid protocol (\(protocolVersion) vs \(PROTOCOL_VERSION))", module: .network)
             }
+        } else if message.msgType == .disconnectNotification {
+            debugLog("received disconnectNotification before handshake completed; closing link", module: .network)
+            connection.disconnect()
         } else {
             errorLog("received invalid msg type: \(message.msgType) (expected identification - \(TPMsgType.identification.rawValue))", module: .network)
         }

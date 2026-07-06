@@ -81,92 +81,49 @@ struct SettingsTabView: View {
             VStack(spacing: 20) {
                 // Sharing Section
                 SettingsSection(title: "Sharing") {
-                    SettingsRow(
-                        title: "Share this Mac",
-                        description: "Allow other Macs on your network to control this Mac"
-                    ) {
-                        Toggle("", isOn: $viewModel.allowControl)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                    }
-                    
-                    if viewModel.allowControl {
-                        Divider()
-                        
-                        SettingsRow(title: "Network") {
-                            Menu {
-                                ForEach(viewModel.availableIPAddresses, id: \.self) { ip in
-                                    Button {
-                                        viewModel.selectedIPAddress = ip
-                                    } label: {
-                                        HStack {
-                                            Text(ip)
-                                            if ip == viewModel.selectedIPAddress {
-                                                Spacer()
-                                                Image(systemName: "checkmark")
-                                            }
+                    SettingsRow(title: "Network") {
+                        Menu {
+                            ForEach(viewModel.availableIPAddresses, id: \.self) { ip in
+                                Button {
+                                    viewModel.selectedIPAddress = ip
+                                } label: {
+                                    HStack {
+                                        Text(ip)
+                                        if ip == viewModel.selectedIPAddress {
+                                            Spacer()
+                                            Image(systemName: "checkmark")
                                         }
                                     }
                                 }
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "network")
-                                        .foregroundColor(.secondary)
-                                    Text(viewModel.selectedIPAddress.isEmpty ? "Select..." : viewModel.selectedIPAddress)
-                                        .foregroundColor(.primary)
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color(nsColor: .controlBackgroundColor))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5)
-                                )
                             }
-                            .menuStyle(.borderlessButton)
-                            .fixedSize()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "network")
+                                    .foregroundColor(.secondary)
+                                Text(viewModel.selectedIPAddress.isEmpty ? "Select..." : viewModel.selectedIPAddress)
+                                    .foregroundColor(.primary)
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color(nsColor: .controlBackgroundColor))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                            )
                         }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
                     }
                 }
                 
                 // Security Section
                 SettingsSection(title: "Security") {
-                    SettingsRow(
-                        title: "Enable encryption",
-                        description: "Encrypt all data transferred between Macs"
-                    ) {
-                        Toggle("", isOn: $viewModel.enableEncryption)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                    }
-                    
-                    if viewModel.enableEncryption {
-                        Divider()
-                        
-                        SettingsRow(title: "Certificate") {
-                            Button {
-                                viewModel.showCertificate()
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "lock.shield")
-                                    Text("View")
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.regular)
-                        }
-                    }
-                    
-                    Divider()
-                    
                     SettingsRow(title: "Trusted Hosts") {
                         Button {
                             showingTrustedHosts = true
@@ -216,6 +173,17 @@ struct SettingsTabView: View {
                         description: "Bring teleport to the front behind a transparent shield to hide the local cursor with public APIs (required on macOS 26). Turn off to use the legacy background method. Takes effect on next control session."
                     ) {
                         Toggle("", isOn: $viewModel.useCursorShieldWindow)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+
+                    Divider()
+
+                    SettingsRow(
+                        title: "Warp cursor to center on stop",
+                        description: "Move the cursor to the center of the main screen after a control session ends."
+                    ) {
+                        Toggle("", isOn: $viewModel.warpCursorOnStopControl)
                             .labelsHidden()
                             .toggleStyle(.switch)
                     }
@@ -408,7 +376,7 @@ struct SettingsTabView: View {
                 SettingsSection(title: "Advanced") {
                     SettingsRow(
                         title: "Enable debug logging",
-                        description: "Log detailed information for troubleshooting"
+                        description: "Mirror detailed logs to the system console (always saved to file)"
                     ) {
                         Toggle("", isOn: $viewModel.enableLogging)
                             .labelsHidden()
@@ -483,6 +451,10 @@ struct SettingsTabView: View {
                     Divider()
                     
                     LogExportRow()
+                    
+                    Divider()
+                    
+                    OpenLogFolderRow()
                 }
             }
             .padding(24)
@@ -506,7 +478,7 @@ struct LogExportRow: View {
     var body: some View {
         SettingsRow(
             title: "Export logs",
-            description: "Save recent logs to a file for sharing with developers"
+            description: "Package saved log files into a zip for sharing with developers"
         ) {
             HStack(spacing: 8) {
                 if isExporting {
@@ -550,6 +522,31 @@ struct LogExportRow: View {
                     .controlSize(.regular)
                 }
             }
+        }
+    }
+}
+
+// MARK: - Open Log Folder Row
+
+@available(macOS 13.0, *)
+struct OpenLogFolderRow: View {
+    var body: some View {
+        SettingsRow(
+            title: "Log files",
+            description: "Detailed connection logs are saved here (kept for 7 days)"
+        ) {
+            Button {
+                TPFileLogger.shared.revealLogDirectoryInFinder()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "folder")
+                    Text("Open Folder")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
         }
     }
 }
@@ -727,10 +724,8 @@ struct TrustedHostsView: View {
             } else {
                 List(selection: $selectedHosts) {
                     ForEach(viewModel.trustedHosts) { host in
-                        TrustedHostRow(host: host) {
-                            viewModel.showCertificate(for: host)
-                        }
-                        .tag(host.id)
+                        TrustedHostRow(host: host)
+                            .tag(host.id)
                     }
                 }
                 .listStyle(.inset(alternatesRowBackgrounds: true))
@@ -767,60 +762,25 @@ struct TrustedHostsView: View {
 @available(macOS 13.0, *)
 struct TrustedHostRow: View {
     let host: TrustedHostInfo
-    let onShowCertificate: () -> Void
-    
+
     var body: some View {
         HStack(spacing: 12) {
-            // Host icon
-            Image(systemName: "desktopcomputer")
+            Image(systemName: host.systemIconName)
                 .font(.title2)
                 .foregroundColor(.accentColor)
                 .frame(width: 32, height: 32)
-            
-            // Host info
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(host.name)
                     .font(.body)
                     .fontWeight(.medium)
-                
+
                 Text(host.address)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            
+
             Spacer()
-            
-            // Certificate badge
-            if host.hasCertificate {
-                Button {
-                    onShowCertificate()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.seal.fill")
-                            .foregroundColor(.green)
-                        Text("Certified")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.green.opacity(0.1))
-                    )
-                }
-                .buttonStyle(.plain)
-            } else {
-                HStack(spacing: 4) {
-                    Image(systemName: "xmark.seal")
-                        .foregroundColor(.secondary)
-                    Text("No Certificate")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-            }
         }
         .padding(.vertical, 4)
     }

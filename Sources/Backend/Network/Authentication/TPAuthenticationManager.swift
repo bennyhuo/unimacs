@@ -4,18 +4,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 import Cocoa
-import Security
 
 private let trustedHostsVersion = 2
 private let trustedHostsVersionKey = "TPTrustedHostsVersion"
 private let trustedHostsKey = "TPTrustedHosts"
-
-/// Compare two SecCertificate objects for equality
-private func certificateEqual(_ cert1: SecCertificate, _ cert2: SecCertificate) -> Bool {
-    let data1 = SecCertificateCopyData(cert1) as Data
-    let data2 = SecCertificateCopyData(cert2) as Data
-    return data1 == data2
-}
 
 @objc class TPAuthenticationManager: NSObject, TPClientConnectionsDelegate, NetworkConnectionDelegate {
     
@@ -80,13 +72,13 @@ private func certificateEqual(_ cert1: SecCertificate, _ cert2: SecCertificate) 
     @objc func connectionToServerFailed(_ host: TPRemoteHost, infoDict: [String: Any]?) {
         host.hostState = .shared
         
-		let msgTitle = String(format: NSLocalizedString("Connection to \u{201C}%@\u{201D} failed.", comment: "Title for connection failure"), host.computerName)
-        let alert = NSAlert()
-        alert.messageText = msgTitle
-        alert.informativeText = NSLocalizedString("The server may be down, or an encryption problem may have occured. If encryption is enabled, please check that the certificate algorithms match.", comment: "")
-        alert.addButton(withTitle: NSLocalizedString("OK", comment: ""))
-        
         DispatchQueue.main.async {
+			let msgTitle = String(format: NSLocalizedString("Connection to \u{201C}%@\u{201D} failed.", comment: "Title for connection failure"), host.computerName)
+			let alert = NSAlert()
+			alert.messageText = msgTitle
+			alert.informativeText = NSLocalizedString("The server may be down, or a network problem may have occurred.", comment: "")
+			alert.addButton(withTitle: NSLocalizedString("OK", comment: ""))
+			
             TPMainController.shared().present(alert)
         }
     }
@@ -110,11 +102,12 @@ private func certificateEqual(_ cert1: SecCertificate, _ cert2: SecCertificate) 
             break
             
         case .authenticationSuccess:
-            host.hostState = .peeredOnline
             let authConnection = connection
             currentConnection = nil
             Task { @MainActor in
+                self.host(host, setTrusted: true)
                 DeviceConnectionManager.shared.adoptConnection(authConnection)
+                host.hostState = .peeredOnline
             }
             
         case .authenticationFailure:
@@ -145,9 +138,17 @@ private func certificateEqual(_ cert1: SecCertificate, _ cert2: SecCertificate) 
             
         case .transferFailure:
 			TPTransfersManager.shared.abortTransfer(withUID: message.string)
+
+        case .unpairNotification, .disconnectNotification:
+            Task { @MainActor in
+                DeviceConnectionManager.shared.handlePeerLifecycleMessage(message, on: connection)
+            }
             
         default:
-            print("invalid msg: \(type.rawValue)")
+            warningLog("[Handshake] Forwarding non-authentication message type=\(type.rawValue) to DeviceConnectionManager", module: .network)
+            Task { @MainActor in
+                DeviceConnectionManager.shared.connection(connection, receivedMessage: message)
+            }
         }
     }
     
@@ -163,31 +164,8 @@ private func certificateEqual(_ cert1: SecCertificate, _ cert2: SecCertificate) 
             if TPLocalHost.shared.hasCustomBackgroundImage {
                 TPTransfersManager.shared.beginTransfer(TPOutgoingBackgroundImageTransfer.shared(), using: connection)
             }
-            // Fire and forget - success response
             connection.sendAsync(TPMessage.create(with: .authenticationSuccess))
         } else {
-            // Check if we should auto-trust based on certificate
-            if TPPreferencesManager.shared().bool(forPref: TRUST_LOCAL_CERTIFICATE) {
-                if let remoteHostCertRef = host.certificate {
-                    let identityRef = IdentityManager.identity()
-                    if let identity = identityRef {
-                        var localHostCertRef: SecCertificate?
-                        if SecIdentityCopyCertificate(identity, &localHostCertRef) == noErr,
-                           let localCert = localHostCertRef {
-                            if certificateEqual(remoteHostCertRef, localCert) {
-                                self.host(host, setTrusted: true)
-                                if TPLocalHost.shared.hasCustomBackgroundImage {
-                                    TPTransfersManager.shared.beginTransfer(TPOutgoingBackgroundImageTransfer.shared(), using: connection)
-                                }
-                                // Fire and forget - success response
-                                connection.sendAsync(TPMessage.create(with: .authenticationSuccess))
-                                return
-                            }
-                        }
-                    }
-                }
-            }
-            
             let trustRequestBehavior = Int32(TPPreferencesManager.shared().int(forPref: TRUST_REQUEST_BEHAVIOR))
             
             switch trustRequestBehavior {
@@ -220,7 +198,13 @@ private func certificateEqual(_ cert1: SecCertificate, _ cert2: SecCertificate) 
         }
     }
     
+    @MainActor
     @objc func reply(to authRequest: TPAuthenticationRequest, with result: TPAuthenticationResult) {
+        let connection = authRequest.connection
+        defer {
+            DeviceConnectionManager.shared.restorePersistentDelegate(for: connection)
+        }
+
         switch result {
         case .acceptedAndRejectOthers:
             TPPreferencesManager.shared().setValue(TRUST_REQUEST_REJECT, forKey: TRUST_REQUEST_BEHAVIOR)
@@ -265,30 +249,24 @@ private func certificateEqual(_ cert1: SecCertificate, _ cert2: SecCertificate) 
         
         if trusted {
             _trustedHosts.append(remoteHost)
+            
+            // In symmetric layout sync, a trusted remote host is also a peered host
+            // that should be registered persistently in TPHostsManager._hosts.
+            Task { @MainActor in
+                let online = DeviceConnectionManager.shared.isConnected(to: remoteHost)
+                remoteHost.hostState = online ? .peeredOnline : .peeredOffline
+                TPHostsManager.shared.addTrustedHostToHosts(remoteHost)
+            }
+        } else {
+            Task { @MainActor in
+                TPHostsManager.shared.removeTrustedHostFromHosts(remoteHost)
+            }
         }
         
         saveHosts()
     }
     
     @objc func isHostTrusted(_ remoteHost: TPRemoteHost) -> Bool {
-        var trusted = false
-        
-        if let index = _trustedHosts.firstIndex(of: remoteHost) {
-            let trustedRemoteHost = _trustedHosts[index]
-            let trustedCertRef = trustedRemoteHost.certificate
-            
-            if trustedCertRef == nil {
-                trusted = true // trusting a non certified host
-            } else if let certRef = remoteHost.certificate,
-                      let trustedCert = trustedCertRef {
-                trusted = certificateEqual(trustedCert, certRef)
-            }
-        }
-        
-        if trusted {
-            self.host(remoteHost, setTrusted: true)
-        }
-        
-        return trusted
+        _trustedHosts.contains { $0 == remoteHost }
     }
 }
