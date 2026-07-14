@@ -49,6 +49,7 @@ final class TPHotBorder: NSObject {
 
 	var hostId: String
 	let kind: Kind
+	var firedByRealCursor: Bool = false
 
 	static func createWith(hostId: String, contentRect: NSRect, in parentRect: NSRect, kind: Kind = .trigger) -> TPHotBorder {
 		return TPHotBorder(hostId: hostId, contentRect: contentRect, in: parentRect, kind: kind)
@@ -145,7 +146,7 @@ final class TPHotBorder: NSObject {
 	}
 
 	@discardableResult
-	private func _fireAttempt(at location: NSPoint) -> Bool {
+	private func _fireAttempt(at location: NSPoint, isRealCursor: Bool) -> Bool {
 		guard _state == .activeState, let delegate = _hotDelegate else {
 			return false
 		}
@@ -154,6 +155,7 @@ final class TPHotBorder: NSObject {
 			return false
 		}
 
+		self.firedByRealCursor = isRealCursor
 		self.fire(at: location)
 		return true
 	}
@@ -163,13 +165,13 @@ final class TPHotBorder: NSObject {
 	/// pressed.
 	/// - Returns: whether the border actually fired.
 	@discardableResult
-	func fireIfEntered(atGlobalPoint point: NSPoint) -> Bool {
+	func fireIfEntered(atGlobalPoint point: NSPoint, isRealCursor: Bool) -> Bool {
 		guard _state == .activeState else { return false }
 		guard NSEvent.pressedMouseButtons == 0 else { return false }
 		guard frameContainsInclusive(point) else { return false }
 
 		let localPoint = NSPoint(x: point.x - frame.minX, y: point.y - frame.minY)
-		return self._fireAttempt(at: localPoint)
+		return self._fireAttempt(at: localPoint, isRealCursor: isRealCursor)
 	}
 
 	/// `NSRect.contains` treats the *max* edges (maxX / maxY) as exclusive, but a

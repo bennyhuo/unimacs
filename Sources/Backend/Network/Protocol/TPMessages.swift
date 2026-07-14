@@ -9,6 +9,7 @@ let TPScreenPlacementKey = "TPScreenPlacement"
 let TPMousePositionKey = "TPMousePosition"
 let TPHotBorderRelativePointKey = "TPHotBorderRelativePoint"
 let TPSwitchOptionsKey = "TPSwitchOptions"
+let TPSwitchControlKey = "TPSwitchControl"
 
 class ControlRequestBody {
 

@@ -89,32 +89,38 @@ final class HotBorderMonitor {
 
     /// Drive `.trigger` borders from the local real cursor.
     func evaluateRealCursor() {
-        // While this machine is being controlled, its real cursor is driven by
-        // the remote's injected events; it must not start a reverse control
-        // session. The controlled side's return border is handled by the
-        // injected-cursor feed instead.
-        if TPServerController.shared.isControlled || SystemStatusObserver.shared.isLocked {
-            // Keep the proximity reveal from getting stuck "on".
+        if SystemStatusObserver.shared.isLocked {
             clearProximity(kind: .trigger)
+            clearProximity(kind: .control)
             return
         }
-        let point = NSEvent.mouseLocation
-        updateProximity(at: point, kind: .trigger)
-        fireFirst(containing: point, kind: .trigger)
+
+        if TPServerController.shared.isControlled {
+            // Under controlled state, the local real cursor can only fire .control borders (switch control)
+            let point = NSEvent.mouseLocation
+            updateProximity(at: point, kind: .control)
+            fireFirst(containing: point, kind: .control, isRealCursor: true)
+            clearProximity(kind: .trigger)
+        } else {
+            let point = NSEvent.mouseLocation
+            updateProximity(at: point, kind: .trigger)
+            fireFirst(containing: point, kind: .trigger, isRealCursor: true)
+            clearProximity(kind: .control)
+        }
     }
 
     /// Drive the `.control` return border from the injected virtual cursor.
     /// - Parameter point: cursor position in Cocoa global coordinates (bottom-left origin).
     func evaluateInjectedCursor(atGlobalPoint point: NSPoint) {
         updateProximity(at: point, kind: .control)
-        fireFirst(containing: point, kind: .control)
+        fireFirst(containing: point, kind: .control, isRealCursor: false)
     }
 
-    private func fireFirst(containing point: NSPoint, kind: TPHotBorder.Kind) {
+    private func fireFirst(containing point: NSPoint, kind: TPHotBorder.Kind, isRealCursor: Bool) {
         compact()
         for wrapper in borders {
             guard let border = wrapper.border, border.kind == kind else { continue }
-            if border.fireIfEntered(atGlobalPoint: point) { return }
+            if border.fireIfEntered(atGlobalPoint: point, isRealCursor: isRealCursor) { return }
         }
     }
 

@@ -20,7 +20,16 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 
 	static let shared = TPClientController()
 	
-    private var _state: TPClientState = .idleState
+    private var _state: TPClientState = .idleState {
+        didSet {
+            if oldValue != _state {
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+                    object: nil
+                )
+            }
+        }
+    }
     private var _hotBorders = [String: TPHotBorder]()
     private var _sleepNotifier: io_object_t = 0
     private var _sleepService: io_connect_t = 0
@@ -42,6 +51,12 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 			self,
 			selector: #selector(connectionStateDidChange(_:)),
 			name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+			object: nil
+		)
+		NotificationCenter.default.addObserver(
+			self,
+			selector: #selector(accessibilityStatusDidChange(_:)),
+			name: .TPAccessibilityStatusDidChange,
 			object: nil
 		)
 		TPClipboardTransferCoordinator.shared.start()
@@ -73,7 +88,7 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 		let canControl = TPMainController.shared().canControlHost(withIdentifier: host.identifier)
 		let isOnlineOrControlled = host.isInState(.controlled)
 			|| DeviceConnectionManager.shared.isReachableForControl(host)
-		let shouldEnableTriggers = canControl && isOnlineOrControlled
+		let shouldEnableTriggers = canControl && isOnlineOrControlled && AccessibilityManager.isTrusted
 		let shouldActivateHotBorder = !host.isInState(.controlled)
 		let identifier = host.identifier
 		
@@ -134,6 +149,11 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 		if let host = notification.object as? TPRemoteHost {
 			self._updateTriggers(for: host, showVisualHint: true)
 		}
+	}
+
+	@MainActor
+	@objc private func accessibilityStatusDidChange(_ notification: Notification) {
+		self.updateTriggersAndShowVisualHint(false)
 	}
 
 	@MainActor
@@ -349,7 +369,7 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 		self.updateTriggersAndShowVisualHint(false)
 		
 		if !TPPreferencesManager.shared().bool(forPref: HIDE_CONTROL_BEZEL) {
-			TPBezelController.default().showBezel(withControlledHost: controlledHost)
+			TPBezelController.default().setMode(.controlling(host: controlledHost, emergencyHint: "⌃⌥⇧⎋ to release"))
 		}
 		
 		if TPPreferencesManager.shared().bool(forPref: PLAY_SWITCH_SOUND) {
@@ -357,7 +377,17 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 		}
 
 		self.updateEventsController()
-		self.eventsController?.startGettingEvents(for: self)
+		if let ec = self.eventsController {
+			if !ec.startGettingEvents(for: self) {
+				warningLog("startGettingEvents failed, stopping control", module: .control)
+				self.stopControl()
+				return
+			}
+		} else {
+			warningLog("No events controller available, stopping control", module: .control)
+			self.stopControl()
+			return
+		}
 		TPClipboardTransferCoordinator.shared.clientDidStartControl(using: currentConnection, remoteHost: controlledHost)
 		
 		DisplaySleepAssertion.activate(reason: "startControl")
@@ -395,6 +425,10 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 	func requestedStopControl(withInfoDict infoDict: [AnyHashable: Any]) {
 		guard let currentConnection = self.currentConnection, let controlledHost = currentConnection.connectedHost else { return }
 		
+        if let isSwitch = infoDict[TPSwitchControlKey] as? Bool, isSwitch {
+            debugLog("Stopping control due to SwitchControl request from remote host: \(controlledHost.computerName)", module: .control)
+        }
+        
 		// Fire and forget - control stop doesn't need to block
 		currentConnection.sendAsync(TPMessage.create(with: .controlStop))
 		
@@ -424,7 +458,7 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 				x: localDesktopRect.minX + desktopRelative.x,
 				y: localDesktopRect.minY + desktopRelative.y
 			)
-			let mainMaxY = NSScreen.main?.frame.maxY ?? localDesktopRect.maxY
+			let mainMaxY = NSScreen.primaryScreenFrame.maxY
 			let warpedPoint = NSPoint(
 				x: localCocoaPoint.x,
 				y: mainMaxY - localCocoaPoint.y
@@ -451,7 +485,7 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 		if wasControlling {
 			TPClipboardTransferCoordinator.shared.clientDidStopControl()
 			TPMainController.shared().leaveFrontmost()
-			TPBezelController.default().hideBezel()
+			TPBezelController.default().setMode(.hidden)
 			TPStatusItemController.default.update(with: .idle, host: nil)
 			self.currentConnection?.connectedHost?.hostState = .peeredOnline
 			DisplaySleepAssertion.deactivate()
@@ -489,13 +523,31 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
 	
 	@MainActor
 	func gotEmergencyStopEvent() {
+		if let currentConnection = self.currentConnection {
+			currentConnection.sendAsync(TPMessage.create(with: .controlStop))
+		}
 		self.stopControl()
 	}
 	
 	@MainActor
-	func shouldStop(with event: NSEvent) -> Bool {
-		return false
+	func gotEmergencyStopProgress(count: Int) {
+		if count < 3 {
+			TPBezelController.default().setMode(.emergency(
+				title: "Emergency Stop",
+				subtitle: "Releasing... (\(count)/3)",
+				count: count,
+				maxCount: 3
+			))
+		} else if count < 10 {
+			TPBezelController.default().setMode(.emergency(
+				title: "Force Quit App",
+				subtitle: "Terminating... (\(count - 3)/7)",
+				count: count - 3,
+				maxCount: 7
+			))
+		}
 	}
+	
 	
     // MARK: - DeviceConnectionDelegate
     
@@ -568,20 +620,7 @@ class TPClientController: TPConnectionController, TPEventsListener, DeviceConnec
             _state = .idleState
             if let controlledHost = connection.connectedHost {
                 controlledHost.hostState = .shared
-                
-                let msgTitle = String(format: NSLocalizedString("Host \"%@\" rejected control.", comment: "Title for control failure"), controlledHost.computerName)
-                let alert = NSAlert()
-                alert.messageText = msgTitle
-                alert.addButton(withTitle: NSLocalizedString("Yes", comment: ""))
-                alert.addButton(withTitle: NSLocalizedString("No", comment: ""))
-                alert.informativeText = NSLocalizedString("The host has probably removed this Mac from its trusted hosts list. Do you want to ask for trust again?", comment: "")
-                
-                let result = TPMainController.shared().present(alert)
-                if result == NSApplication.ModalResponse.alertFirstButtonReturn {
-                    if let freshHost = TPHostsManager.shared.host(withIdentifier: controlledHost.identifier) {
-                        TPAuthenticationManager.default.requestAuthentication(on: freshHost)
-                    }
-                }
+                controlledHost.lastError = NSLocalizedString("Control rejected: The host may have removed this Mac from its trusted list.", comment: "")
             }
             return true
         case .controlStop:

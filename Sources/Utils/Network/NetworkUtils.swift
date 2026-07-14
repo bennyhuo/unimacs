@@ -90,4 +90,29 @@ public class NetworkUtils {
         
         return foundInterface
     }
+    
+    /// Checks if a network interface is currently UP
+    /// - Parameter interfaceName: The interface name to check (e.g., "en0")
+    /// - Returns: True if interface exists and has IFF_UP flag set
+    @objc public static func isInterfaceUp(_ interfaceName: String?) -> Bool {
+        guard let interfaceName = interfaceName else { return false }
+        
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else {
+            return false
+        }
+        defer { freeifaddrs(ifaddr) }
+        
+        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
+            let interface = ptr.pointee
+            let name = String(cString: interface.ifa_name)
+            if name == interfaceName {
+                let flags = Int32(interface.ifa_flags)
+                if (flags & IFF_UP) != 0 {
+                    return true
+                }
+            }
+        }
+        return false
+    }
 }

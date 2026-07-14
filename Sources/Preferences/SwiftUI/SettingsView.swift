@@ -4,6 +4,7 @@
 //  Modern SwiftUI settings interface inspired by macOS System Settings.
 
 import SwiftUI
+import AppKit
 
 @available(macOS 13.0, *)
 struct SettingsView: View {
@@ -37,6 +38,7 @@ struct SettingsView: View {
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
+            .removeSidebarToggleIfNeeded()
         } detail: {
             Group {
                 switch selectedTab {
@@ -50,6 +52,7 @@ struct SettingsView: View {
                     AboutTabView()
                 }
             }
+            .id(selectedTab)
             .frame(minWidth: 550)
         }
         .frame(minWidth: 750, minHeight: 500)
@@ -57,6 +60,15 @@ struct SettingsView: View {
             TrustedHostsView()
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
+                } label: {
+                    Image(systemName: "sidebar.left")
+                }
+                .help("Toggle Sidebar")
+            }
+            
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     viewModel.resetConnections()
@@ -169,6 +181,17 @@ struct SettingsTabView: View {
                     Divider()
 
                     SettingsRow(
+                        title: "Always observe events (Emergency stop)",
+                        description: "Start event listening on application startup and keep it running in the background. This ensures the emergency force-quit sequence (ctrl+option+shift+esc) is always active. When off, events are only listened to during active control."
+                    ) {
+                        Toggle("", isOn: $viewModel.alwaysObserveEvents)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+
+                    Divider()
+
+                    SettingsRow(
                         title: "Hide cursor via foreground shield",
                         description: "Bring teleport to the front behind a transparent shield to hide the local cursor with public APIs (required on macOS 26). Turn off to use the legacy background method. Takes effect on next control session."
                     ) {
@@ -212,6 +235,63 @@ struct SettingsTabView: View {
                             .pickerStyle(.segmented)
                             .frame(width: 180)
                         }
+                    }
+                    
+                    Divider()
+
+                    SettingsRow(
+                        title: "Keep connected devices awake",
+                        description: "Periodically notify connected devices to stay awake while you are active on this machine."
+                    ) {
+                        Toggle("", isOn: $viewModel.enableKeepAwake)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+
+                    if viewModel.enableKeepAwake {
+                        Divider()
+                            .padding(.vertical, 8)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("Keep-awake interval")
+                                    .font(.body)
+                                Spacer()
+                                Text("\(Int(viewModel.keepAwakeInterval))s")
+                                    .font(.body)
+                                    .foregroundColor(.secondary)
+                                    .fontWeight(.medium)
+                            }
+                            
+                            HStack(spacing: 12) {
+                                Text("10s")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                
+                                Slider(value: $viewModel.keepAwakeInterval, in: 10...300, step: 5)
+                                    .frame(maxWidth: .infinity)
+                                
+                                Text("300s")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text("Interval in seconds to send keep-awake commands to connected devices.")
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+
+                    Divider()
+
+                    SettingsRow(
+                        title: "Synchronize lock and sleep events",
+                        description: "Propagate manual lock and sleep events to connected devices. Suppresses automatic idle sleep/lock propagation."
+                    ) {
+                        Toggle("", isOn: $viewModel.syncLockSleep)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
                     }
                 }
                 
@@ -1094,3 +1174,15 @@ struct VisualEffectView: NSViewRepresentable {
     SettingsView()
         .frame(width: 800, height: 600)
 }
+
+extension View {
+    @ViewBuilder
+    func removeSidebarToggleIfNeeded() -> some View {
+        if #available(macOS 14.0, *) {
+            self.toolbar(removing: .sidebarToggle)
+        } else {
+            self
+        }
+    }
+}
+

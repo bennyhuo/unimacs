@@ -5,6 +5,20 @@
 
 import Cocoa
 
+@objc enum TPNotificationIconType: Int {
+	case logo
+	case warning
+	case success
+	case key
+}
+
+enum TPBezelMode {
+	case hidden
+	case controlling(host: TPRemoteHost, emergencyHint: String?)
+	case emergency(title: String, subtitle: String, count: Int, maxCount: Int)
+	case notification(title: String, subtitle: String, icon: TPNotificationIconType, duration: TimeInterval)
+}
+
 @objc(TPBezelController)
 final class TPBezelController: NSObject {
 	private static var _default: TPBezelController?
@@ -12,6 +26,7 @@ final class TPBezelController: NSObject {
 	private var bezelWindow: TPBezelWindow?
 	private var bezelView: TPBezelView?
 	private var textTimer: Timer?
+	private var activeControlledHost: TPRemoteHost?
 
 	@objc(defaultController)
 	class func `default`() -> TPBezelController {
@@ -23,12 +38,10 @@ final class TPBezelController: NSObject {
 		return created
 	}
 
-	@objc(showBezelWithControlledHost:)
-	func showBezel(withControlledHost host: TPRemoteHost) {
-		// Always show bezel centered on the *main screen*.
-		let mainScreenFrame = TPLocalHost.shared.mainScreen.frame
-
+	func setMode(_ mode: TPBezelMode) {
+		// Ensure window and view are created on main thread.
 		if bezelWindow == nil {
+			let mainScreenFrame = TPLocalHost.shared.mainScreen.frame
 			let window = TPBezelWindow(contentRect: mainScreenFrame, styleMask: .borderless, backing: .buffered, defer: false)
 			let view = TPBezelView(frame: .zero)
 			window.contentView = view
@@ -36,28 +49,65 @@ final class TPBezelController: NSObject {
 			bezelView = view
 		}
 
-		bezelView?.setRemoteHost(host)
-		bezelWindow?.orderFront(nil)
-		bezelWindow?.orderFrontRegardless()
-		bezelWindow?.collectionBehavior = [.canJoinAllSpaces, .stationary]
+		textTimer?.invalidate()
+		textTimer = nil
+
+		guard let bezelView = bezelView, let bezelWindow = bezelWindow else { return }
+
+		switch mode {
+		case .hidden:
+			activeControlledHost = nil
+			bezelView.setMode(.hidden)
+			bezelWindow.orderOut(self)
+		case .controlling(let host, let hint):
+			activeControlledHost = host
+			bezelView.setMode(.controlling(host: host, emergencyHint: hint))
+			bezelWindow.orderFront(nil)
+			bezelWindow.orderFrontRegardless()
+			bezelWindow.collectionBehavior = [.canJoinAllSpaces, .stationary]
+		case .emergency(let title, let subtitle, let count, let maxCount):
+			bezelView.setMode(.emergency(title: title, subtitle: subtitle, count: count, maxCount: maxCount))
+			bezelWindow.orderFront(nil)
+			bezelWindow.orderFrontRegardless()
+			bezelWindow.collectionBehavior = [.canJoinAllSpaces, .stationary]
+			
+			// Auto dismiss or roll back after 2 seconds
+			textTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
+				self?.restorePreviousActiveState()
+			}
+		case .notification(let title, let subtitle, let icon, let duration):
+			bezelView.setMode(.notification(title: title, subtitle: subtitle, icon: icon))
+			bezelWindow.orderFront(nil)
+			bezelWindow.orderFrontRegardless()
+			bezelWindow.collectionBehavior = [.canJoinAllSpaces, .stationary]
+			
+			if duration > 0 {
+				textTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
+					self?.restorePreviousActiveState()
+				}
+			}
+		}
+	}
+
+	private func restorePreviousActiveState() {
+		if let host = activeControlledHost {
+			setMode(.controlling(host: host, emergencyHint: "⌃⌥⇧⎋ to release"))
+		} else {
+			setMode(.hidden)
+		}
+	}
+
+	@objc(showBezelWithControlledHost:)
+	func showBezel(withControlledHost host: TPRemoteHost) {
+		setMode(.controlling(host: host, emergencyHint: "⌃⌥⇧⎋ to release"))
 	}
 
 	@objc func hideBezel() {
-		bezelWindow?.orderOut(self)
-		textTimer?.invalidate()
-		textTimer = nil
-		bezelView?.setText(nil)
+		setMode(.hidden)
 	}
 
 	@objc(showText:withDuration:)
 	func showText(_ text: String, withDuration duration: TimeInterval) {
-		bezelView?.setText(text)
-		textTimer?.invalidate()
-		textTimer = Timer.scheduledTimer(timeInterval: duration, target: self, selector: #selector(removeText(_:)), userInfo: nil, repeats: false)
-	}
-
-	@objc private func removeText(_ timer: Timer) {
-		bezelView?.setText(nil)
-		textTimer = nil
+		setMode(.notification(title: "", subtitle: text, icon: .logo, duration: duration))
 	}
 }

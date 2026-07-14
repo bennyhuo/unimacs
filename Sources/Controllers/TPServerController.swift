@@ -16,11 +16,23 @@ enum TPServerState: Int {
 @objcMembers
 class TPServerController: TPConnectionController, DeviceConnectionDelegate {
     
-    private var state: TPServerState = .idle
+    private var state: TPServerState = .idle {
+        didSet {
+            if oldValue != state {
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+                    object: nil
+                )
+            }
+        }
+    }
     private var clientHotBorder: TPHotBorder?
     private var switchOptions: [AnyHashable: Any]?
 	/// Client desktop placement in *server* global coordinates. Used to map cross-screen border locations.
 	private var clientDesktopPlacementInServerCoords: NSRect?
+    private var pendingSwitchToHost: TPRemoteHost?
+    private var pendingSwitchLocation: NSPoint?
+    private var pendingSwitchRelativePoint: NSPoint?
     
 	static let shared = TPServerController()
     
@@ -78,7 +90,7 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
     }
     
 	override func hotBorder(_ hotBorder: TPHotBorder, firedAtLocation location: NSPoint) -> Bool {
-        self.requestStopControl(at: location)
+        self.requestStopControl(at: location, isSwitch: hotBorder.firedByRealCursor)
 		return super.hotBorder(hotBorder, firedAtLocation: location)
     }
     
@@ -184,7 +196,7 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
                 x: adjustedPlacement.minX + mousePosition.x,
                 y: adjustedPlacement.minY + mousePosition.y
             )
-			let mainMaxY = NSScreen.main?.frame.maxY ?? localDesktopFrame.maxY
+			let mainMaxY = NSScreen.primaryScreenFrame.maxY
             mousePosition = NSPoint(
                 x: serverCocoaPoint.x,
                 y: mainMaxY - serverCocoaPoint.y
@@ -220,7 +232,7 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
     
     // MARK: - Stop control
     
-	@MainActor func requestStopControl(at location: NSPoint) {
+	@MainActor func requestStopControl(at location: NSPoint, isSwitch: Bool) {
 		// Only send serializable cursor / hot-border position info in the controlStop message.
 		var messageInfoDict: [AnyHashable: Any] = [:]
 		
@@ -245,8 +257,27 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
 				y: min(max(rawRelative.y, 0), 1)
 			)
 			messageInfoDict[TPHotBorderRelativePointKey] = NSData.data(with: rel)
+            
+            if isSwitch {
+                messageInfoDict[TPSwitchControlKey] = true
+                self.pendingSwitchToHost = self.currentConnection?.connectedHost
+                
+                let localDesktopRect = TPLocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
+                let localDesktopRelative = NSPoint(
+                    x: serverCocoaPoint.x - localDesktopRect.minX,
+                    y: serverCocoaPoint.y - localDesktopRect.minY
+                )
+                self.pendingSwitchLocation = localDesktopRelative
+                self.pendingSwitchRelativePoint = rel
+            }
 		} else {
 			messageInfoDict[TPMousePositionKey] = NSData.data(with: location)
+            if isSwitch {
+                messageInfoDict[TPSwitchControlKey] = true
+                self.pendingSwitchToHost = self.currentConnection?.connectedHost
+                self.pendingSwitchLocation = location
+                self.pendingSwitchRelativePoint = nil
+            }
 		}
 		
 		if state == .controlled, let connection = currentConnection {
@@ -285,6 +316,19 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
 			TPStatusItemController.default.update(with: .idle, host: nil)
             TPClientController.shared.updateTriggersAndShowVisualHint(false)
 			debugLog("Control stopped, server state restored to \(state == .shared ? "shared" : "idle")", module: .control)
+            
+            if let targetHost = self.pendingSwitchToHost {
+                self.pendingSwitchToHost = nil
+                let loc = self.pendingSwitchLocation ?? .zero
+                let rel = self.pendingSwitchRelativePoint
+                self.pendingSwitchLocation = nil
+                self.pendingSwitchRelativePoint = nil
+                
+                TPClipboardTransferCoordinator.shared.isSwitchingControl = true
+                
+                debugLog("Executing pending switch to host: \(targetHost.computerName) at \(loc)", module: .control)
+                _ = TPClientController.shared.requestStartControl(on: targetHost, at: loc, hotBorderRelativePoint: rel)
+            }
         }
     }
     
@@ -323,6 +367,10 @@ class TPServerController: TPConnectionController, DeviceConnectionDelegate {
             SystemPowerManager.sleepScreen()
             return true
         case .controlWake:
+            guard !SystemStatusObserver.shared.isLocked else {
+                debugLog("Ignoring controlWake because this machine is locked", module: .control)
+                return true
+            }
             SystemPowerManager.wakeUpScreen()
             return true
         case .controlLock:

@@ -62,10 +62,11 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/TeleportApp.swift,
+				Backend/EventTaps/CGEventSerializer.swift,
 				Backend/EventTaps/TPCursorVisibilityController.swift,
-				Backend/EventTaps/TPDirectEventTapsController.swift,
+				Backend/EventTaps/TPEmergencyStopDetector.swift,
 				Backend/EventTaps/TPEventsController.swift,
-				Backend/EventTaps/TPEventTapsController.swift,
+				Backend/EventTaps/TPEventTapListener.swift,
 				Backend/Network/Authentication/TPAuthenticationManager.swift,
 				Backend/Network/Authentication/TPAuthenticationRequest.swift,
 				Backend/Network/Bonjour/DomainBrowser.swift,

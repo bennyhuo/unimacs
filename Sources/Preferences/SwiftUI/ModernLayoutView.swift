@@ -41,6 +41,39 @@ struct ModernLayoutView: View {
             .padding(.horizontal, 24)
             .padding(.top, 20)
             
+            if !viewModel.isAccessibilityTrusted {
+                HStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                        .imageScale(.large)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Accessibility Permission Required")
+                            .font(.headline)
+                        Text("Teleport requires Accessibility permission to control mouse and keyboard. Please authorize it in System Settings.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Button("Authorize...") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding()
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.orange.opacity(0.5), lineWidth: 1)
+                )
+                .padding(.horizontal, 24)
+            }
+            
             // Layout Canvas
             GeometryReader { geometry in
                 let currentLayoutInfo = viewModel.calculateLayoutInfo(for: geometry.size)
@@ -58,7 +91,8 @@ struct ModernLayoutView: View {
                             hostName: screenInfo.hostName,
                             isLocal: screenInfo.isLocal,
                             isMainScreen: screenInfo.isMainScreen,
-                            scale: layoutInfo.scale
+                            scale: layoutInfo.scale,
+                            isAccessibilityTrusted: viewModel.isAccessibilityTrusted
                         )
                         .frame(
                             width: screenInfo.globalFrame.width * layoutInfo.scale,
@@ -135,17 +169,18 @@ struct SystemStyleScreenView: View {
     let isLocal: Bool
     let isMainScreen: Bool
     let scale: CGFloat
+    var isAccessibilityTrusted: Bool = true
     
     var body: some View {
         ZStack {
             // Screen background - solid color like system settings
             RoundedRectangle(cornerRadius: LayoutConstants.screenCornerRadius)
-                .fill(isLocal ? Color.blue.opacity(0.15) : Color.purple.opacity(0.15))
+                .fill(isLocal ? (isAccessibilityTrusted ? Color.blue.opacity(0.15) : Color.orange.opacity(0.15)) : Color.purple.opacity(0.15))
             
             // Screen border
             RoundedRectangle(cornerRadius: LayoutConstants.screenCornerRadius)
                 .strokeBorder(
-                    isLocal ? Color.blue : Color.purple,
+                    isLocal ? (isAccessibilityTrusted ? Color.blue : Color.orange) : Color.purple,
                     lineWidth: isMainScreen ? 3 : 2
                 )
             
@@ -163,12 +198,24 @@ struct SystemStyleScreenView: View {
             
             // Host name in center for main screen only
             if isMainScreen {
-                Text(hostName)
-                    .font(.system(size: max(9, 11 * scale * 12)))
-                    .fontWeight(.medium)
-                    .foregroundColor(isLocal ? .blue : .purple)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
+                VStack(spacing: 4) {
+                    Text(hostName)
+                        .font(.system(size: max(9, 11 * scale * 12)))
+                        .fontWeight(.medium)
+                        .foregroundColor(isLocal ? (isAccessibilityTrusted ? .blue : .orange) : .purple)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                    
+                    if isLocal && !isAccessibilityTrusted {
+                        HStack(spacing: 2) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: max(8, 10 * scale * 12)))
+                            Text("Unauthorized")
+                                .font(.system(size: max(8, 9 * scale * 12)))
+                        }
+                        .foregroundColor(.orange)
+                    }
+                }
             }
         }
     }
@@ -201,9 +248,11 @@ final class LayoutViewModel: ObservableObject {
     @Published var localHostLayout: HostLayout?
     @Published var connectedHostLayouts: [HostLayout] = []
     @Published var allScreens: [ScreenInfo] = []
+    @Published var isAccessibilityTrusted: Bool = AccessibilityManager.isTrusted
     
     private var hostObserver: NSObjectProtocol?
     private var connectionObserver: NSObjectProtocol?
+    private var accessibilityObserver: NSObjectProtocol?
     private var dragStartPositions: [String: CGPoint] = [:]
     
     init() {
@@ -232,6 +281,15 @@ final class LayoutViewModel: ObservableObject {
             self?.loadLayouts()
         }
         
+        accessibilityObserver = NotificationCenter.default.addObserver(
+            forName: .TPAccessibilityStatusDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            warningLog("[LayoutSyncUI] Received TPAccessibilityStatusDidChange", module: .control)
+            self?.isAccessibilityTrusted = AccessibilityManager.isTrusted
+        }
+        
         loadLayouts()
     }
     
@@ -244,12 +302,17 @@ final class LayoutViewModel: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
             connectionObserver = nil
         }
+        if let observer = accessibilityObserver {
+            NotificationCenter.default.removeObserver(observer)
+            accessibilityObserver = nil
+        }
     }
     
     // MARK: - Load Layouts
     
     func loadLayouts() {
         warningLog("[LayoutSyncUI] loadLayouts called", module: .control)
+        isAccessibilityTrusted = AccessibilityManager.isTrusted
         // Load local host
         let localHost = TPLocalHost.shared
         localHostLayout = HostLayout(from: localHost)

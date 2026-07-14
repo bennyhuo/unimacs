@@ -88,4 +88,11 @@ extension NSScreen {
             .flatMap { $0 as? NSNumber }
             .map { CGDirectDisplayID($0.uint32Value) }!
     }
+
+    static var primaryScreenFrame: CGRect {
+        screens.first(where: { $0.frame.origin == .zero })?.frame
+            ?? screens.first?.frame
+            ?? .zero
+    }
 }
+

@@ -360,6 +360,7 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
 	private var pasteboardDirtySinceBaseline: Bool = false
 	/// Pasteboard snapshot at control-session boundaries; used when polling misses a copy.
 	private var sessionBaselineHash: PasteboardContentHash?
+    var isSwitchingControl: Bool = false
     
     // Performance optimization
     private var lastTransferHash: PasteboardContentHash?
@@ -391,6 +392,7 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
 		sessionBaselineHash = nil
 		mode = .idleRecording
 		PasteboardMonitor.shared.setAggressiveMonitoring(false)
+        isSwitchingControl = false
         
         // Clear history when resetting to avoid false positives
         PasteboardMonitor.shared.clearHistory()
@@ -430,7 +432,12 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
 
 	func clientDidStartControl(using connection: NetworkConnection, remoteHost: TPRemoteHost) {
 		mode = .controllingRemote
-		scheduleBoundaryPasteboardSend(using: connection, reason: "start control")
+		if isSwitchingControl {
+			isSwitchingControl = false
+			debugLog("Skipping start control clipboard send due to SwitchControl", module: .clipboard)
+		} else {
+			scheduleBoundaryPasteboardSend(using: connection, reason: "start control")
+		}
 	}
 
 	func clientDidStopControl() {

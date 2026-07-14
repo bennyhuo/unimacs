@@ -5,6 +5,7 @@
 
 import Cocoa
 import Foundation
+import CoreGraphics
 
 // MARK: - C Function Declarations
 
@@ -33,6 +34,7 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
     
     private var frontProcessNum = CPSProcessSerNum()
     private var wakeTimer: Timer?
+    private var hasPendingNetworkReset = false
     
     // MARK: - Singleton
     
@@ -99,6 +101,20 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
             object: nil
         )
         
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(accessibilityStatusDidChange),
+            name: .TPAccessibilityStatusDidChange,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(connectionStateDidChange(_:)),
+            name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+            object: nil
+        )
+        
         DistributedNotificationCenter.default().addObserver(
             self,
             selector: #selector(screenDidLock(_:)),
@@ -138,9 +154,14 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
         
         // Waken controllers
         _ = TPPreferencesManager.shared()
+        _ = TPEventsController.shared
         _ = TPClientController.shared
         _ = TPServerController.shared
         _ = TPStatusItemController.default
+        
+        if TPPreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey) {
+            _ = TPEventTapListener.shared.start()
+        }
         
         // Data loading
         TPHostsManager.shared.loadHosts()
@@ -162,7 +183,7 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
         TPHostsManager.shared.notifyChanges()
         
 		let peeredHosts = TPHostsManager.shared.hosts(with: .peered)
-        if peeredHosts.count == 0 && !TPPreferencesManager.shared().bool(forPref: ALLOW_CONTROL) {
+        if (peeredHosts.count == 0 && !TPPreferencesManager.shared().bool(forPref: ALLOW_CONTROL)) || !AccessibilityManager.isTrusted {
             ModernSettingsLauncher.showSettings()
         }
         
@@ -229,9 +250,9 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
         debugLog("locking screens", module: .control)
         let message = TPMessage.create(with: .controlLock)
         
-        // Only lock the machines we control (C -> S). Never broadcast: a server-role peer must
-        // not relay its own auto-lock back onto the client that is still being used.
-        sendMessageToControlledPeers(message)
+        if shouldPropagateLockSleep(messageType: .controlLock) {
+            sendMessageToControlledPeers(message)
+        }
 
         if TPServerController.shared.allowControl {
             TPServerController.shared.startSharing()
@@ -243,8 +264,9 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
         invalidateTimer()
         let message = TPMessage.create(with: .controlScreenSleep)
         
-        // Only put the machines we control to sleep (C -> S), never the reverse.
-        sendMessageToControlledPeers(message)
+        if shouldPropagateLockSleep(messageType: .controlScreenSleep) {
+            sendMessageToControlledPeers(message)
+        }
 
         if TPServerController.shared.allowControl {
             TPServerController.shared.startSharing()
@@ -280,10 +302,13 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
     }
     
     @objc func computerWillSleep(_ notification: Notification) {
+        invalidateTimer()
+        
         let message = TPMessage.create(with: .controlDeviceSleep)
         
-        // Only the controller propagates its sleep to the machines it controls (C -> S).
-        sendMessageToControlledPeers(message)
+        if shouldPropagateLockSleep(messageType: .controlDeviceSleep) {
+            sendMessageToControlledPeers(message)
+        }
         
         if TPClientController.shared.isControlling {
             TPClientController.shared.stopControl()
@@ -313,7 +338,33 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
         debugLog("Network configuration did change", module: .control)
         
         if TPPreferencesManager.shared().bool(forPref: DISCONNECT_ON_NETWORK_CONFIG_CHANGE) {
-            resetAllConnectionsIfNotInControl()
+            let activeConnection = TPClientController.shared.currentConnection ?? TPServerController.shared.currentConnection
+            let activeInterface = activeConnection?.networkInterfaceName
+            
+            if let activeInterface = activeInterface, !NetworkUtils.isInterfaceUp(activeInterface) {
+                debugLog("Active connection interface \(activeInterface) went DOWN, resetting immediately", module: .control)
+                TPBezelController.default().showText("Network disconnected, attempting to reconnect...", withDuration: 3.0)
+                hasPendingNetworkReset = false
+                resetAllConnections()
+            } else if DeviceConnectionManager.shared.isConnected {
+                debugLog("Active connection present, deferring network reset until disconnected", module: .control)
+                hasPendingNetworkReset = true
+            } else {
+                resetAllConnectionsIfNotInControl()
+            }
+        }
+    }
+    
+    @objc private func connectionStateDidChange(_ notification: Notification) {
+        if DeviceConnectionManager.shared.isConnected {
+            if hasPendingNetworkReset {
+                debugLog("Connection established or active, clearing pending network reset flag", module: .control)
+                hasPendingNetworkReset = false
+            }
+        } else if hasPendingNetworkReset {
+            debugLog("Executing deferred network reset after all connections disconnected", module: .control)
+            hasPendingNetworkReset = false
+            resetAllConnections()
         }
     }
     
@@ -348,9 +399,17 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
     // MARK: - Timer
     
     private func setupTimer() {
+        guard TPPreferencesManager.shared().bool(forPref: Settings.enableKeepAwakeKey) else {
+            invalidateTimer()
+            return
+        }
+        
+        let interval = Double(TPPreferencesManager.shared().float(forPref: Settings.keepAwakeIntervalKey))
+        let timeInterval = interval > 0 ? interval : 30.0
+        
         if wakeTimer == nil {
             wakeTimer = Timer.scheduledTimer(
-                timeInterval: 50.0,
+                timeInterval: timeInterval,
                 target: self,
                 selector: #selector(triggerTimer(_:)),
                 userInfo: nil,
@@ -366,16 +425,58 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
     }
     
     @objc private func triggerTimer(_ timer: Timer) {
+        guard TPPreferencesManager.shared().bool(forPref: Settings.enableKeepAwakeKey) else {
+            invalidateTimer()
+            return
+        }
+        
+        guard DeviceConnectionManager.shared.isConnected else {
+            return
+        }
+        
+        let isControlling = TPClientController.shared.isControlling
+        let idleTime = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        
+        let interval = Double(TPPreferencesManager.shared().float(forPref: Settings.keepAwakeIntervalKey))
+        let timeInterval = interval > 0 ? interval : 30.0
+        
+        guard isControlling || idleTime < timeInterval else {
+            debugLog("Skipping wake event propagation because this machine is idle (idleTime: \(idleTime)s) and not controlling", module: .control)
+            return
+        }
+        
         sendWakeEvent()
     }
     
     private func sendWakeEvent() {
+        guard TPPreferencesManager.shared().bool(forPref: Settings.enableKeepAwakeKey) else { return }
+        
+        guard !SystemStatusObserver.shared.isLocked else {
+            debugLog("Skipping wake event propagation because this machine is locked", module: .control)
+            return
+        }
+        
         // Keep every paired peer we control awake while a persistent connection is up — even
         // when we are not actively driving it — so an idle remote screen does not auto-lock /
         // sleep underneath us. `controlWake` stays strictly one-directional (C -> S): it goes
         // only to peers in our peered host list, and the controlled side does not control us
         // back, so there is no wake ping-pong / storm.
         sendMessageToControlledPeers(TPMessage.create(with: .controlWake))
+    }
+    
+    private func shouldPropagateLockSleep(messageType: TPMsgType) -> Bool {
+        guard TPPreferencesManager.shared().bool(forPref: Settings.syncLockSleepKey) else {
+            debugLog("Suppressing propagation of \(messageType.displayName) because lock/sleep synchronization is disabled", module: .control)
+            return false
+        }
+        
+        let idleTime = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        guard idleTime < 5.0 else {
+            debugLog("Suppressing propagation of \(messageType.displayName) because it was triggered by idle inactivity (idleTime: \(idleTime)s)", module: .control)
+            return false
+        }
+        
+        return true
     }
 
     /// Send a control message strictly in the controller -> controlled (C -> S) direction:
@@ -417,16 +518,7 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
     // MARK: - Accessibility & Encryption Checks
     
     private func checkAccessibility() {
-        if !AccessibilityManager.checkAccessibility() {
-            let alert = NSAlert()
-            alert.messageText = NSLocalizedString("Disabled access for assistive devices", comment: "Text in dialog about accessibility")
-            alert.informativeText = NSLocalizedString("The access for assistive devices has been disabled although teleport needs this to operate.\nPlease allow teleport and launch it again.", comment: "Explanation in dialog for accessibility")
-            alert.addButton(withTitle: NSLocalizedString("OK", comment: "Button title"))
-            
-            _ = present(alert)
-            
-            NSApp.terminate(nil)
-        }
+        _ = AccessibilityManager.checkAccessibility()
     }
     
     @objc private func prefDidChange(_ notification: Notification) {
@@ -434,6 +526,16 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
         
         if prefKey == CERTIFICATE_IDENTIFIER {
             IdentityManager.reloadIdentity()
+        } else if prefKey == Settings.alwaysObserveEventsKey {
+            let alwaysObserve = TPPreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey)
+            if alwaysObserve {
+                _ = TPEventTapListener.shared.start()
+            } else if !TPClientController.shared.isControlling {
+                TPEventTapListener.shared.stop()
+            }
+        } else if prefKey == Settings.enableKeepAwakeKey || prefKey == Settings.keepAwakeIntervalKey {
+            invalidateTimer()
+            setupTimer()
         }
     }
     
@@ -475,5 +577,15 @@ class TPMainController: NSObject, NSApplicationDelegate, TPNetworkConfigurationW
         let result = alert.runModal()
         leaveFrontmost()
         return result
+    }
+    
+    @objc private func accessibilityStatusDidChange() {
+        if !AccessibilityManager.isTrusted {
+            TPEventTapListener.shared.stop()
+        } else {
+            if TPPreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey) {
+                _ = TPEventTapListener.shared.start()
+            }
+        }
     }
 }

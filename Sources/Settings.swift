@@ -58,6 +58,13 @@ class Settings {
     static let syncModifiersKey: String = "syncModifiers"
     static let visibleBordersKey: String = "visibleBorders"
     static let hotBorderStyleKey: String = "hotBorderStyle"
+    static let alwaysObserveEventsKey: String = "alwaysObserveEvents"
+    
+    // MARK: - Keep Awake & Sync Settings
+    static let enableKeepAwakeKey: String = "enableKeepAwake"
+    static let keepAwakeIntervalKey: String = "keepAwakeInterval"
+    static let syncLockSleepKey: String = "syncLockSleep"
+
 
 	
     // MARK: - Networking Ports

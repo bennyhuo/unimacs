@@ -86,13 +86,18 @@ extension SocketConnection: NetworkConnectionDelegate {
                     TPConnectionsManager.shared.socketConnection(self, succeededWithNetworkConnection: connection)
                 }
             } else {
-                Task { @MainActor in
-                    let alert = NSAlert()
-                    alert.messageText = NSLocalizedString("Wrong protocol version", comment: "Invalid protocol error title")
-                    alert.informativeText = String(format: NSLocalizedString("The Mac you tried to control is using teleport protocol v%d, but you're using v%d.", comment: "Invalid protocol error message"), protocolVersion, PROTOCOL_VERSION)
-                    alert.addButton(withTitle: NSLocalizedString("OK", comment: ""))
-                    
-                    _ = TPMainController.shared().present(alert)
+                let remoteHost: TPRemoteHost?
+                if let hostData = infoDict[TPMsgHostDataKey] as? Data {
+                    remoteHost = TPHostsManager.shared.updatedHost(from: hostData)
+                    connection.connectedHost = remoteHost
+                } else {
+                    remoteHost = connection.connectedHost
+                }
+                
+                if let host = remoteHost {
+                    Task { @MainActor in
+                        host.lastError = String(format: NSLocalizedString("Incompatible protocol version: Peer uses v%d, you use v%d.", comment: ""), protocolVersion, PROTOCOL_VERSION)
+                    }
                 }
                 
                 TPConnectionsManager.shared.socketConnectionFailed(self)

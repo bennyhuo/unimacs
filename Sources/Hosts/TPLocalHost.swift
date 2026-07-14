@@ -41,9 +41,9 @@ class TPLocalHost: TPHost {
             self, selector: #selector(_generateBackgroundImages), name: NSNotification.Name("com.apple.desktop"),
             object: "BackgroundChanged")
 
-        DistributedNotificationCenter.default().addObserver(
+        NotificationCenter.default.addObserver(
             self, selector: #selector(_accessibilityAPIChanged),
-            name: NSNotification.Name("com.apple.accessibility.api"), object: nil)
+            name: .TPAccessibilityStatusDidChange, object: nil)
 		
 		NotificationCenter.default.addObserver(
 					self,

@@ -43,6 +43,10 @@ public class TPConstants: NSObject {
     @objc public static let useSwiftNetworkStackKey = "useSwiftNetworkStack"
     @objc public static let useDirectEventTapsKey = "useDirectEventTaps"
     @objc public static let useCursorShieldWindowKey = "useCursorShieldWindow"
+    @objc public static let alwaysObserveEventsKey = "alwaysObserveEvents"
+    @objc public static let enableKeepAwakeKey = "enableKeepAwake"
+    @objc public static let keepAwakeIntervalKey = "keepAwakeInterval"
+    @objc public static let syncLockSleepKey = "syncLockSleep"
     
     @objc public static let commandPortKey = "commandPort"
     @objc public static let transferPortKey = "transferPort"
@@ -104,6 +108,10 @@ public class TPConstants: NSObject {
     @objc public static var USE_SWIFT_NETWORK_STACK: String { useSwiftNetworkStackKey }
     @objc public static var USE_DIRECT_EVENT_TAPS: String { useDirectEventTapsKey }
     @objc public static var USE_CURSOR_SHIELD_WINDOW: String { useCursorShieldWindowKey }
+    @objc public static var ALWAYS_OBSERVE_EVENTS: String { alwaysObserveEventsKey }
+    @objc public static var ENABLE_KEEP_AWAKE: String { enableKeepAwakeKey }
+    @objc public static var KEEP_AWAKE_INTERVAL: String { keepAwakeIntervalKey }
+    @objc public static var SYNC_LOCK_SLEEP: String { syncLockSleepKey }
     
     @objc public static var COMMAND_PORT: String { commandPortKey }
     @objc public static var TRANSFER_PORT: String { transferPortKey }

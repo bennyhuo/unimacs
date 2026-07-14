@@ -6,21 +6,13 @@
 import AppKit
 
 @objc(TPBezelView)
-final class TPBezelView: NSView {
+final class TPBezelView: NSVisualEffectView {
 	private enum Layout {
-		static let yTitleMargin: CGFloat = 64.0
-		static let xTitleMargin: CGFloat = 16.0
-		static let yTextMargin: CGFloat = 32.0
-		static let yIconAdjustment: CGFloat = 24.0
-		static let minRoundedRectSize: CGFloat = 214.0
-		static let roundedRectRadius: CGFloat = 24.0
-		static let arrowSize: CGFloat = 14.0
-		static let arrowMargin: CGFloat = (arrowSize / 2.0 + 8.0)
-		static let windowTransparency: CGFloat = 0.15
+		static let height: CGFloat = 110.0             // Refined height (2/3 of 164)
+		static let roundedRectRadius: CGFloat = 22.0    // Xcode-style rounded corners
+		static let xPadding: CGFloat = 32.0            // Left/right padding
+		static let minWidth: CGFloat = 240.0           // Minimum width
 	}
-
-	private static let teleportImage: NSImage? = NSImage(named: "whitelogo")
-	private static let lockImage: NSImage? = NSImage(named: "Lock_White")
 
 	private static let paragraphStyle: NSMutableParagraphStyle = {
 		let style = NSMutableParagraphStyle()
@@ -29,148 +21,165 @@ final class TPBezelView: NSView {
 	}()
 
 	private static let titleAttributes: [NSAttributedString.Key: Any] = [
-		.font: NSFont(name: "Arial Black", size: 18) as Any,
-		.foregroundColor: NSColor.white,
+		.font: NSFont.systemFont(ofSize: 24, weight: .bold),
 		.paragraphStyle: paragraphStyle
 	]
 
 	private static let textAttributes: [NSAttributedString.Key: Any] = [
-		.font: NSFont(name: "Arial Black", size: 13) as Any,
-		.foregroundColor: NSColor.white,
+		.font: NSFont.systemFont(ofSize: 16, weight: .medium),
 		.paragraphStyle: paragraphStyle
 	]
 
-	private var remoteHost: TPRemoteHost?
-	private var text: String?
+	private let titleLabel: NSTextField = {
+		let label = NSTextField(labelWithString: "")
+		label.isEditable = false
+		label.isSelectable = false
+		label.isBordered = false
+		label.drawsBackground = false
+		label.alignment = .center
+		label.textColor = .labelColor // Adaptive system color
+		label.font = NSFont.systemFont(ofSize: 24, weight: .bold)
+		return label
+	}()
+
+	private let subtitleLabel: NSTextField = {
+		let label = NSTextField(labelWithString: "")
+		label.isEditable = false
+		label.isSelectable = false
+		label.isBordered = false
+		label.drawsBackground = false
+		label.alignment = .center
+		label.textColor = .secondaryLabelColor // Adaptive secondary color
+		label.font = NSFont.systemFont(ofSize: 16, weight: .medium)
+		return label
+	}()
+
+	private var viewMode: TPBezelViewMode = .hidden
 
 	override init(frame frameRect: NSRect) {
 		super.init(frame: frameRect)
+		commonInit()
 	}
 
 	required init?(coder: NSCoder) {
 		super.init(coder: coder)
+		commonInit()
 	}
 
-	private func titleString() -> String {
-		remoteHost?.computerName ?? ""
+	private func commonInit() {
+		// Use popover material as it provides a very refined premium dark-brownish/light-creamy look matching Xcode HUD
+		material = .popover
+		blendingMode = .behindWindow
+		state = .active
+		wantsLayer = true
+		layer?.cornerRadius = Layout.roundedRectRadius
+		layer?.masksToBounds = true
+		
+		// Assemble standard controls (No gradientBar)
+		addSubview(titleLabel)
+		addSubview(subtitleLabel)
+	}
+
+	func setMode(_ mode: TPBezelViewMode) {
+		self.viewMode = mode
+		updateLayout()
 	}
 
 	private func updateLayout() {
-		let titleSize = (titleString() as NSString).size(withAttributes: Self.titleAttributes)
-		let width = round(max(Layout.minRoundedRectSize, titleSize.width + 2 * Layout.xTitleMargin))
-
 		guard let window = window else {
 			needsDisplay = true
 			return
 		}
 
+		switch viewMode {
+		case .hidden:
+			titleLabel.stringValue = ""
+			subtitleLabel.stringValue = ""
+			needsLayout = true
+			return
+		case .controlling(let host, let hint):
+			titleLabel.stringValue = host.computerName
+			subtitleLabel.stringValue = hint ?? ""
+		case .emergency(let title, let subtitle, _, _):
+			titleLabel.stringValue = title
+			subtitleLabel.stringValue = subtitle
+		case .notification(let title, let subtitle, _):
+			titleLabel.stringValue = title
+			subtitleLabel.stringValue = subtitle
+		}
+		
+		// Let AppKit automatically calculate the size fitting the string content
+		titleLabel.sizeToFit()
+		subtitleLabel.sizeToFit()
+		
+		let maxTextWidth = max(titleLabel.frame.width, subtitleLabel.frame.width)
+		let width = round(max(Layout.minWidth, maxTextWidth + 2 * Layout.xPadding))
 		let mainScreenFrame = TPLocalHost.shared.mainScreen.frame
 
 		var frame = mainScreenFrame
 		frame.origin.x = NSMinX(frame) + round((NSWidth(frame) - width) / 2.0)
-		frame.origin.y = NSMinY(frame) + round((NSHeight(frame) - Layout.minRoundedRectSize) / 2.0)
-		frame.size = NSSize(width: width, height: Layout.minRoundedRectSize)
+		frame.origin.y = NSMinY(frame) + round((NSHeight(frame) - Layout.height) / 2.0)
+		frame.size = NSSize(width: width, height: Layout.height)
 
-		needsDisplay = true
+		needsLayout = true
 		window.setFrame(frame, display: true, animate: false)
+	}
+
+	override func layout() {
+		super.layout()
+		let bounds = bounds
+		
+		// Positioning labels based on whether subtitle exists
+		let hasSubtitle = !subtitleLabel.stringValue.isEmpty
+		
+		if hasSubtitle {
+			titleLabel.frame = NSRect(
+				x: Layout.xPadding,
+				y: bounds.height - 52.0,
+				width: bounds.width - 2 * Layout.xPadding,
+				height: 32.0
+			)
+			subtitleLabel.frame = NSRect(
+				x: Layout.xPadding,
+				y: bounds.height - 86.0,
+				width: bounds.width - 2 * Layout.xPadding,
+				height: 22.0
+			)
+			subtitleLabel.isHidden = false
+		} else {
+			let titleHeight: CGFloat = 32.0
+			titleLabel.frame = NSRect(
+				x: Layout.xPadding,
+				y: round((bounds.height - titleHeight) / 2.0),
+				width: bounds.width - 2 * Layout.xPadding,
+				height: titleHeight
+			)
+			subtitleLabel.isHidden = true
+		}
 	}
 
 	@objc(setRemoteHost:)
 	func setRemoteHost(_ remoteHost: TPRemoteHost?) {
-		self.remoteHost = remoteHost
-		updateLayout()
+		if let remoteHost = remoteHost {
+			setMode(.controlling(host: remoteHost, emergencyHint: nil))
+		} else {
+			setMode(.hidden)
+		}
 	}
 
 	@objc(setText:)
 	func setText(_ text: String?) {
-		self.text = text
-		updateLayout()
-	}
-
-	override func draw(_ dirtyRect: NSRect) {
-		NSColor.clear.setFill()
-		NSBezierPath(rect: dirtyRect).fill()
-
-		let bounds = bounds
-
-		// Draw rounded rect background
-		NSColor(calibratedWhite: 0.0, alpha: Layout.windowTransparency).setFill()
-		NSBezierPath.bezierPathWithRoundRectInRect(bounds, radius: Float(Layout.roundedRectRadius)).fill()
-
-		// Draw icon
-		if let image = Self.teleportImage {
-			var imagePoint = bounds.origin
-			let imageSize = image.size
-			imagePoint.x += round((NSWidth(bounds) - imageSize.width) / 2.0)
-			imagePoint.y += round((NSHeight(bounds) - imageSize.height + (Layout.yTitleMargin - Layout.yIconAdjustment)) / 2.0)
-			image.draw(at: imagePoint, from: .zero, operation: .sourceOver, fraction: 1.0)
-		}
-
-		// Create arrow
-		let arrow = NSBezierPath()
-		arrow.move(to: .zero)
-		arrow.line(to: NSPoint(x: 0, y: Layout.arrowSize))
-		arrow.line(to: NSPoint(x: Layout.arrowSize, y: Layout.arrowSize / 2.0))
-		arrow.close()
-
-		// Setup shadow
-		let shadow = NSShadow()
-		shadow.shadowBlurRadius = 4.0
-		shadow.shadowColor = NSColor(calibratedWhite: 0.0, alpha: 0.8)
-		shadow.shadowOffset = NSSize(width: 1.5, height: -1.5)
-		shadow.set()
-
-		// Position and draw arrow
-		if let remoteHost {
-			// The bezel is centered on the main screen, so compute the arrow direction
-			// relative to the main screen center.
-			let localRect = TPLocalHost.shared.mainScreen.frame
-			let hostRect = remoteHost.adjustedHostDesktopRect
-			let h = NSMidX(hostRect) - NSMidX(localRect)
-			let v = NSMidY(hostRect) - NSMidY(localRect)
-			var angle = atan2(v, h)
-
-			var transform = AffineTransform()
-			transform.translate(x: NSMidX(bounds), y: NSMidY(bounds))
-			transform.rotate(byRadians: angle)
-			transform.translate(x: -Layout.arrowSize / 2.0, y: -Layout.arrowSize / 2.0)
-
-			let halfWidth = NSWidth(bounds) / 2.0
-			let halfHeight = NSHeight(bounds) / 2.0
-			let limitAngle = atan2(halfHeight, halfWidth)
-
-			if angle >= .pi / 2.0 {
-				angle = .pi - angle
-			} else if angle < 0.0 && angle >= -.pi / 2.0 {
-				angle = -angle
-			} else if angle < 0.0 {
-				angle = angle + .pi
-			}
-
-			let distance: CGFloat
-			if angle < limitAngle {
-				distance = halfWidth / cos(angle)
-			} else {
-				distance = halfHeight / sin(angle)
-			}
-
-			transform.translate(x: round(distance - Layout.arrowMargin), y: 0.0)
-			arrow.transform(using: transform)
-		}
-
-		NSColor.white.setFill()
-		arrow.fill()
-
-		// Draw title
-		var titleRect = bounds
-		titleRect.origin.y -= (NSHeight(bounds) - Layout.yTitleMargin)
-		(titleString() as NSString).draw(in: titleRect, withAttributes: Self.titleAttributes)
-
-		// Eventually draw text
-		if let text {
-			var textRect = bounds
-			textRect.origin.y -= (NSHeight(bounds) - Layout.yTextMargin)
-			(text as NSString).draw(in: textRect, withAttributes: Self.textAttributes)
+		if let text = text {
+			setMode(.notification(title: "", subtitle: text, icon: .logo))
+		} else {
+			setMode(.hidden)
 		}
 	}
+}
+
+enum TPBezelViewMode {
+	case hidden
+	case controlling(host: TPRemoteHost, emergencyHint: String?)
+	case emergency(title: String, subtitle: String, count: Int, maxCount: Int)
+	case notification(title: String, subtitle: String, icon: TPNotificationIconType)
 }

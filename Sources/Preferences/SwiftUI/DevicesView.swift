@@ -53,7 +53,9 @@ struct DevicesView: View {
                                 onUnpair: { viewModel.unpair(device: device) },
                                 onShowDetail: {
                                     detailDevice = device
-                                }
+                                },
+                                onPair: { viewModel.pair(with: device) },
+                                onClearError: { viewModel.clearError(for: device) }
                             )
                             
                             if device.id != viewModel.pairedDevices.last?.id {
@@ -72,8 +74,8 @@ struct DevicesView: View {
                     if viewModel.nearbyDevices.isEmpty {
                         EmptyDevicesPlaceholder(
                             icon: "magnifyingglass",
-                            title: "Scanning...",
-                            message: "Looking for nearby Macs with teleport."
+                            title: "No Nearby Devices",
+                            message: "Looking for other Macs running teleport on the same network."
                         )
                     } else {
                         ForEach(viewModel.nearbyDevices) { device in
@@ -176,6 +178,8 @@ struct PairedDeviceRow: View {
     let onDisconnect: () -> Void
     let onUnpair: () -> Void
     let onShowDetail: () -> Void
+    let onPair: () -> Void
+    let onClearError: () -> Void
     
     var body: some View {
         HStack(spacing: 12) {
@@ -187,14 +191,27 @@ struct PairedDeviceRow: View {
                     .frame(width: 32, height: 32)
                 
                 // Status indicator
-                Circle()
-                    .fill(device.statusColor)
-                    .frame(width: 10, height: 10)
-                    .overlay(
-                        Circle()
-                            .strokeBorder(Color(nsColor: .controlBackgroundColor), lineWidth: 2)
-                    )
-                    .offset(x: 2, y: 2)
+                if device.linkPhase == .connecting || device.linkPhase == .reconnecting {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .scaleEffect(0.4)
+                        .frame(width: 12, height: 12)
+                        .background(
+                            Circle()
+                                .fill(Color(nsColor: .controlBackgroundColor))
+                                .frame(width: 12, height: 12)
+                        )
+                        .offset(x: 2, y: 2)
+                } else {
+                    Circle()
+                        .fill(device.statusColor)
+                        .frame(width: 10, height: 10)
+                        .overlay(
+                            Circle()
+                                .strokeBorder(Color(nsColor: .controlBackgroundColor), lineWidth: 2)
+                        )
+                        .offset(x: 2, y: 2)
+                }
             }
             
             // Device info
@@ -203,9 +220,19 @@ struct PairedDeviceRow: View {
                     .font(.body)
                     .fontWeight(.medium)
                 
-                Text(device.statusText)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                if let error = device.lastError, device.linkPhase == .disconnected || device.linkPhase == .unavailable {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                        Text(error)
+                            .font(.caption)
+                    }
+                    .foregroundColor(.red)
+                } else {
+                    Text(device.statusText)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
             
             Spacer()
@@ -222,19 +249,34 @@ struct PairedDeviceRow: View {
                     .buttonStyle(.plain)
                     .foregroundColor(.secondary)
                 } else if device.showsRetryAction {
-                    Button {
-                        onConnect()
-                    } label: {
-                        Text("Retry")
-                            .font(.callout)
+                    HStack(spacing: 8) {
+                        Button {
+                            onConnect()
+                        } label: {
+                            Text("Retry")
+                                .font(.callout)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.accentColor)
+                        
+                        Button {
+                            onDisconnect()
+                        } label: {
+                            Image(systemName: "xmark.circle")
+                                .font(.system(size: 14))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundColor(.accentColor)
                 } else if device.showsConnectAction {
                     Button {
-                        onConnect()
+                        if let error = device.lastError, error.contains("Control rejected") {
+                            onPair()
+                        } else {
+                            onConnect()
+                        }
                     } label: {
-                        Text("Connect")
+                        Text((device.lastError?.contains("Control rejected") == true) ? "Pair" : "Connect")
                             .font(.callout)
                     }
                     .buttonStyle(.plain)
@@ -259,7 +301,16 @@ struct PairedDeviceRow: View {
             } else if device.showsRetryAction {
                 Button("Retry") { onConnect() }
             } else if device.showsConnectAction {
-                Button("Connect") { onConnect() }
+                if let error = device.lastError, error.contains("Control rejected") {
+                    Button("Pair") { onPair() }
+                } else {
+                    Button("Connect") { onConnect() }
+                }
+            }
+            if device.lastError != nil {
+                Button("Clear Error") {
+                    onClearError()
+                }
             }
             Divider()
             Button("Show Details") { onShowDetail() }
@@ -332,11 +383,20 @@ struct EmptyDevicesPlaceholder: View {
     let title: String
     let message: String
     
+    @State private var pulse = false
+    
     var body: some View {
         VStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 32))
                 .foregroundColor(.secondary)
+                .opacity(pulse ? 0.4 : 1.0)
+                .scaleEffect(pulse ? 0.95 : 1.0)
+                .onAppear {
+                    withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true)) {
+                        pulse = true
+                    }
+                }
             
             Text(title)
                 .font(.headline)
@@ -431,7 +491,15 @@ struct ThisDeviceRow: View {
                     Spacer()
                     
                     // Connection actions
-                    if viewModel.isClientControlling {
+                    if !viewModel.isAccessibilityTrusted {
+                        Button("Authorize...") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.accentColor)
+                    } else if viewModel.isClientControlling {
                         Button("Disconnect") {
                             viewModel.stopClientControl()
                         }
@@ -459,6 +527,9 @@ struct ThisDeviceRow: View {
     
     // Status text and colors
     private var statusText: String {
+        if !viewModel.isAccessibilityTrusted {
+            return "Accessibility Permission Required"
+        }
         if viewModel.isClientControlling {
             if let hostName = viewModel.clientControlledHostName {
                 return "Controlling \"\(hostName)\""
@@ -480,6 +551,9 @@ struct ThisDeviceRow: View {
     }
     
     private var statusColor: Color {
+        if !viewModel.isAccessibilityTrusted {
+            return .orange
+        }
         if viewModel.isClientControlling {
             return .green
         } else if viewModel.isClientConnecting {

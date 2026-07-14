@@ -63,6 +63,24 @@ final class SettingsViewModel: ObservableObject {
     @Published var useCursorShieldWindow: Bool {
         didSet { prefs.setValue(useCursorShieldWindow, forKey: Settings.useCursorShieldWindowKey) }
     }
+
+    @Published var alwaysObserveEvents: Bool {
+        didSet { prefs.setValue(alwaysObserveEvents, forKey: Settings.alwaysObserveEventsKey) }
+    }
+    
+    // MARK: - Keep Awake & Sync Settings
+    
+    @Published var enableKeepAwake: Bool {
+        didSet { prefs.setValue(enableKeepAwake, forKey: Settings.enableKeepAwakeKey) }
+    }
+    
+    @Published var keepAwakeInterval: Double {
+        didSet { prefs.setValue(keepAwakeInterval, forKey: Settings.keepAwakeIntervalKey) }
+    }
+    
+    @Published var syncLockSleep: Bool {
+        didSet { prefs.setValue(syncLockSleep, forKey: Settings.syncLockSleepKey) }
+    }
     
     // MARK: - Network
     
@@ -300,6 +318,12 @@ final class SettingsViewModel: ObservableObject {
         useDirectEventTaps = prefs.bool(forPref: Settings.useDirectEventTapsKey)
         useCursorShieldWindow = prefs.bool(forPref: Settings.useCursorShieldWindowKey)
         warpCursorOnStopControl = prefs.bool(forPref: Settings.wrapOnStopControlKey)
+        alwaysObserveEvents = prefs.bool(forPref: Settings.alwaysObserveEventsKey)
+        
+        enableKeepAwake = prefs.bool(forPref: Settings.enableKeepAwakeKey)
+        let interval = Double(prefs.float(forPref: Settings.keepAwakeIntervalKey))
+        keepAwakeInterval = interval > 0 ? interval : 30.0
+        syncLockSleep = prefs.bool(forPref: Settings.syncLockSleepKey)
         
         disconnectOnNetworkChange = prefs.bool(forPref: Settings.disconnectOnNetworkConfigChangeKey)
         useSwiftNetworkStack = prefs.bool(forPref: Settings.useSwiftNetworkStackKey)

@@ -248,9 +248,10 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     func connection(for host: TPRemoteHost) -> NetworkConnection? {
         guard let connection = connections[host.identifier] else { return nil }
         
-        // Verify the actual socket is connected
-        if !connection.isConnected {
-			warningLog("Connection for \(host.computerName) has disconnected socket (socketState=\(connection.channelState.rawValue)), cleaning up", module: .network)
+        // Verify the actual socket is connected and capabilities match
+        if !connection.isConnected || !connection.isValid(for: host) {
+			warningLog("Connection for \(host.computerName) is invalid or has disconnected socket, cleaning up", module: .network)
+            connection.disconnect()
             Task { @MainActor in
                 self.cleanupStaleConnection(for: host.identifier)
             }
@@ -269,10 +270,12 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
 
     func connection(forHostId hostId: String) -> NetworkConnection? {
         guard let connection = connections[hostId] else { return nil }
+        let host = TPHostsManager.shared.host(withIdentifier: hostId)
         
-        // Verify the actual socket is connected
-        if !connection.isConnected {
-            warningLog("Connection for host \(hostId) has disconnected socket (socketState=\(connection.channelState.rawValue)), cleaning up", module: .network)
+        // Verify the actual socket is connected and valid
+        if !connection.isConnected || !connection.isValid(for: host) {
+            warningLog("Connection for host \(hostId) is invalid or has disconnected socket, cleaning up", module: .network)
+            connection.disconnect()
             Task { @MainActor in
                 self.cleanupStaleConnection(for: hostId)
             }

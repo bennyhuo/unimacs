@@ -49,6 +49,14 @@ final class TPRemoteHost: TPHost, NSCopying {
 
 	var certificate: SecCertificate?
 	
+	public var lastError: String? = nil {
+		didSet {
+			if lastError != oldValue {
+				self.notifyChange()
+			}
+		}
+	}
+	
 	var wakeable: Bool {
 	return hasValidMacAddress && hostState == .peeredOffline
 	}

@@ -44,6 +44,11 @@ let USE_DIRECT_EVENT_TAPS = "useDirectEventTaps"
 /// this works reliably on macOS 26+. When disabled (Scheme B), the legacy
 /// private `SetsCursorInBackground` background hack is used instead.
 let USE_CURSOR_SHIELD_WINDOW = "useCursorShieldWindow"
+let ALWAYS_OBSERVE_EVENTS = "alwaysObserveEvents"
+let ENABLE_KEEP_AWAKE = "enableKeepAwake"
+let KEEP_AWAKE_INTERVAL = "keepAwakeInterval"
+let SYNC_LOCK_SLEEP = "syncLockSleep"
+
 
 let COMMAND_PORT = "commandPort"
 let TRANSFER_PORT = "transferPort"
@@ -162,7 +167,11 @@ class TPPreferencesManager: NSObject {
             SYNC_MODIFIERS: true,
             USE_SWIFT_NETWORK_STACK: false,
             USE_DIRECT_EVENT_TAPS: true,
-            USE_CURSOR_SHIELD_WINDOW: true
+            USE_CURSOR_SHIELD_WINDOW: true,
+            ALWAYS_OBSERVE_EVENTS: true,
+            ENABLE_KEEP_AWAKE: true,
+            KEEP_AWAKE_INTERVAL: 30.0,
+            SYNC_LOCK_SLEEP: true
         ]
        
         return controller

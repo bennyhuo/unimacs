@@ -57,19 +57,33 @@ struct DeviceDetailView: View {
                 VStack(spacing: 16) {
                     // Connection Info
                     DetailSection(title: "Connection") {
-                        DetailRow(label: "Status", value: displayDevice.connectionStatusText)
+                        if let error = displayDevice.lastError, displayDevice.linkPhase == .disconnected || displayDevice.linkPhase == .unavailable {
+                            DetailRow(label: "Status", value: "Error")
+                            HStack(alignment: .top) {
+                                Text("Last Error")
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text(error)
+                                    .foregroundColor(.red)
+                                    .multilineTextAlignment(.trailing)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: 220, alignment: .trailing)
+                            }
+                        } else {
+                            DetailRow(label: "Status", value: displayDevice.connectionStatusText)
+                        }
                         if !displayDevice.address.isEmpty {
-                            DetailRow(label: "IP Address", value: displayDevice.address)
+                            DetailRow(label: "IP Address", value: displayDevice.address, showCopyButton: true)
                         }
                         if displayDevice.port > 0 {
-                            DetailRow(label: "Port", value: "\(displayDevice.port)")
+                            DetailRow(label: "Port", value: "\(displayDevice.port)", showCopyButton: true)
                         }
                     }
                     
                     // Device Info
                     DetailSection(title: "Device") {
                         DetailRow(label: "Name", value: displayDevice.name)
-                        DetailRow(label: "Identifier", value: displayDevice.id)
+                        DetailRow(label: "Identifier", value: displayDevice.id, showCopyButton: true)
                         if displayDevice.screenCount > 0 {
                             DetailRow(label: "Screens", value: "\(displayDevice.screenCount)")
                         }
@@ -121,9 +135,18 @@ struct DeviceDetailView: View {
                     .buttonStyle(.borderedProminent)
                 } else if displayDevice.showsConnectAction && displayDevice.isPaired {
                     Button {
-                        viewModel.connect(to: displayDevice)
+                        if let error = displayDevice.lastError, error.contains("Control rejected") {
+                            viewModel.pair(with: displayDevice)
+                            dismiss()
+                        } else {
+                            viewModel.connect(to: displayDevice)
+                        }
                     } label: {
-                        Label("Connect", systemImage: "link")
+                        if let error = displayDevice.lastError, error.contains("Control rejected") {
+                            Label("Pair", systemImage: "link.badge.plus")
+                        } else {
+                            Label("Connect", systemImage: "link")
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                 } else if !displayDevice.isPaired {
@@ -188,9 +211,12 @@ struct DetailSection<Content: View>: View {
 struct DetailRow: View {
     let label: String
     let value: String
+    var showCopyButton: Bool = false
+    
+    @State private var justCopied = false
     
     var body: some View {
-        HStack {
+        HStack(spacing: 8) {
             Text(label)
                 .foregroundColor(.secondary)
             
@@ -199,6 +225,27 @@ struct DetailRow: View {
             Text(value)
                 .foregroundColor(.primary)
                 .textSelection(.enabled)
+            
+            if showCopyButton {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(value, forType: .string)
+                    withAnimation {
+                        justCopied = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        withAnimation {
+                            justCopied = false
+                        }
+                    }
+                } label: {
+                    Image(systemName: justCopied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 11))
+                        .foregroundColor(justCopied ? .green : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Copy to Clipboard")
+            }
         }
     }
 }
@@ -208,9 +255,10 @@ struct DetailRow: View {
 @available(macOS 13.0, *)
 struct MacAddressRow: View {
     let addresses: [String]
+    @State private var justCopied = false
     
     var body: some View {
-        HStack(alignment: .top) {
+        HStack(alignment: .top, spacing: 8) {
             Text("MAC Address")
                 .foregroundColor(.secondary)
             
@@ -218,10 +266,31 @@ struct MacAddressRow: View {
             
             VStack(alignment: .trailing, spacing: 4) {
                 ForEach(addresses, id: \.self) { address in
-                    Text(address)
-                        .foregroundColor(.primary)
-                        .textSelection(.enabled)
-                        .font(.system(.body, design: .monospaced))
+                    HStack(spacing: 4) {
+                        Text(address)
+                            .foregroundColor(.primary)
+                            .textSelection(.enabled)
+                            .font(.system(.body, design: .monospaced))
+                        
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(address, forType: .string)
+                            withAnimation {
+                                justCopied = true
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                withAnimation {
+                                    justCopied = false
+                                }
+                            }
+                        } label: {
+                            Image(systemName: justCopied ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 10))
+                                .foregroundColor(justCopied ? .green : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Copy MAC Address")
+                    }
                 }
             }
         }
@@ -271,6 +340,7 @@ extension DeviceInfo {
         linkPhase: DeviceLinkPhase = .unavailable,
         reconnectSecondsRemaining: Int? = nil,
         isPortable: Bool = false,
+        lastError: String? = nil,
         remoteHost: TPRemoteHost?
     ) {
         self.id = id
@@ -288,6 +358,7 @@ extension DeviceInfo {
         self.linkPhase = linkPhase
         self.reconnectSecondsRemaining = reconnectSecondsRemaining
         self.isPortable = isPortable
+        self.lastError = lastError
         self.remoteHost = remoteHost
     }
 }

@@ -73,13 +73,7 @@ private let trustedHostsKey = "TPTrustedHosts"
         host.hostState = .shared
         
         DispatchQueue.main.async {
-			let msgTitle = String(format: NSLocalizedString("Connection to \u{201C}%@\u{201D} failed.", comment: "Title for connection failure"), host.computerName)
-			let alert = NSAlert()
-			alert.messageText = msgTitle
-			alert.informativeText = NSLocalizedString("The server may be down, or a network problem may have occurred.", comment: "")
-			alert.addButton(withTitle: NSLocalizedString("OK", comment: ""))
-			
-            TPMainController.shared().present(alert)
+            host.lastError = NSLocalizedString("The server may be down, or a network problem may have occurred.", comment: "")
         }
     }
     
@@ -111,18 +105,13 @@ private let trustedHostsKey = "TPTrustedHosts"
             }
             
         case .authenticationFailure:
-            let msgTitle = String(format: NSLocalizedString("The host \u{201C}%@\u{201D} rejected your trust request.", comment: "Title for trust failure"), host.computerName ?? "")
-			let explanation = message.infoDict["reason"] as? String ?? NSLocalizedString("The computer you tried to control rejected your request. You should try on a computer you own.", comment: "")
+            let explanation = message.infoDict["reason"] as? String ?? NSLocalizedString("The computer you tried to control rejected your request. You should try on a computer you own.", comment: "")
             
             host.hostState = .shared
             
-			Task { @MainActor in
-				let alert = NSAlert()
-				alert.messageText = msgTitle
-				alert.informativeText = explanation
-				alert.addButton(withTitle: NSLocalizedString("OK", comment: ""))
-				_ = TPMainController.shared().present(alert)
-			}
+            Task { @MainActor in
+                host.lastError = explanation
+            }
             
             currentConnection?.disconnect()
             currentConnection = nil

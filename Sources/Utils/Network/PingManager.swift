@@ -147,7 +147,6 @@ class PingManager : NSObject {
 		guard currentIndex < interfaces.count else {
 			debugLog("ping to \(host) - all interfaces exhausted, no success.")
 			Task { @MainActor in
-				DomainBrowser.shared.restart()
 				DeviceConnectionManager.shared.autoConnectPairedDevices()
 			}
 			return

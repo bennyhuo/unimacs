@@ -24,6 +24,7 @@ struct DeviceInfo: Identifiable, Equatable {
     let reconnectSecondsRemaining: Int?
     let macAddresses: [String]
     let isPortable: Bool
+    let lastError: String?
     
     // Reference to the actual remote host
     weak var remoteHost: TPRemoteHost?
@@ -39,6 +40,7 @@ struct DeviceInfo: Identifiable, Equatable {
         self.osVersion = host.osVersion
         self.remoteHost = host
         self.macAddresses = host.macAddresses.map { $0.description }
+        self.lastError = host.lastError
         
         let manager = DeviceConnectionManager.shared
         self.linkPhase = manager.linkPhase(for: host)
@@ -63,6 +65,9 @@ struct DeviceInfo: Identifiable, Equatable {
         if isControlling {
             return "Controlling"
         }
+        if let error = lastError, linkPhase == .disconnected || linkPhase == .unavailable {
+            return error
+        }
         switch linkPhase {
         case .connected:
             return "Connected"
@@ -84,6 +89,9 @@ struct DeviceInfo: Identifiable, Equatable {
         if isControlling {
             return "Controlling this device"
         }
+        if let error = lastError, linkPhase == .disconnected || linkPhase == .unavailable {
+            return error
+        }
         switch linkPhase {
         case .connected:
             return "Connected"
@@ -102,6 +110,9 @@ struct DeviceInfo: Identifiable, Equatable {
     }
     
     var statusColor: Color {
+        if lastError != nil, linkPhase == .disconnected || linkPhase == .unavailable {
+            return .red
+        }
         switch linkPhase {
         case .connected:
             return .green
@@ -130,7 +141,8 @@ struct DeviceInfo: Identifiable, Equatable {
         lhs.reconnectSecondsRemaining == rhs.reconnectSecondsRemaining &&
         lhs.isConnected == rhs.isConnected &&
         lhs.isControlling == rhs.isControlling &&
-        lhs.isPortable == rhs.isPortable
+        lhs.isPortable == rhs.isPortable &&
+        lhs.lastError == rhs.lastError
     }
 }
 
@@ -161,6 +173,7 @@ final class DevicesViewModel: ObservableObject {
     @Published var isServerSharing: Bool = false
     @Published var isServerControlled: Bool = false
     @Published var serverControlledHostName: String? = nil
+    @Published var isAccessibilityTrusted: Bool = AccessibilityManager.isTrusted
     
     private var cancellables = Set<AnyCancellable>()
     private var countdownTimer: AnyCancellable?
@@ -208,6 +221,15 @@ final class DevicesViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
+        NotificationCenter.default.publisher(for: .TPAccessibilityStatusDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                self.isAccessibilityTrusted = AccessibilityManager.shared.isTrustedState
+                self.loadDevices()
+            }
+            .store(in: &cancellables)
+        
         loadDevices()
         updateCountdownTimer()
     }
@@ -234,6 +256,7 @@ final class DevicesViewModel: ObservableObject {
     // MARK: - Load Devices
     
     func loadDevices() {
+        isAccessibilityTrusted = AccessibilityManager.isTrusted
         let hostsManager = TPHostsManager.shared
         
         let peeredHosts = hostsManager.hosts(with: .peered) as? [TPRemoteHost] ?? []
@@ -327,6 +350,7 @@ final class DevicesViewModel: ObservableObject {
     
     func pair(with device: DeviceInfo) {
         guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
+        host.lastError = nil
         TPAuthenticationManager.default.requestAuthentication(on: host)
     }
     
@@ -359,12 +383,19 @@ final class DevicesViewModel: ObservableObject {
     
     func connect(to device: DeviceInfo) {
         guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
+        host.lastError = nil
         DeviceConnectionManager.shared.connect(to: host, resetRetryBudget: true, ignoreIdRule: true)
     }
     
     func disconnect(from device: DeviceInfo) {
         guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
         DeviceConnectionManager.shared.disconnect(from: host)
+    }
+    
+    func clearError(for device: DeviceInfo) {
+        guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
+        host.lastError = nil
+        loadDevices()
     }
     
     // MARK: - Helper

@@ -83,40 +83,6 @@ class TPStatusItemController: NSObject, NSMenuDelegate {
         applyIconState(.disconnected, to: statusItem)
         
         let menu = NSMenu()
-        
-        // In Unified Cursor Space, sharing is always on. We do not display the "Share this Mac" toggle.
-        
-        // Configure menu item
-        let openPrefPanelMenuItem = NSMenuItem(
-            title: NSLocalizedString("Configure\u{2026}", comment: ""),
-            action: #selector(openTeleportPanel),
-            keyEquivalent: ""
-        )
-        openPrefPanelMenuItem.target = self
-        menu.addItem(openPrefPanelMenuItem)
-        
-        menu.addItem(.separator())
-        
-        #if DEBUG
-        // Disconnect menu item (debug only)
-        let disconnectMenuItem = NSMenuItem(
-            title: "Disconnect",
-            action: #selector(disconnect),
-            keyEquivalent: ""
-        )
-        disconnectMenuItem.target = self
-        menu.addItem(disconnectMenuItem)
-        #endif
-        
-        // Quit menu item
-        let quitMenuItem = NSMenuItem(
-            title: NSLocalizedString("Quit teleport", comment: ""),
-            action: #selector(quitApp),
-            keyEquivalent: ""
-        )
-        quitMenuItem.target = self
-        menu.addItem(quitMenuItem)
-        
         menu.delegate = self
         self.statusItemMenu = menu
         
@@ -203,6 +169,19 @@ class TPStatusItemController: NSObject, NSMenuDelegate {
         ModernSettingsLauncher.showSettings()
     }
     
+    @objc private func disconnectDevice(_ sender: NSMenuItem) {
+        guard let host = sender.representedObject as? TPRemoteHost else { return }
+        Task { @MainActor in
+            DeviceConnectionManager.shared.disconnect(from: host)
+        }
+    }
+    
+    @objc private func stopControllingDevice() {
+        Task { @MainActor in
+            TPClientController.shared.stopControl()
+        }
+    }
+    
     @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent
         let isRightClick = event?.type == .rightMouseUp
@@ -219,6 +198,75 @@ class TPStatusItemController: NSObject, NSMenuDelegate {
     }
     
     // MARK: - NSMenuDelegate
+    
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        
+        // 1. Configure item
+        let openPrefPanelMenuItem = NSMenuItem(
+            title: NSLocalizedString("Configure\u{2026}", comment: ""),
+            action: #selector(openTeleportPanel),
+            keyEquivalent: ""
+        )
+        openPrefPanelMenuItem.target = self
+        menu.addItem(openPrefPanelMenuItem)
+        
+        menu.addItem(.separator())
+        
+        // 2. Active Devices / Connections section
+        let manager = DeviceConnectionManager.shared
+        let hostsManager = TPHostsManager.shared
+        let peeredHosts = hostsManager.hosts(with: .peered) as? [TPRemoteHost] ?? []
+        let connectedHosts = peeredHosts.filter { manager.linkPhase(for: $0) == .connected }
+        
+        if !connectedHosts.isEmpty {
+            let activeHeader = NSMenuItem(title: NSLocalizedString("Connected Devices", comment: ""), action: nil, keyEquivalent: "")
+            activeHeader.isEnabled = false
+            menu.addItem(activeHeader)
+            
+            for host in connectedHosts {
+                let name = host.computerName
+                let hostItem = NSMenuItem(title: name, action: nil, keyEquivalent: "")
+                
+                let subMenu = NSMenu()
+                
+                let disconnectSubItem = NSMenuItem(
+                    title: NSLocalizedString("Disconnect Device", comment: ""),
+                    action: #selector(disconnectDevice(_:)),
+                    keyEquivalent: ""
+                )
+                disconnectSubItem.target = self
+                disconnectSubItem.representedObject = host
+                subMenu.addItem(disconnectSubItem)
+                
+                hostItem.submenu = subMenu
+                menu.addItem(hostItem)
+            }
+            menu.addItem(.separator())
+        }
+        
+        // 3. Client Control State (if controlling a device)
+        let clientController = TPClientController.shared
+        if clientController.isControlling, let host = clientController.currentConnection?.connectedHost {
+            let controllingItem = NSMenuItem(
+                title: String(format: NSLocalizedString("Stop Controlling \u{201C}%@\u{201D}", comment: ""), host.computerName),
+                action: #selector(stopControllingDevice),
+                keyEquivalent: ""
+            )
+            controllingItem.target = self
+            menu.addItem(controllingItem)
+            menu.addItem(.separator())
+        }
+        
+        // 4. Quit item
+        let quitMenuItem = NSMenuItem(
+            title: NSLocalizedString("Quit teleport", comment: ""),
+            action: #selector(quitApp),
+            keyEquivalent: ""
+        )
+        quitMenuItem.target = self
+        menu.addItem(quitMenuItem)
+    }
     
     func menuDidClose(_ menu: NSMenu) {
         statusItem?.menu = nil
