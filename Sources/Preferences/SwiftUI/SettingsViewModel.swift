@@ -1,7 +1,5 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
-//
-//  Created for modern SwiftUI settings interface.
 
 import SwiftUI
 import Combine
@@ -11,7 +9,7 @@ import Darwin
 @MainActor
 final class SettingsViewModel: ObservableObject {
     
-    private let prefs: TPPreferencesManager
+    private let prefs: PreferencesManager
     private var cancellables = Set<AnyCancellable>()
     
     // MARK: - Core Settings
@@ -50,7 +48,7 @@ final class SettingsViewModel: ObservableObject {
     }
 
     /// Cursor hiding strategy while controlling a remote Mac. When enabled
-    /// (Scheme A, the default), teleport is brought to the foreground behind a
+    /// (Scheme A, the default), Unimacs is brought to the foreground behind a
     /// transparent shield window and the public cursor-hiding API is used, which
     /// works reliably on macOS 26+. When disabled (Scheme B), the legacy private
     /// background hack is used instead. Takes effect on the next control session.
@@ -157,12 +155,12 @@ final class SettingsViewModel: ObservableObject {
     @Published var cacheSize: String = "Calculating..."
     
     private var directoryMonitor: DispatchSourceFileSystemObject?
-    private var monitorQueue = DispatchQueue(label: "com.teleport.cacheMonitor", qos: .background)
+    private var monitorQueue = DispatchQueue(label: "com.unimacs.cacheMonitor", qos: .background)
     private var refreshTimer: Timer?
     
     nonisolated private var cacheDirectory: URL {
         let tempDir = NSTemporaryDirectory()
-        return URL(fileURLWithPath: tempDir).appendingPathComponent("teleport-pasteboard-files")
+        return URL(fileURLWithPath: tempDir).appendingPathComponent("unimacs-pasteboard-files")
     }
     
     func calculateCacheSize() {
@@ -297,7 +295,7 @@ final class SettingsViewModel: ObservableObject {
     
     @Published var selectedIPAddress: String = "" {
         didSet {
-            TPNetworkConfigurationWatcher.shared.selectLocalIpAddress(selectedIPAddress)
+            NetworkConfigurationWatcher.shared.selectLocalIpAddress(selectedIPAddress)
         }
     }
     @Published var availableIPAddresses: [String] = []
@@ -305,7 +303,7 @@ final class SettingsViewModel: ObservableObject {
     // MARK: - Initialization
     
     init() {
-        prefs = TPPreferencesManager.shared()
+        prefs = PreferencesManager.shared()
         
         // Load initial values from preferences
         allowControl = prefs.bool(forPref: Settings.allowControlKey)
@@ -353,11 +351,11 @@ final class SettingsViewModel: ObservableObject {
     // MARK: - Actions
     
     func resetConnections() {
-        TPMainController.shared().resetAllConnections()
+        MainController.shared().resetAllConnections()
     }
     
     private func loadIPAddresses() {
-		let watcher = TPNetworkConfigurationWatcher.shared
+		let watcher = NetworkConfigurationWatcher.shared
 		availableIPAddresses = watcher.localIpAddresses
 		selectedIPAddress = watcher.selectedLocalIpAddress
     }
@@ -430,9 +428,9 @@ struct TrustedHostInfo: Identifiable {
     let name: String
     let address: String
     let hasCertificate: Bool
-    let remoteHost: TPRemoteHost
+    let remoteHost: RemoteHost
     
-    init(from remoteHost: TPRemoteHost) {
+    init(from remoteHost: RemoteHost) {
         self.id = remoteHost.identifier
         self.name = remoteHost.computerName
         self.address = remoteHost.address ?? ""
@@ -456,14 +454,14 @@ final class TrustedHostsViewModel: ObservableObject {
     }
     
     func loadTrustedHosts() {
-        let hosts = TPAuthenticationManager.default.trustedHosts as? [TPRemoteHost] ?? []
+        let hosts = AuthenticationManager.default.trustedHosts as? [RemoteHost] ?? []
         trustedHosts = hosts.map { TrustedHostInfo(from: $0) }
     }
     
     func removeHosts(withIds ids: Set<String>) {
         for id in ids {
             if let hostInfo = trustedHosts.first(where: { $0.id == id }) {
-                TPAuthenticationManager.default.host(hostInfo.remoteHost, setTrusted: false)
+                AuthenticationManager.default.host(hostInfo.remoteHost, setTrusted: false)
             }
         }
         loadTrustedHosts()

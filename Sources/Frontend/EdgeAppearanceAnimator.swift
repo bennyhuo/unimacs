@@ -1,7 +1,5 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
-//
-//  Modern replacement for TPHostAnimationController's appearance animation.
 
 import AppKit
 
@@ -26,13 +24,13 @@ final class EdgeAppearanceAnimator {
     
     // MARK: - Public API
     
-    func showAppearanceAnimation(for host: TPRemoteHost) {
+    func showAppearanceAnimation(for host: RemoteHost) {
         let representedRect = host.adjustedHostDesktopRect
         
         // Calculate parent rect from all local screens
         var parentRect = NSRect.zero
         var hasAnyScreen = false
-        for screen in TPLocalHost.shared.screens {
+        for screen in LocalHost.shared.screens {
             if !hasAnyScreen {
                 parentRect = screen.frame
                 hasAnyScreen = true

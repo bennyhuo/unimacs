@@ -3,16 +3,6 @@
 // Migrated to Swift and modified from Teleport.
 // SPDX-License-Identifier: GPL-2.0-only
 
-/*
- *  HostSnapping.swift
- *  teleport
- *
- *  Created by JuL on 11/05/05.
- *  Copyright 2005 abyssoft. All rights reserved.
- *
- *  Converted to Swift.
- */
-
 import Foundation
 
 struct TPSide: OptionSet {

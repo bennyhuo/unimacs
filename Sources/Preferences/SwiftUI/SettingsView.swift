@@ -1,7 +1,5 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
-//
-//  Modern SwiftUI settings interface inspired by macOS System Settings.
 
 import SwiftUI
 import AppKit
@@ -193,7 +191,7 @@ struct SettingsTabView: View {
 
                     SettingsRow(
                         title: "Hide cursor via foreground shield",
-                        description: "Bring teleport to the front behind a transparent shield to hide the local cursor with public APIs (required on macOS 26). Turn off to use the legacy background method. Takes effect on next control session."
+                        description: "Bring Unimacs to the front behind a transparent shield to hide the local cursor with public APIs (required on macOS 26). Turn off to use the legacy background method. Takes effect on next control session."
                     ) {
                         Toggle("", isOn: $viewModel.useCursorShieldWindow)
                             .labelsHidden()
@@ -616,7 +614,7 @@ struct OpenLogFolderRow: View {
             description: "Detailed connection logs are saved here (kept for 7 days)"
         ) {
             Button {
-                TPFileLogger.shared.revealLogDirectoryInFinder()
+                FileLogger.shared.revealLogDirectoryInFinder()
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "folder")
@@ -877,7 +875,7 @@ struct AboutTabView: View {
     }
     
     private var appName: String {
-        Bundle.main.infoDictionary?["CFBundleDisplayName"] as? String ?? "teleport"
+        Bundle.main.infoDictionary?["CFBundleDisplayName"] as? String ?? "Unimacs"
     }
     
     private var version: String {
@@ -889,7 +887,9 @@ struct AboutTabView: View {
     }
     
     private var copyright: String {
-        Bundle.main.infoDictionary?["NSHumanReadableCopyright"] as? String ?? "© abyssoft"
+        Bundle.main.localizedInfoDictionary?["NSHumanReadableCopyright"] as? String
+            ?? Bundle.main.infoDictionary?["NSHumanReadableCopyright"] as? String
+            ?? "Copyright © 2003–2012 abyssoft (Julien Robert), 2020–2023 John Britton, 2025–2026 Benny Huo."
     }
     
     private var versionStrings: [String] {
@@ -921,7 +921,7 @@ struct AboutTabView: View {
             .padding(.bottom, 16)
             
             // Content
-            VStack(spacing: 24) {
+            VStack(spacing: 20) {
                 Spacer()
                 
                 // App icon
@@ -954,22 +954,37 @@ struct AboutTabView: View {
                 
                 // Links
                 HStack(spacing: 24) {
-                    Link(destination: URL(string: "https://github.com/johndbritton/teleport")!) {
+                    Link(destination: URL(string: "https://github.com/bennyhuo/unimacs")!) {
                         Label("GitHub", systemImage: "link")
                             .font(.callout)
                     }
                     
-                    Link(destination: URL(string: "https://github.com/johndbritton/teleport/issues")!) {
+                    Link(destination: URL(string: "https://github.com/bennyhuo/unimacs/issues")!) {
                         Label("Report Issue", systemImage: "exclamationmark.bubble")
+                            .font(.callout)
+                    }
+                    
+                    Link(destination: URL(string: "https://github.com/bennyhuo/unimacs/blob/main/LICENSE")!) {
+                        Label("GPL-2.0 License", systemImage: "doc.text")
                             .font(.callout)
                     }
                 }
                 
-                // Copyright
-                Text(copyright)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.bottom, 24)
+                // Credits & Copyright
+                VStack(spacing: 6) {
+                    Text("Forked from [johndbritton/teleport](https://github.com/johndbritton/teleport) and originally created as [Teleport](https://github.com/abyssoft/teleport) by Julien Robert (Abyssoft).")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 460)
+                    
+                    Text(copyright)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -989,7 +1004,7 @@ struct AboutView: View {
     }
     
     private var appName: String {
-        Bundle.main.infoDictionary?["CFBundleDisplayName"] as? String ?? "teleport"
+        Bundle.main.infoDictionary?["CFBundleDisplayName"] as? String ?? "Unimacs"
     }
     
     private var version: String {
@@ -1001,7 +1016,9 @@ struct AboutView: View {
     }
     
     private var copyright: String {
-        Bundle.main.infoDictionary?["NSHumanReadableCopyright"] as? String ?? "© abyssoft"
+        Bundle.main.localizedInfoDictionary?["NSHumanReadableCopyright"] as? String
+            ?? Bundle.main.infoDictionary?["NSHumanReadableCopyright"] as? String
+            ?? "Copyright © 2003–2012 abyssoft (Julien Robert), 2020–2023 John Britton, 2025–2026 Benny Huo."
     }
     
     private var versionStrings: [String] {
@@ -1038,14 +1055,14 @@ struct AboutView: View {
                 Image(nsImage: icon)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: 128, height: 128)
+                    .frame(width: 112, height: 112)
                     .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
             }
             
             // App name
             Text(appName)
-                .font(.system(size: 28, weight: .semibold, design: .rounded))
-                .padding(.top, 16)
+                .font(.system(size: 26, weight: .semibold, design: .rounded))
+                .padding(.top, 12)
             
             // Version (clickable to cycle)
             Button {
@@ -1064,26 +1081,40 @@ struct AboutView: View {
             Spacer()
             
             // Links
-            HStack(spacing: 24) {
-                Link(destination: URL(string: "https://github.com/johndbritton/teleport")!) {
+            HStack(spacing: 16) {
+                Link(destination: URL(string: "https://github.com/bennyhuo/unimacs")!) {
                     Label("GitHub", systemImage: "link")
                         .font(.callout)
                 }
                 
-                Link(destination: URL(string: "https://github.com/johndbritton/teleport/issues")!) {
+                Link(destination: URL(string: "https://github.com/bennyhuo/unimacs/issues")!) {
                     Label("Report Issue", systemImage: "exclamationmark.bubble")
                         .font(.callout)
                 }
+                
+                Link(destination: URL(string: "https://github.com/bennyhuo/unimacs/blob/main/LICENSE")!) {
+                    Label("GPL-2.0", systemImage: "doc.text")
+                        .font(.callout)
+                }
             }
-            .padding(.bottom, 16)
+            .padding(.bottom, 12)
             
-            // Copyright
-            Text(copyright)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .padding(.bottom, 20)
+            // Credits & Copyright
+            VStack(spacing: 6) {
+                Text("Forked from [johndbritton/teleport](https://github.com/johndbritton/teleport) and originally created as [Teleport](https://github.com/abyssoft/teleport) by Julien Robert (Abyssoft).")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                
+                Text(copyright)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 18)
         }
-        .frame(width: 320, height: 380)
+        .frame(width: 360, height: 430)
         .background(
             VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
         )

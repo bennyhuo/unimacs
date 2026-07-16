@@ -47,7 +47,7 @@ final class SystemStatusObserver: NSObject {
     }
 
 	@objc private func didWake() {
-        TPMainController.shared().resetAllConnectionsIfNotInControl()
+        MainController.shared().resetAllConnectionsIfNotInControl()
     }
 
 	@objc private func onScreenLocked() {
@@ -56,7 +56,7 @@ final class SystemStatusObserver: NSObject {
 
 	@objc private func onScreenUnlocked() {
         self.isLocked = false
-        TPMainController.shared().resetAllConnectionsIfNotInControl()
+        MainController.shared().resetAllConnectionsIfNotInControl()
     }
 
     private static func isScreenLocked() -> Bool {

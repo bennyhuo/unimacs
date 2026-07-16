@@ -1,17 +1,5 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
-//
-//  Transport abstraction for the control connection.
-//  `NetworkConnection` (message framing) and `TPConnectionsManager` (connect /
-//  listen orchestration) talk to the network through `MessageChannel` /
-//  `MessageListener` instead of the concrete ObjC socket. Two implementations
-//  exist behind a runtime switch (`USE_SWIFT_NETWORK_STACK`):
-//    * `LegacySocketChannel` / `LegacyMessageListener` — thin adapters over the
-//      proven ObjC `TPTCPSocket` (plain TCP, no TLS).
-//    * `NWMessageChannel`   / `NWMessageListener`      — Network.framework
-//      (`NWConnection` / `NWListener`) implementation (see NWMessageChannel.swift).
-//  The on-wire protocol (TPMessage framing) is identical for both stacks; the
-//  switch is per-process.
 
 import Foundation
 import Security
@@ -65,7 +53,7 @@ protocol MessageListener: AnyObject {
 enum MessageTransportFactory {
 
     static var usesSwiftStack: Bool {
-        TPPreferencesManager.shared().bool(forPref: USE_SWIFT_NETWORK_STACK)
+        PreferencesManager.shared().bool(forPref: USE_SWIFT_NETWORK_STACK)
     }
 
     static func makeChannel(enableEncryption: Bool = false) -> MessageChannel {
@@ -85,11 +73,11 @@ enum MessageTransportFactory {
     }
 }
 
-// MARK: - Legacy adapter (plain TPTCPSocket)
+// MARK: - Legacy adapter (plain UMTCPSocket)
 
-final class LegacySocketChannel: NSObject, MessageChannel, TPTCPSocketDelegate {
+final class LegacySocketChannel: NSObject, MessageChannel, UMTCPSocketDelegate {
 
-    private var tcpSocket: TPTCPSocket!
+    private var tcpSocket: UMTCPSocket!
     private var pendingNoDelay: Bool?
     private let isAccepted: Bool
 
@@ -98,10 +86,10 @@ final class LegacySocketChannel: NSObject, MessageChannel, TPTCPSocketDelegate {
     override init() {
         self.isAccepted = false
         super.init()
-        self.tcpSocket = TPTCPSocket(delegate: self)
+        self.tcpSocket = UMTCPSocket(delegate: self)
     }
 
-    init(acceptedSocket: TPTCPSocket) {
+    init(acceptedSocket: UMTCPSocket) {
         self.isAccepted = true
         super.init()
         self.tcpSocket = acceptedSocket
@@ -153,31 +141,31 @@ final class LegacySocketChannel: NSObject, MessageChannel, TPTCPSocketDelegate {
         }
     }
 
-    func tcpSocketConnectionSucceeded(_ tcpSocket: TPTCPSocket) {
+    func tcpSocketConnectionSucceeded(_ tcpSocket: UMTCPSocket) {
         delegate?.channelDidConnect(self)
     }
 
-    func tcpSocketConnectionFailed(_ tcpSocket: TPTCPSocket) {
+    func tcpSocketConnectionFailed(_ tcpSocket: UMTCPSocket) {
         delegate?.channelDidFailToConnect(self)
     }
 
-    func tcpSocketConnectionClosed(_ tcpSocket: TPTCPSocket) {
+    func tcpSocketConnectionClosed(_ tcpSocket: UMTCPSocket) {
         delegate?.channelDidDisconnect(self)
     }
 
-    func tcpSocket(_ tcpSocket: TPTCPSocket, gotData data: Data) {
+    func tcpSocket(_ tcpSocket: UMTCPSocket, gotData data: Data) {
         delegate?.channel(self, didReceiveData: data)
     }
 }
 
-final class LegacyMessageListener: NSObject, MessageListener, TPTCPSocketDelegate {
+final class LegacyMessageListener: NSObject, MessageListener, UMTCPSocketDelegate {
 
-    private var listenSocket: TPTCPSocket!
+    private var listenSocket: UMTCPSocket!
     weak var delegate: MessageListenerDelegate?
 
     override init() {
         super.init()
-        self.listenSocket = TPTCPSocket(delegate: self)
+        self.listenSocket = UMTCPSocket(delegate: self)
     }
 
     var enableEncryption: Bool {
@@ -194,7 +182,7 @@ final class LegacyMessageListener: NSObject, MessageListener, TPTCPSocketDelegat
         listenSocket.close()
     }
 
-    func tcpSocket(_ listenSocket: TPTCPSocket, connectionAccepted childSocket: TPTCPSocket) {
+    func tcpSocket(_ listenSocket: UMTCPSocket, connectionAccepted childSocket: UMTCPSocket) {
         let channel = LegacySocketChannel(acceptedSocket: childSocket)
         delegate?.listener(self, didAcceptChannel: channel)
     }

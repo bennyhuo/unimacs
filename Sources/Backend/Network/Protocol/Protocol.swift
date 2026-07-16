@@ -8,7 +8,7 @@ import Carbon
 
 let PROTOCOL_VERSION: Int = 20
 
-enum TPMsgType: Int {
+enum MsgType: Int {
     case identification
     
     // Authentication
@@ -46,7 +46,7 @@ enum TPMsgType: Int {
     case disconnectNotification
 }
 
-public struct TPMouseDelta {
+public struct MouseDelta {
     public var x: Int64
     public var y: Int64
     
@@ -62,7 +62,7 @@ typealias TPPixelPos = Float
 typealias TPDataLength = UInt64
 typealias TPProtocolVersion = UInt16
 
-struct TPKey {
+struct Key {
     var keyCode: CGKeyCode
     var charCode: CGCharCode
 }

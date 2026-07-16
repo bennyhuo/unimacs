@@ -37,14 +37,14 @@ class RemoteHostOptions: NSObject, NSMutableCopying, NSCoding {
     }
 
     override func value(forKey key: String) -> Any? {
-        values[key] ?? TPPreferencesManager.shared().value(forPref: key)
+        values[key] ?? PreferencesManager.shared().value(forPref: key)
     }
 
     override func setValue(_ value: Any?, forKey key: String) {
         self.willChangeValue(forKey: Self.hasCustomOptionsKey)
         self.willChangeValue(forKey: key)
 
-        let defaultValue = TPPreferencesManager.shared().value(forPref: key)
+        let defaultValue = PreferencesManager.shared().value(forPref: key)
 		let computedValue = (value as? NSObject)?.isEqual(defaultValue) == true ? nil : value
         values[key] = computedValue
 
@@ -64,7 +64,7 @@ class RemoteHostOptions: NSObject, NSMutableCopying, NSCoding {
         self.willChangeValue(forKey: Self.hasCustomOptionsKey)
 
         for (key, value) in values {
-            TPPreferencesManager.shared().setValue(value, forKey: key)
+            PreferencesManager.shared().setValue(value, forKey: key)
         }
         values.removeAll()
 

@@ -1,22 +1,5 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
-//
-//  Single, window-independent hot-border detection.
-//  Hot borders used to fire from AppKit window tracking-rect `mouseEntered:`
-//  events, except on a locked screen where the window never receives them — so a
-//  separate geometric path (`handleLockedReturnHotBorder`) existed just for that
-//  case. This monitor unifies both into one mechanism: it tracks the cursor
-//  position and geometrically tests it against the active hot borders, so the
-//  window no longer needs to receive mouse events at all.
-//  Two cursor feeds share the same evaluate/fire path:
-//    * Real cursor (controlling side) — a global `mouseMoved` monitor drives the
-//      `.trigger` borders that start control.
-//    * Injected virtual cursor (controlled side) — `TPEventsController` forwards
-//      the synthesized cursor position to drive the `.control` return border,
-//      whether or not the screen is locked.
-//  Main-thread confined: created/queried from the main run loop only (NSEvent
-//  monitors, NSWindow geometry and the controllers it consults are all
-//  main-thread state).
 
 import AppKit
 
@@ -95,7 +78,7 @@ final class HotBorderMonitor {
             return
         }
 
-        if TPServerController.shared.isControlled {
+        if ServerController.shared.isControlled {
             // Under controlled state, the local real cursor can only fire .control borders (switch control)
             let point = NSEvent.mouseLocation
             updateProximity(at: point, kind: .control)

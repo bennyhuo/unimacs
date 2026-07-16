@@ -11,7 +11,7 @@ class Resolver: NSObject, @preconcurrency NetServiceDelegate {
 
     let service: NetService
 
-    private var host: TPRemoteHost? = nil
+    private var host: RemoteHost? = nil
 
     init(service: NetService) {
         self.service = service
@@ -28,7 +28,7 @@ class Resolver: NSObject, @preconcurrency NetServiceDelegate {
         self.service.delegate = nil
         self.service.stop()
         if let host = host {
-            TPHostsManager.shared.removeBonjourHost(host)
+            HostDevicesManager.shared.removeBonjourHost(host)
         }
     }
 
@@ -62,16 +62,16 @@ class Resolver: NSObject, @preconcurrency NetServiceDelegate {
             // Reconcile into the canonical host table. For an already-known host this updates the
             // authoritative object in place (preserving its desktop placement) instead of creating
             // a throwaway, and hands back the authoritative instance to track.
-            if record.name != TPLocalHost.shared.identifier {
-                self.host = TPHostsManager.shared.addBonjourHost(record: record, ipAddress: ipAddress, compatible: true)
+            if record.name != LocalHost.shared.identifier {
+                self.host = HostDevicesManager.shared.addBonjourHost(record: record, ipAddress: ipAddress, compatible: true)
                 PingManager.pingRemoteAsync(host: ipAddress.address)
             }
 
             service.startMonitoring()
         } else {
             guard let ipPort = service.resolveIpAddress(withSelected: record.serviceIp) else { return }
-            if record.name != TPLocalHost.shared.identifier {
-                TPHostsManager.shared.addBonjourHost(record: record, ipAddress: ipPort, compatible: false)
+            if record.name != LocalHost.shared.identifier {
+                HostDevicesManager.shared.addBonjourHost(record: record, ipAddress: ipPort, compatible: false)
             }
         }
     }
@@ -88,8 +88,8 @@ class Resolver: NSObject, @preconcurrency NetServiceDelegate {
 				host.address = ipAddress.address
 				host.port = ipAddress.port
             } else {
-                TPHostsManager.shared.removeBonjourHost(host)
-                self.host = TPHostsManager.shared.addBonjourHost(record: record, ipAddress: ipAddress, compatible: record.isProtocolCompatible())
+                HostDevicesManager.shared.removeBonjourHost(host)
+                self.host = HostDevicesManager.shared.addBonjourHost(record: record, ipAddress: ipAddress, compatible: record.isProtocolCompatible())
             }
         }
     }

@@ -11,7 +11,7 @@ class SoundUtils : NSObject {
 	nonisolated(unsafe) private static var _switchSound: NSSound?
 
 	static func switchSound() -> NSSound? {
-		var soundPath = TPPreferencesManager.shared().value(forPref: SWITCH_SOUND_PATH) as? String
+		var soundPath = PreferencesManager.shared().value(forPref: SWITCH_SOUND_PATH) as? String
 		if soundPath == nil || !FileManager.default.fileExists(atPath: soundPath!) {
 			soundPath = Bundle(for: self).path(forSoundResource: "switch-sound")
 		}
@@ -32,7 +32,7 @@ class SoundUtils : NSObject {
 	}
 	
 	static func preheatSwitchSoundIfNeeded() {
-		if TPPreferencesManager.shared().bool(forPref: PLAY_SWITCH_SOUND) {
+		if PreferencesManager.shared().bool(forPref: PLAY_SWITCH_SOUND) {
 			_ = switchSound()
 		}
 	}

@@ -77,8 +77,8 @@ class TXTRecord {
 	}
 
     static func fromLocal() -> TXTRecord {
-        let localHost = TPLocalHost.shared
-        var selectedIpAddress = TPNetworkConfigurationWatcher.shared.selectedLocalIpAddress
+        let localHost = LocalHost.shared
+        var selectedIpAddress = NetworkConfigurationWatcher.shared.selectedLocalIpAddress
         if selectedIpAddress == "0.0.0.0" || selectedIpAddress == "127.0.0.1" {
             selectedIpAddress = ""
         }
@@ -88,11 +88,11 @@ class TXTRecord {
             protocolVersion: PROTOCOL_VERSION,
             id: localHost.identifier,
             name: localHost.computerName,
-            screens: TPScreen.string(from: localHost.screens),
+            screens: Screen.string(from: localHost.screens),
             capabilities: localHost.capabilities.rawValue,
             osVersion: localHost.osVersion,
             serviceIp: selectedIpAddress,
-            hideIfNotPaired: (TPPreferencesManager.shared().int(forPref: TRUST_REQUEST_BEHAVIOR) == TRUST_REQUEST_REJECT)
+            hideIfNotPaired: (PreferencesManager.shared().int(forPref: TRUST_REQUEST_BEHAVIOR) == TRUST_REQUEST_REJECT)
                 ? 1 : 0,
             macAddresses: localHost.macAddresses
         )

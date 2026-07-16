@@ -1,7 +1,5 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
-//
-//  Device detail view showing all available information about a device.
 
 import SwiftUI
 import SecurityInterface
@@ -341,7 +339,7 @@ extension DeviceInfo {
         reconnectSecondsRemaining: Int? = nil,
         isPortable: Bool = false,
         lastError: String? = nil,
-        remoteHost: TPRemoteHost?
+        remoteHost: RemoteHost?
     ) {
         self.id = id
         self.name = name

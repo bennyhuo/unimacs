@@ -1,0 +1,16 @@
+//
+// Prefix header for all source files of the 'teleport' target in the 'teleport' project.
+//
+
+#ifdef __OBJC__
+	#import <Foundation/Foundation.h>
+	#import <AppKit/AppKit.h>
+	#import <Security/Security.h>
+
+	#import "common.h"
+	
+	// Import Swift-generated header for UMPreferencesManager access in ObjC
+	#if __has_include("Unimacs-Swift.h")
+		#import "Unimacs-Swift.h"
+	#endif
+#endif

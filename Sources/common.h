@@ -1,16 +1,11 @@
-/*
- *  common.h
- *  Teleport
- *
- *  Created by JuL on Thu Dec 04 2003.
- *  Copyright (c) 2003-2005 abyssoft. All rights reserved.
- *
- */
+// Copyright (c) 2003-2012 abyssoft (Julien Robert) and Teleport contributors
+// Copyright (c) 2025-2026 Benny Huo
+// SPDX-License-Identifier: GPL-2.0-only
 
 #include <pthread.h>
 
-// Forward declaration for TPPreferencesManager (defined in Swift)
-@class TPPreferencesManager;
+// Forward declaration for UMPreferencesManager (defined in Swift)
+@class UMPreferencesManager;
 
 /* Debug */
 #define DEBUG_GENERAL 0
@@ -43,8 +38,8 @@
 
 // Module enabled check (defaults to YES if not set)
 #define IS_MODULE_ENABLED(moduleKey) \
-    ([[TPPreferencesManager sharedPreferencesManager] valueForPref:moduleKey] == nil ? YES : \
-     [[TPPreferencesManager sharedPreferencesManager] boolForPref:moduleKey])
+    ([[UMPreferencesManager sharedPreferencesManager] valueForPref:moduleKey] == nil ? YES : \
+     [[UMPreferencesManager sharedPreferencesManager] boolForPref:moduleKey])
 
 // Numeric module ids (must match Swift LogModule rawValue)
 #define LOG_MOD_GENERAL   0
@@ -61,7 +56,7 @@
 #define LOG_LVL_ERROR   3
 
 // Bridge into the Swift rotating file logger (implemented via @_cdecl in
-// TPFileLogger.swift). Writes the formatted message to the local log file.
+// FileLogger.swift). Writes the formatted message to the local log file.
 extern void TPFileLog(int level, int module, const char *message);
 
 // Unified logging core.
@@ -78,7 +73,7 @@ extern void TPFileLog(int level, int module, const char *message);
         if(IS_MODULE_ENABLED(moduleKey)) { \
             NSString *__tpLogMsg = [NSString stringWithFormat:(@"[%s:%d] [%@] [%s] " prefix " " logString), __FILENAME__, __LINE__, __THREAD_LABEL__, __PRETTY_FUNCTION__, ##args]; \
             TPFileLog((levelInt), (moduleInt), [__tpLogMsg UTF8String]); \
-            if((consoleAlways) || [[TPPreferencesManager sharedPreferencesManager] boolForPref:ENABLE_DEBUG_LOG]) { \
+            if((consoleAlways) || [[UMPreferencesManager sharedPreferencesManager] boolForPref:ENABLE_DEBUG_LOG]) { \
                 NSLog(@"%@", __tpLogMsg); \
             } \
         } \
@@ -90,7 +85,7 @@ extern void TPFileLog(int level, int module, const char *message);
         if(IS_MODULE_ENABLED(moduleKey)) { \
             NSString *__tpLogMsg = [NSString stringWithFormat:(@"[%@] " prefix " " logString), __THREAD_LABEL__, ##args]; \
             TPFileLog((levelInt), (moduleInt), [__tpLogMsg UTF8String]); \
-            if((consoleAlways) || [[TPPreferencesManager sharedPreferencesManager] boolForPref:ENABLE_DEBUG_LOG]) { \
+            if((consoleAlways) || [[UMPreferencesManager sharedPreferencesManager] boolForPref:ENABLE_DEBUG_LOG]) { \
                 NSLog(@"%@", __tpLogMsg); \
             } \
         } \
@@ -129,7 +124,7 @@ extern void TPFileLog(int level, int module, const char *message);
 #define PRINT_ME_IF(cond) do{if(cond) DebugLog(@"%@: %s", self, __PRETTY_FUNCTION__);}while(0)
 
 /* Constants */
-#define RV_SERVICE @"_teleport._tcp"
+#define RV_SERVICE @"_unimacs._tcp"
 
 #define LEFT_MOUSE_BUTTON 0
 #define RIGHT_MOUSE_BUTTON 1

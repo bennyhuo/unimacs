@@ -98,7 +98,7 @@ class IdentityManager: NSObject {
 	@objc
 	static func loadOrderedIdentities() -> [Any] {
 		let ids = potentialIdentities()
-		let ordered = if let prefId = TPPreferencesManager.shared().value(forPref: Settings.certificateIdentifierKey) as? String {
+		let ordered = if let prefId = PreferencesManager.shared().value(forPref: Settings.certificateIdentifierKey) as? String {
 			ids.sorted { a, b in
 				identifier(for: a) == prefId || identifier(for: b) != prefId
 			}
@@ -117,7 +117,7 @@ class IdentityManager: NSObject {
 	static func setIdentity(_ identity: SecIdentity?) {
 		if let identity = identity {
 			let identifier = identifier(for: identity)
-			TPPreferencesManager.shared().setValue(identifier, forKey: Settings.certificateIdentifierKey)
+			PreferencesManager.shared().setValue(identifier, forKey: Settings.certificateIdentifierKey)
 		}
 		reloadIdentity()
 	}

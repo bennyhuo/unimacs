@@ -1,8 +1,8 @@
 *.cer
 *.provisionprofile
 build
-teleport.xcodeproj/xcuserdata
-teleport.xcodeproj/project.xcworkspace/xcuserdata
-teleport.xcodeproj/project.xcworkspace/xcshareddata
+Unimacs.xcodeproj/xcuserdata
+Unimacs.xcodeproj/project.xcworkspace/xcuserdata
+Unimacs.xcodeproj/project.xcworkspace/xcshareddata
 .idea
 *.log

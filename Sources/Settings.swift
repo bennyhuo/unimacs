@@ -28,7 +28,7 @@ class Settings {
     static let useDirectEventTapsKey: String = "useDirectEventTaps"
 
     /// When enabled (Scheme A, the default), the local cursor is hidden by bringing
-    /// teleport to the foreground behind a transparent shield window and using the
+    /// Unimacs to the foreground behind a transparent shield window and using the
     /// public cursor API (works on macOS 26+). When disabled (Scheme B), the legacy
     /// private background hack is used instead.
     static let useCursorShieldWindowKey: String = "useCursorShieldWindow"
@@ -53,7 +53,7 @@ class Settings {
     static let warnedAboutAccessibilityKey: String = "warnedAboutAccessibility"
     static let enableDebugLogKey: String = "enableLogging"
     static let logLevelKey: String = "logLevel"
-    static let applicationsDisablingTeleportKey: String = "appIdentifiersDisablingTeleport"
+    static let applicationsDisablingUnimacsKey: String = "appIdentifiersDisablingUnimacs"
     static let inhibitionPeriodKey: String = "hotBorderActivationDelay"
     static let syncModifiersKey: String = "syncModifiers"
     static let visibleBordersKey: String = "visibleBorders"

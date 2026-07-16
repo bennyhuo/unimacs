@@ -1,21 +1,5 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
-//
-//  Network.framework implementation of the control-connection transport
-//  (`MessageChannel` / `MessageListener`). Selected at runtime when
-//  `USE_SWIFT_NETWORK_STACK` is enabled.
-//  TLS is configured to match the legacy `TPTCPSecureSocket` semantics so the
-//  two stacks interoperate on the wire:
-//    * mutual authentication — both ends present a local identity
-//      (`sec_protocol_options_set_local_identity` + peer auth required),
-//    * certificate verification is delegated to the app (trust-on-first-use):
-//      the verify block accepts every chain and captures the peer leaf cert,
-//    * minimum TLS 1.2, so there is a common version with SecureTransport.
-//  STATUS (2026-06-23): PAUSED / not the default. `USE_SWIFT_NETWORK_STACK` is OFF
-//  in production. Known-working: plaintext (encryption=false) control + transfers.
-//  NOT yet validated: the TLS path (encryption=true, mutual auth, TOFU capture) and
-//  cross-stack interop (one end NW, the other legacy). Treat this file as
-//  experimental until those are verified — see docs/network-connection-plan.md.
 
 import Foundation
 import Network
@@ -107,7 +91,7 @@ final class NWMessageChannel: MessageChannel {
     /// `.waiting`/stuck connection never invoking the `.contentProcessed` completion.
     private static let sendTimeout: TimeInterval = 5.0
 
-    private let queue = DispatchQueue(label: "com.teleport.nwchannel", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.unimacs.nwchannel", qos: .userInitiated)
     private var connection: NWConnection?
 
     /// Guards the scalar properties below. Must NOT be the connection `queue`.
@@ -406,7 +390,7 @@ final class NWMessageChannel: MessageChannel {
 
 final class NWMessageListener: MessageListener {
 
-    private let queue = DispatchQueue(label: "com.teleport.nwlistener", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.unimacs.nwlistener", qos: .userInitiated)
     private var listener: NWListener?
 
     var enableEncryption: Bool = true
@@ -438,7 +422,7 @@ final class NWMessageListener: MessageListener {
         guard let nwPort = NWEndpoint.Port(rawValue: UInt16(truncatingIfNeeded: port)) else { return false }
 
         let params = makeParameters()
-        let selectedIp = TPNetworkConfigurationWatcher.shared.selectedLocalIpAddress
+        let selectedIp = NetworkConfigurationWatcher.shared.selectedLocalIpAddress
         let bindToSpecificIp = selectedIp != "0.0.0.0" && !selectedIp.isEmpty
 
         let listener: NWListener

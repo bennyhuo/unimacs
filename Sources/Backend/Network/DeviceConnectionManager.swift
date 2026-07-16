@@ -1,8 +1,5 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
-//
-//  Manages persistent connections to paired devices.
-//  Serves as the single source of truth for all network connections.
 
 import Foundation
 
@@ -25,18 +22,18 @@ enum DeviceLinkPhase: Equatable {
     // MARK: - Broadcast Notifications (all delegates receive these)
     
     /// Called when a connection is established (either as client or from incoming connection)
-    @objc optional func connectionDidEstablish(to host: TPRemoteHost, connection: NetworkConnection)
+    @objc optional func connectionDidEstablish(to host: RemoteHost, connection: NetworkConnection)
     
     /// Called when a connection is disconnected
-    @objc optional func connectionDidDisconnect(from host: TPRemoteHost)
+    @objc optional func connectionDidDisconnect(from host: RemoteHost)
     
     /// Called when a connection attempt fails
-    @objc optional func connectionDidFail(to host: TPRemoteHost)
+    @objc optional func connectionDidFail(to host: RemoteHost)
     
     // MARK: - Exclusive Notifications (first handler that returns true wins)
     
     /// Handle incoming message. Return true if the message was handled (stops propagation to other delegates)
-    @objc optional func handleMessage(_ message: TPMessage, from host: TPRemoteHost, connection: NetworkConnection) -> Bool
+    @objc optional func handleMessage(_ message: Message, from host: RemoteHost, connection: NetworkConnection) -> Bool
 }
 
 // MARK: - DeviceConnectionManager
@@ -136,7 +133,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     // MARK: - Delegate Notification Methods
     
     /// Broadcast a notification to all delegates (all receive it)
-    private func broadcastConnectionEstablished(to host: TPRemoteHost, connection: NetworkConnection) {
+    private func broadcastConnectionEstablished(to host: RemoteHost, connection: NetworkConnection) {
         cleanupDelegates()
         for wrapper in delegates {
             wrapper.delegate?.connectionDidEstablish?(to: host, connection: connection)
@@ -144,7 +141,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     }
     
     /// Broadcast a disconnection notification to all delegates
-    private func broadcastConnectionDisconnected(from host: TPRemoteHost) {
+    private func broadcastConnectionDisconnected(from host: RemoteHost) {
         cleanupDelegates()
         for wrapper in delegates {
             wrapper.delegate?.connectionDidDisconnect?(from: host)
@@ -152,7 +149,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     }
     
     /// Broadcast a connection failure notification to all delegates
-    private func broadcastConnectionFailed(to host: TPRemoteHost) {
+    private func broadcastConnectionFailed(to host: RemoteHost) {
         cleanupDelegates()
         for wrapper in delegates {
             wrapper.delegate?.connectionDidFail?(to: host)
@@ -161,7 +158,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     
     /// Send message to delegates exclusively (first handler that returns true stops propagation)
     /// - Returns: true if any delegate handled the message
-    private func notifyMessageExclusively(_ message: TPMessage, from host: TPRemoteHost, connection: NetworkConnection) -> Bool {
+    private func notifyMessageExclusively(_ message: Message, from host: RemoteHost, connection: NetworkConnection) -> Bool {
         cleanupDelegates()
         for wrapper in delegates {
             if let handled = wrapper.delegate?.handleMessage?(message, from: host, connection: connection), handled {
@@ -173,7 +170,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     
     // MARK: - Connection State
     
-    func isConnected(to host: TPRemoteHost) -> Bool {
+    func isConnected(to host: RemoteHost) -> Bool {
         guard connectedHosts.contains(host.identifier) else { return false }
         
         // Also verify the actual socket is connected
@@ -191,7 +188,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         return false
     }
 
-    func linkPhase(for host: TPRemoteHost) -> DeviceLinkPhase {
+    func linkPhase(for host: RemoteHost) -> DeviceLinkPhase {
         let hostId = host.identifier
         
         if isConnected(to: host) {
@@ -212,17 +209,17 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         return .unavailable
     }
     
-    func reconnectSecondsRemaining(for host: TPRemoteHost) -> Int? {
+    func reconnectSecondsRemaining(for host: RemoteHost) -> Int? {
         guard let retryAt = reconnectNextRetryAt[host.identifier] else { return nil }
         return max(0, Int(ceil(retryAt.timeIntervalSinceNow)))
     }
     
-    func isManuallyDisconnected(_ host: TPRemoteHost) -> Bool {
+    func isManuallyDisconnected(_ host: RemoteHost) -> Bool {
         manuallyDisconnectedHosts.contains(host.identifier)
     }
 
     /// Bonjour may drop while a persistent TCP link to a paired host is still up (e.g. server locked).
-    func isReachableForControl(_ host: TPRemoteHost) -> Bool {
+    func isReachableForControl(_ host: RemoteHost) -> Bool {
         // A live persistent TCP link is the source of truth for control reachability. Bonjour state
         // (peeredOnline/offline) churns on flaky/link-local networks; relying on it tore the hot
         // border down even though the connection was healthy.
@@ -245,7 +242,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     
     /// Get connection for a specific host
     /// Returns nil if connection doesn't exist or socket is not connected
-    func connection(for host: TPRemoteHost) -> NetworkConnection? {
+    func connection(for host: RemoteHost) -> NetworkConnection? {
         guard let connection = connections[host.identifier] else { return nil }
         
         // Verify the actual socket is connected and capabilities match
@@ -270,7 +267,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
 
     func connection(forHostId hostId: String) -> NetworkConnection? {
         guard let connection = connections[hostId] else { return nil }
-        let host = TPHostsManager.shared.host(withIdentifier: hostId)
+        let host = HostDevicesManager.shared.host(withIdentifier: hostId)
         
         // Verify the actual socket is connected and valid
         if !connection.isConnected || !connection.isValid(for: host) {
@@ -289,7 +286,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         
 		warningLog("Cleaning up stale connection for hostId=\(hostId)", module: .network)
         
-        let host = connections[hostId]?.connectedHost ?? TPHostsManager.shared.host(withIdentifier: hostId)
+        let host = connections[hostId]?.connectedHost ?? HostDevicesManager.shared.host(withIdentifier: hostId)
         
         connections.removeValue(forKey: hostId)
         connectedHosts.remove(hostId)
@@ -316,7 +313,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     /// - Parameter message: The message to send
     /// - Returns: Number of devices the message was sent to
     @discardableResult
-    func sendMessageToAllConnectedDevices(_ message: TPMessage) -> Int {
+    func sendMessageToAllConnectedDevices(_ message: Message) -> Int {
         var sentCount = 0
         for (hostId, connection) in connections {
             if connectedHosts.contains(hostId) {
@@ -335,7 +332,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     ///   - hostId: The identifier of the host to send to
     /// - Returns: Whether the message was sent successfully
     @discardableResult
-    func sendMessage(_ message: TPMessage, toHost hostId: String) -> Bool {
+    func sendMessage(_ message: Message, toHost hostId: String) -> Bool {
         guard let connection = connections[hostId], connectedHosts.contains(hostId) else {
             warningLog("[SEND] Failed to send to \(hostId): not connected. \(message.debugInfo)", module: .network)
             return false
@@ -365,7 +362,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     func startListening(onPort port: inout Int32) -> Bool {
         guard !isListening else { return true }
         
-        let success = TPConnectionsManager.shared.startListening(withDelegate: self, onPort: &port)
+        let success = ConnectionsManager.shared.startListening(withDelegate: self, onPort: &port)
         if success {
             isListening = true
             NSLog("DeviceConnectionManager: Started listening on port \(port)")
@@ -376,7 +373,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     }
     
     /// The peer dialed us inbound; stop any competing outbound dial / reconnect to that host.
-    func notePeerInboundDial(to host: TPRemoteHost) {
+    func notePeerInboundDial(to host: RemoteHost) {
         let hostId = host.identifier
         connectingHosts.remove(hostId)
         passiveProbeTimers[hostId]?.invalidate()
@@ -386,7 +383,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         reconnectNextRetryAt.removeValue(forKey: hostId)
         reconnectingHosts.remove(hostId)
         peerDisconnectedHosts.remove(hostId)
-        TPConnectionsManager.shared.cancelPendingOutbound(forHostIdentifier: hostId)
+        ConnectionsManager.shared.cancelPendingOutbound(forHostIdentifier: hostId)
         debugLog("Peer \(host.computerName) dialed us inbound; cancelled competing outbound/reconnect", module: .network)
     }
 
@@ -394,7 +391,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     func stopListening() {
         guard isListening else { return }
         
-        TPConnectionsManager.shared.stopListening()
+        ConnectionsManager.shared.stopListening()
         isListening = false
         NSLog("DeviceConnectionManager: Stopped listening")
     }
@@ -404,18 +401,18 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     /// Check whether we should initiate an outbound connection to the given remote host.
     /// Under the Unified Cursor Space design, only the host with the lexicographically smaller
     /// identifier is responsible for dialing to avoid duplicate connections.
-    private func shouldInitiateOutboundConnection(to host: TPRemoteHost) -> Bool {
-        let localName = TPLocalHost.shared.computerName
+    private func shouldInitiateOutboundConnection(to host: RemoteHost) -> Bool {
+        let localName = LocalHost.shared.computerName
         let remoteName = host.computerName
         return localName < remoteName
     }
 
     /// Whether this machine still treats the remote host as a paired peer.
-    private func believesPairedLocally(with host: TPRemoteHost) -> Bool {
-        if TPAuthenticationManager.default.isHostTrusted(host) {
+    private func believesPairedLocally(with host: RemoteHost) -> Bool {
+        if AuthenticationManager.default.isHostTrusted(host) {
             return true
         }
-        if let knownHost = TPHostsManager.shared.host(withIdentifier: host.identifier),
+        if let knownHost = HostDevicesManager.shared.host(withIdentifier: host.identifier),
            knownHost.isInState(.peered) {
             return true
         }
@@ -431,7 +428,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
 
     /// Handle peer lifecycle messages even when another delegate (e.g. auth manager) still owns the socket.
     @MainActor
-    func handlePeerLifecycleMessage(_ message: TPMessage, on connection: NetworkConnection) {
+    func handlePeerLifecycleMessage(_ message: Message, on connection: NetworkConnection) {
         restorePersistentDelegate(for: connection)
         guard let host = connection.connectedHost else { return }
 
@@ -455,8 +452,8 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     }
 
     /// Whether a paired host is eligible for an outbound persistent connection attempt.
-    private func isConnectable(_ host: TPRemoteHost) -> Bool {
-        if host.identifier == TPLocalHost.shared.identifier {
+    private func isConnectable(_ host: RemoteHost) -> Bool {
+        if host.identifier == LocalHost.shared.identifier {
             return false
         }
         if host.isInState(.peeredOnline) {
@@ -471,7 +468,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     /// Promote an established socket (e.g. after pairing) into the persistent connection pool.
     func adoptConnection(_ connection: NetworkConnection) {
         guard let host = connection.connectedHost else { return }
-        guard host.identifier != TPLocalHost.shared.identifier else {
+        guard host.identifier != LocalHost.shared.identifier else {
             connection.disconnect()
             return
         }
@@ -484,7 +481,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         NSLog("DeviceConnectionManager: Adopted connection to \(host.computerName)")
     }
     
-    private func beginOutboundConnect(to host: TPRemoteHost) {
+    private func beginOutboundConnect(to host: RemoteHost) {
         let hostId = host.identifier
         manuallyDisconnectedHosts.remove(hostId)
         peerDisconnectedHosts.remove(hostId)
@@ -498,12 +495,12 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     }
 
     @discardableResult
-    func connect(to host: TPRemoteHost, resetRetryBudget: Bool = false, ignoreIdRule: Bool = false) -> Bool {
-        guard host.identifier != TPLocalHost.shared.identifier else { return false }
+    func connect(to host: RemoteHost, resetRetryBudget: Bool = false, ignoreIdRule: Bool = false) -> Bool {
+        guard host.identifier != LocalHost.shared.identifier else { return false }
         guard !isConnected(to: host) else { return true }
         guard isConnectable(host) else { return false }
         guard ignoreIdRule || shouldInitiateOutboundConnection(to: host) else {
-            debugLog("Skipping outbound connect to \(host.computerName) because local identifier (\(TPLocalHost.shared.identifier)) >= remote identifier (\(host.identifier)) (waiting for remote to dial us). Scheduling passive probe.", module: .network)
+            debugLog("Skipping outbound connect to \(host.computerName) because local identifier (\(LocalHost.shared.identifier)) >= remote identifier (\(host.identifier)) (waiting for remote to dial us). Scheduling passive probe.", module: .network)
             self.schedulePassiveProbe(for: host)
             return false
         }
@@ -524,7 +521,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
             if ignoreIdRule {
                 infoDict["ignoreIdRule"] = true
             }
-            let success = TPConnectionsManager.shared.connect(
+            let success = ConnectionsManager.shared.connect(
                 toHost: host,
                 withDelegate: DeviceConnectionManager.shared,
                 infoDict: infoDict
@@ -537,7 +534,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         return true
     }
     
-    func disconnect(from host: TPRemoteHost) {
+    func disconnect(from host: RemoteHost) {
         peerDisconnectedHosts.remove(host.identifier)
         cancelReconnect(for: host.identifier)
 
@@ -547,7 +544,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         connectedHosts.remove(host.identifier)
         stopKeepAlive(for: host.identifier)
 
-        connection.sendAsync(TPMessage.create(with: .disconnectNotification)) { [weak self] in
+        connection.sendAsync(Message.create(with: .disconnectNotification)) { [weak self] in
             Task { @MainActor in
                 connection.disconnect()
                 self?.broadcastConnectionDisconnected(from: host)
@@ -561,7 +558,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         }
     }
 
-    private func finalizePeerDisconnect(from host: TPRemoteHost, connection: NetworkConnection) {
+    private func finalizePeerDisconnect(from host: RemoteHost, connection: NetworkConnection) {
         connection.disconnect()
         guard connections[host.identifier] === connection else { return }
 
@@ -581,14 +578,14 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     }
 
     /// Apply unpair state from a peer notification and refresh UI immediately.
-    private func finalizeRemoteUnpair(from host: TPRemoteHost, connection: NetworkConnection) {
-        TPAuthenticationManager.default.host(host, setTrusted: false)
+    private func finalizeRemoteUnpair(from host: RemoteHost, connection: NetworkConnection) {
+        AuthenticationManager.default.host(host, setTrusted: false)
         if host.isInState(.online) {
             host.hostState = .shared
         } else {
             host.hostState = []
         }
-        TPHostsManager.shared.saveHosts()
+        HostDevicesManager.shared.saveHosts()
 
         cancelReconnect(for: host.identifier)
         manuallyDisconnectedHosts.remove(host.identifier)
@@ -603,7 +600,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         }
 
         if connection.isConnected {
-            connection.sendAsync(TPMessage.create(with: .disconnectNotification)) {
+            connection.sendAsync(Message.create(with: .disconnectNotification)) {
                 Task { @MainActor in
                     connection.disconnect()
                 }
@@ -615,10 +612,10 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         broadcastConnectionDisconnected(from: host)
         notifyReachabilityChanged(for: host)
         NotificationCenter.default.post(
-            name: NSNotification.Name("TPHostDidUpdateNotification"),
+            name: NSNotification.Name("HostDeviceDidUpdateNotification"),
             object: host
         )
-        TPHostsManager.shared.notifyChangesNow()
+        HostDevicesManager.shared.notifyChangesNow()
         NSLog("DeviceConnectionManager: Peer unpaired from \(host.computerName)")
     }
     
@@ -628,7 +625,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
             guard !manuallyDisconnectedHosts.contains(hostId) else { return false }
             guard !peerDisconnectedHosts.contains(hostId) else { return false }
             guard let host = connections[hostId]?.connectedHost
-                ?? TPHostsManager.shared.host(withIdentifier: hostId) else { return false }
+                ?? HostDevicesManager.shared.host(withIdentifier: hostId) else { return false }
             return host.isInState(.peered)
         }
         connectingHosts.removeAll()
@@ -654,7 +651,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         
         NSLog("DeviceConnectionManager: Disconnected all connections")
 		
-		TPConnectionsManager.shared.reset()
+		ConnectionsManager.shared.reset()
 
         for hostId in hostIdsToReconnect {
             reconnectRetryCount.removeValue(forKey: hostId)
@@ -665,11 +662,11 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     // MARK: - Auto-Connect
     
     func autoConnectPairedDevices() {
-        let peeredHosts = TPHostsManager.shared.hosts(with: .peered) as? [TPRemoteHost] ?? []
+        let peeredHosts = HostDevicesManager.shared.hosts(with: .peered) as? [RemoteHost] ?? []
         
         for host in peeredHosts {
             let hostId = host.identifier
-            if hostId == TPLocalHost.shared.identifier { continue }
+            if hostId == LocalHost.shared.identifier { continue }
             if !isConnected(to: host),
                isConnectable(host),
                !hasExhaustedReconnectAttempts(for: hostId),
@@ -684,7 +681,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     
     /// Schedule a reconnection attempt for the given host
     private func scheduleReconnect(for hostId: String) {
-        guard hostId != TPLocalHost.shared.identifier else { return }
+        guard hostId != LocalHost.shared.identifier else { return }
         // Don't reconnect if manually disconnected locally or by peer notification
         guard !manuallyDisconnectedHosts.contains(hostId) else {
             NSLog("DeviceConnectionManager: Skipping reconnect for \(hostId) - manually disconnected")
@@ -695,7 +692,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
             return
         }
 
-        guard let host = TPHostsManager.shared.host(withIdentifier: hostId) else {
+        guard let host = HostDevicesManager.shared.host(withIdentifier: hostId) else {
             cleanupReconnectState(for: hostId)
             return
         }
@@ -752,7 +749,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
             return
         }
         
-        guard let host = TPHostsManager.shared.host(withIdentifier: hostId) else {
+        guard let host = HostDevicesManager.shared.host(withIdentifier: hostId) else {
             NSLog("DeviceConnectionManager: Host \(hostId) not found, canceling reconnect")
             cleanupReconnectState(for: hostId)
             return
@@ -774,9 +771,9 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     
     /// Schedule a passive probe attempt for a host we are waiting to connect to us.
     /// If the host remains disconnected after a timeout, we bypass the ID rule to check its pairing/connection status.
-    private func schedulePassiveProbe(for host: TPRemoteHost) {
+    private func schedulePassiveProbe(for host: RemoteHost) {
         let hostId = host.identifier
-        guard hostId != TPLocalHost.shared.identifier else { return }
+        guard hostId != LocalHost.shared.identifier else { return }
         
         // Don't schedule if manually disconnected
         guard !manuallyDisconnectedHosts.contains(hostId) else { return }
@@ -799,7 +796,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         passiveProbeTimers.removeValue(forKey: hostId)
         
         guard !manuallyDisconnectedHosts.contains(hostId) else { return }
-        guard let host = TPHostsManager.shared.host(withIdentifier: hostId) else { return }
+        guard let host = HostDevicesManager.shared.host(withIdentifier: hostId) else { return }
         guard !isConnected(to: host) else { return }
         guard isConnectable(host) else { return }
         
@@ -820,7 +817,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
 
     /// Stop automatic reconnect after the retry budget is used up; manual Connect resets the counter.
     private func stopReconnectAfterMaxAttempts(for hostId: String) {
-        guard let host = TPHostsManager.shared.host(withIdentifier: hostId) else {
+        guard let host = HostDevicesManager.shared.host(withIdentifier: hostId) else {
             cleanupReconnectState(for: hostId)
             return
         }
@@ -846,7 +843,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         passiveProbeTimers[hostId]?.invalidate()
         passiveProbeTimers.removeValue(forKey: hostId)
         
-        notifyReachabilityChanged(for: TPHostsManager.shared.host(withIdentifier: hostId))
+        notifyReachabilityChanged(for: HostDevicesManager.shared.host(withIdentifier: hostId))
     }
     
     /// Reset reconnection state after successful connection
@@ -862,7 +859,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         passiveProbeTimers.removeValue(forKey: hostId)
     }
     
-    private func notifyReachabilityChanged(for host: TPRemoteHost?) {
+    private func notifyReachabilityChanged(for host: RemoteHost?) {
         NotificationCenter.default.post(
             name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
             object: host
@@ -916,8 +913,8 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     // MARK: - Internal Connection Handling
     
     /// Register a connection (called when connection is established)
-    fileprivate func registerConnection(_ connection: NetworkConnection, for host: TPRemoteHost) {
-        guard host.identifier != TPLocalHost.shared.identifier else {
+    fileprivate func registerConnection(_ connection: NetworkConnection, for host: RemoteHost) {
+        guard host.identifier != LocalHost.shared.identifier else {
             connection.disconnect()
             return
         }
@@ -967,10 +964,10 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         )
         
         // Send our current layout to the newly connected peer
-        let currentVer = TPHostsManager.shared.layoutVersion()
-        if let desktop = TPHostsManager.shared.currentUnifiedDesktop(version: currentVer) {
+        let currentVer = HostDevicesManager.shared.layoutVersion()
+        if let desktop = HostDevicesManager.shared.currentUnifiedDesktop(version: currentVer) {
             if let data = desktop.toData() {
-                let msg = TPMessage.create(with: .layoutUpdate, andData: data)
+                let msg = Message.create(with: .layoutUpdate, andData: data)
                 warningLog("[LayoutSync] Sending current layout (version=\(currentVer)) to \(host.computerName) on connection register", module: .network)
                 connection.sendAsync(msg)
             }
@@ -981,7 +978,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     }
     
     /// Handle connection disconnection
-    fileprivate func handleDisconnection(for hostId: String, host: TPRemoteHost?) {
+    fileprivate func handleDisconnection(for hostId: String, host: RemoteHost?) {
         connections.removeValue(forKey: hostId)
         connectedHosts.remove(hostId)
         stopKeepAlive(for: hostId)
@@ -1002,9 +999,9 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     }
 }
 
-// MARK: - TPClientConnectionsDelegate (for outgoing connections)
+// MARK: - ClientConnectionsDelegate (for outgoing connections)
 
-extension DeviceConnectionManager: TPClientConnectionsDelegate {
+extension DeviceConnectionManager: ClientConnectionsDelegate {
     nonisolated func connectionToServerSucceeded(_ connection: NetworkConnection, infoDict: [String: Any]?) {
         Task { @MainActor in
             guard let host = connection.connectedHost else { return }
@@ -1024,7 +1021,7 @@ extension DeviceConnectionManager: TPClientConnectionsDelegate {
         }
     }
     
-    nonisolated func connectionToServerFailed(_ host: TPRemoteHost, infoDict: [String: Any]?) {
+    nonisolated func connectionToServerFailed(_ host: RemoteHost, infoDict: [String: Any]?) {
         Task { @MainActor in
             // Prevent concurrent connection failure from destroying an already successfully accepted connection
             if let activeConnection = connections[host.identifier], activeConnection.isConnected {
@@ -1052,9 +1049,9 @@ extension DeviceConnectionManager: TPClientConnectionsDelegate {
     }
 }
 
-// MARK: - TPServerConnectionsDelegate (for incoming connections)
+// MARK: - ServerConnectionsDelegate (for incoming connections)
 
-extension DeviceConnectionManager: TPServerConnectionsDelegate {
+extension DeviceConnectionManager: ServerConnectionsDelegate {
     nonisolated func connectionFromClientAccepted(_ connection: NetworkConnection) {
         Task { @MainActor in
             guard let host = connection.connectedHost else { return }
@@ -1078,7 +1075,7 @@ extension DeviceConnectionManager: TPServerConnectionsDelegate {
 // MARK: - NetworkConnectionDelegate
 
 extension DeviceConnectionManager: NetworkConnectionDelegate {
-    nonisolated func connection(_ connection: NetworkConnection, receivedMessage message: TPMessage) {
+    nonisolated func connection(_ connection: NetworkConnection, receivedMessage message: Message) {
         Task { @MainActor in
             guard let host = connection.connectedHost else { return }
             
@@ -1108,9 +1105,9 @@ extension DeviceConnectionManager: NetworkConnectionDelegate {
             if message.msgType == .layoutUpdate {
                 warningLog("[RECV] received layoutUpdate message from \(host.computerName) (dataLen=\(message.data?.count ?? 0))", module: .network)
                 if let data = message.data {
-                    if let desktop = TPUnifiedDesktop.from(data: data) {
+                    if let desktop = UnifiedDesktop.from(data: data) {
                         warningLog("[RECV] successfully decoded layout update version=\(desktop.version) with \(desktop.screens.count) screens", module: .network)
-                        _ = TPHostsManager.shared.applyUnifiedDesktop(desktop)
+                        _ = HostDevicesManager.shared.applyUnifiedDesktop(desktop)
                     } else {
                         warningLog("[RECV] failed to decode layout update from data", module: .network)
                     }

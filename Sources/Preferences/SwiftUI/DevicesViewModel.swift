@@ -1,7 +1,5 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
-//
-//  ViewModel for device management - handles pairing, connecting, and device state.
 
 import SwiftUI
 import Combine
@@ -27,10 +25,10 @@ struct DeviceInfo: Identifiable, Equatable {
     let lastError: String?
     
     // Reference to the actual remote host
-    weak var remoteHost: TPRemoteHost?
+    weak var remoteHost: RemoteHost?
     
     @MainActor
-    init(from host: TPRemoteHost) {
+    init(from host: RemoteHost) {
         self.id = host.identifier
         self.name = host.computerName
         self.address = host.address ?? ""
@@ -185,7 +183,7 @@ final class DevicesViewModel: ObservableObject {
     // MARK: - Observation
     
     func startObserving() {
-        NotificationCenter.default.publisher(for: NSNotification.Name("TPHostDidUpdateNotification"))
+        NotificationCenter.default.publisher(for: NSNotification.Name("HostDeviceDidUpdateNotification"))
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.loadDevices()
@@ -200,14 +198,14 @@ final class DevicesViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        NotificationCenter.default.publisher(for: NSNotification.Name(TPHostsManager.TPHostsConfigurationDidChangeNotification))
+        NotificationCenter.default.publisher(for: NSNotification.Name(HostDevicesManager.HostDevicesConfigurationDidChangeNotification))
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.loadDevices()
             }
             .store(in: &cancellables)
         
-        NotificationCenter.default.publisher(for: NSNotification.Name("TPHostDidBecomeActivatedNotification"))
+        NotificationCenter.default.publisher(for: NSNotification.Name("HostDeviceDidBecomeActivatedNotification"))
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.loadDevices()
@@ -257,9 +255,9 @@ final class DevicesViewModel: ObservableObject {
     
     func loadDevices() {
         isAccessibilityTrusted = AccessibilityManager.isTrusted
-        let hostsManager = TPHostsManager.shared
+        let hostsManager = HostDevicesManager.shared
         
-        let peeredHosts = hostsManager.hosts(with: .peered) as? [TPRemoteHost] ?? []
+        let peeredHosts = hostsManager.hosts(with: .peered) as? [RemoteHost] ?? []
         pairedDevices = peeredHosts
             .filter { !$0.computerName.isEmpty }
             .map { DeviceInfo(from: $0) }
@@ -270,32 +268,32 @@ final class DevicesViewModel: ObservableObject {
                 return lhs.name < rhs.name
             }
         
-        let sharedHosts = hostsManager.hosts(with: .shared) as? [TPRemoteHost] ?? []
+        let sharedHosts = hostsManager.hosts(with: .shared) as? [RemoteHost] ?? []
         nearbyDevices = sharedHosts
             .filter { !$0.isInState(.peered) && !$0.computerName.isEmpty }
             .map { DeviceInfo(from: $0) }
             
         // Load Local Device Details
-        let localHost = TPLocalHost.shared
+        let localHost = LocalHost.shared
         localName = localHost.computerName
         localOSVersion = formatOSVersion(localHost.osVersion)
         localScreenCount = localHost.screens.count
         localSystemIconName = localHost.hasCapability(.portable) ? "laptopcomputer" : "desktopcomputer"
         
-        let watcher = TPNetworkConfigurationWatcher.shared
+        let watcher = NetworkConfigurationWatcher.shared
         let addresses = watcher.localIpAddresses.filter { $0 != "0.0.0.0" }
         localIPAddresses = addresses.isEmpty ? ["Offline"] : addresses
-        localPort = Int(TPPreferencesManager.shared().port(forPref: COMMAND_PORT))
+        localPort = Int(PreferencesManager.shared().port(forPref: COMMAND_PORT))
         
         // Client Status
-        let clientController = TPClientController.shared
+        let clientController = ClientController.shared
         isClientControlling = clientController.isControlling
         clientControlledHostName = clientController.currentConnection?.connectedHost?.computerName
         isClientConnecting = clientController.isWaitingForControlAttempt
         clientConnectingHostName = pairedDevices.first { $0.linkPhase == .connecting || $0.linkPhase == .reconnecting }?.name
         
         // Server Status
-        let serverController = TPServerController.shared
+        let serverController = ServerController.shared
         isServerSharing = serverController.allowControl
         isServerControlled = serverController.isControlled
         serverControlledHostName = serverController.currentConnection?.connectedHost?.computerName
@@ -331,18 +329,18 @@ final class DevicesViewModel: ObservableObject {
     // MARK: - Local Device Actions
     
     func toggleServerSharing() {
-        let current = TPServerController.shared.allowControl
-        TPServerController.shared.allowControl = !current
+        let current = ServerController.shared.allowControl
+        ServerController.shared.allowControl = !current
         loadDevices()
     }
     
     func stopClientControl() {
-        TPClientController.shared.stopControl()
+        ClientController.shared.stopControl()
         loadDevices()
     }
     
     func stopServerControl() {
-        TPServerController.shared.stopControl()
+        ServerController.shared.stopControl()
         loadDevices()
     }
     
@@ -351,7 +349,7 @@ final class DevicesViewModel: ObservableObject {
     func pair(with device: DeviceInfo) {
         guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
         host.lastError = nil
-        TPAuthenticationManager.default.requestAuthentication(on: host)
+        AuthenticationManager.default.requestAuthentication(on: host)
     }
     
     func unpair(device: DeviceInfo) {
@@ -359,7 +357,7 @@ final class DevicesViewModel: ObservableObject {
         
         if device.isConnected {
             if let connection = DeviceConnectionManager.shared.connection(for: host) {
-                connection.sendAsync(TPMessage.create(with: .unpairNotification)) { [weak self] in
+                connection.sendAsync(Message.create(with: .unpairNotification)) { [weak self] in
                     self?.disconnect(from: device)
                 }
             } else {
@@ -369,7 +367,7 @@ final class DevicesViewModel: ObservableObject {
             disconnect(from: device)
         }
         
-        TPAuthenticationManager.default.host(host, setTrusted: false)
+        AuthenticationManager.default.host(host, setTrusted: false)
         
         if host.isInState(.online) {
             host.hostState = .shared
@@ -377,7 +375,7 @@ final class DevicesViewModel: ObservableObject {
             host.hostState = []
         }
         
-        TPHostsManager.shared.saveHosts()
+        HostDevicesManager.shared.saveHosts()
         loadDevices()
     }
     
@@ -404,8 +402,8 @@ final class DevicesViewModel: ObservableObject {
         pairedDevices.first { $0.id == id } ?? nearbyDevices.first { $0.id == id }
     }
 
-    private func findHost(by identifier: String) -> TPRemoteHost? {
-        return TPHostsManager.shared.host(withIdentifier: identifier)
+    private func findHost(by identifier: String) -> RemoteHost? {
+        return HostDevicesManager.shared.host(withIdentifier: identifier)
     }
 }
 

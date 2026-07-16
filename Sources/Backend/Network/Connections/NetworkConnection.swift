@@ -8,7 +8,7 @@ import Foundation
 /// Protocol for receiving connection events
 @objc protocol NetworkConnectionDelegate: AnyObject {
     @objc func connectionDisconnected(_ connection: NetworkConnection)
-    @objc func connection(_ connection: NetworkConnection, receivedMessage message: TPMessage)
+    @objc func connection(_ connection: NetworkConnection, receivedMessage message: Message)
 }
 
 // Note: this class sits on top of `MessageChannel`, so it is transport-agnostic
@@ -71,7 +71,7 @@ class NetworkConnection: NSObject, MessageChannelDelegate {
     private(set) var networkInterfaceName: String?
     
     /// The connected remote host
-    var connectedHost: TPRemoteHost? {
+    var connectedHost: RemoteHost? {
         didSet {
             if let host = connectedHost, let remoteAddress = _channel.remoteAddress {
                 host.address = remoteAddress
@@ -80,14 +80,14 @@ class NetworkConnection: NSObject, MessageChannelDelegate {
     }
     
     /// Local host capabilities at connection time
-    private let _capabilities: TPHostCapability
-    var localHostCapabilities: TPHostCapability { _capabilities }
+    private let _capabilities: HostCapability
+    var localHostCapabilities: HostCapability { _capabilities }
     
     /// Connection delegate for receiving events
     weak var delegate: NetworkConnectionDelegate?
     
     /// Transfers manager for this connection
-    private(set) var transfersManager: TPTransfersManager?
+    private(set) var transfersManager: TransfersManager?
     
     // MARK: - Private Properties
     
@@ -98,7 +98,7 @@ class NetworkConnection: NSObject, MessageChannelDelegate {
     private let pendingMessagesManager = PendingMessagesManager()
     
     /// Serial queue for thread-safe message sending
-    private let sendQueue = DispatchQueue(label: "com.teleport.networkconnection.send", qos: .userInitiated)
+    private let sendQueue = DispatchQueue(label: "com.unimacs.networkconnection.send", qos: .userInitiated)
     
     /// Continuation for async send operations
     private var sendContinuations: [CheckedContinuation<Bool, Never>] = []
@@ -109,7 +109,7 @@ class NetworkConnection: NSObject, MessageChannelDelegate {
         self.origin = origin
         self._channel = channel
         self.connectionId = Self.generateConnectionId()
-        self._capabilities = TPLocalHost.shared.capabilities
+        self._capabilities = LocalHost.shared.capabilities
         
         super.init()
         
@@ -129,14 +129,14 @@ class NetworkConnection: NSObject, MessageChannelDelegate {
     // MARK: - Public Methods
     
     /// Check if connection is valid for the given host
-    func isValid(for host: TPRemoteHost?) -> Bool {
+    func isValid(for host: RemoteHost?) -> Bool {
         guard let host = host, let connectedHost = connectedHost else {
             return false
         }
         guard connectedHost.isEqual(host) else {
             return false
         }
-        guard localHostCapabilities == TPLocalHost.shared.capabilities else {
+        guard localHostCapabilities == LocalHost.shared.capabilities else {
             return false
         }
         // Bonjour may refresh the cached address while this TCP session is still up.
@@ -171,7 +171,7 @@ class NetworkConnection: NSObject, MessageChannelDelegate {
     /// - Parameter message: The message to send
     /// - Returns: Whether the message was sent/queued successfully
     @discardableResult
-    func sendMessageAsync(_ message: TPMessage) async -> Bool {
+    func sendMessageAsync(_ message: Message) async -> Bool {
         let state = _channel.state
         
         switch state {
@@ -206,7 +206,7 @@ case .connectingState:
     /// - Parameter message: The message to send
     /// - Returns: Whether the message was sent/queued successfully
     @discardableResult
-    func send(_ message: TPMessage) -> Bool {
+    func send(_ message: Message) -> Bool {
         let state = _channel.state
         
         switch state {
@@ -232,7 +232,7 @@ case .connectingState:
 
     /// The single point that writes a message to the socket. Always runs on `sendQueue`.
     /// All public send paths funnel through here so writes never interleave.
-    private func performSend(_ message: TPMessage) -> Bool {
+    private func performSend(_ message: Message) -> Bool {
         let msgTypeDesc = messageTypeDescription(message.msgType)
         let infoDesc = messageInfoDescription(message)
         debugLog("[Conn:\(connectionId)] Sending message: type=\(msgTypeDesc)\(infoDesc)", module: .network)
@@ -277,7 +277,7 @@ case .connectingState:
     /// Send pending messages synchronously (for backward compatibility)
     @discardableResult
     func sendPendingMessagesSync() -> Bool {
-        var messages: [TPMessage] = []
+        var messages: [Message] = []
         let semaphore = DispatchSemaphore(value: 0)
         Task {
             messages = await pendingMessagesManager.takeAll()
@@ -311,7 +311,7 @@ case .connectingState:
     ///   - the caller (e.g. the event-tap callback on the main run loop) never blocks on the
     ///     socket write. Blocking it would stall input capture (the OS disables a slow tap)
     ///     and freeze the main run loop while a large transfer saturates the link.
-    func sendAsync(_ message: TPMessage) {
+    func sendAsync(_ message: Message) {
         let state = _channel.state
 
         switch state {
@@ -331,7 +331,7 @@ case .connectingState:
         }
     }
     
-    func sendAsync(_ message: TPMessage, completion: @escaping () -> Void) {
+    func sendAsync(_ message: Message, completion: @escaping () -> Void) {
         let state = _channel.state
 
         switch state {
@@ -376,8 +376,8 @@ case .connectingState:
         msgBuffer.append(data)
         
         var cont = true
-        while msgBuffer.count >= TPMessageHeaderLength && cont {
-			guard let message = TPMessage(rawData: msgBuffer) else {
+        while msgBuffer.count >= MessageHeaderLength && cont {
+			guard let message = Message(rawData: msgBuffer) else {
 				cont = false
 				continue
 			}
@@ -408,7 +408,7 @@ case .connectingState:
     // MARK: - Message Logging Helpers
     
     /// Get human-readable description of message type
-    private func messageTypeDescription(_ msgType: TPMsgType) -> String {
+    private func messageTypeDescription(_ msgType: MsgType) -> String {
         switch msgType {
         case .identification: return "Identification"
         case .authenticationRequest: return "AuthenticationRequest"
@@ -433,7 +433,7 @@ case .connectingState:
     }
     
     /// Get readable description of message info dict
-    private func messageInfoDescription(_ message: TPMessage) -> String {
+    private func messageInfoDescription(_ message: Message) -> String {
         let msgType = message.msgType
         
         // Skip detailed info for high-frequency event and layout update messages
@@ -469,13 +469,13 @@ case .connectingState:
 
 /// Actor to manage pending messages with thread-safe access
 private actor PendingMessagesManager {
-    private var messages: [TPMessage] = []
+    private var messages: [Message] = []
     
-    func append(_ message: TPMessage) {
+    func append(_ message: Message) {
         messages.append(message)
     }
     
-    func takeAll() -> [TPMessage] {
+    func takeAll() -> [Message] {
         let result = messages
         messages.removeAll()
         return result
@@ -491,7 +491,7 @@ private actor PendingMessagesManager {
 extension NetworkConnection {
     /// For ObjC compatibility - alias for send(_:)
     @objc(sendMessage:)
-    func sendMessage(_ message: TPMessage) -> Bool {
+    func sendMessage(_ message: Message) -> Bool {
         return send(message)
     }
 }

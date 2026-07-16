@@ -1,17 +1,5 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
-//
-//  A dedicated, process-lifetime thread that runs a CFRunLoop to host all
-//  message-connection sockets.
-//  The ObjC `TPTCPSocket` binds its CFRunLoop source to `CFRunLoopGetCurrent()`
-//  at connect/listen/accept time, so the run loop a socket lives on is decided by
-//  whichever thread performs those calls. Historically that ended up being the
-//  main run loop, which meant socket callbacks (data/connect/accept/close) and the
-//  message pump competed with UI, hot borders and pasteboard writes on the main
-//  thread — large clipboard transfers could stall the control connection's I/O.
-//  This thread gives every message connection a stable home off the main run loop.
-//  We only use the existing (proven) ObjC socket API (`_setRunLoop:` via
-//  connect/listen running on this thread); the socket implementation is untouched.
 
 import Foundation
 
@@ -37,7 +25,7 @@ final class NetworkRunLoopThread {
                 CFRunLoopRunInMode(.defaultMode, 1.0e9, false)
             }
         }
-        t.name = "com.teleport.network.runloop"
+        t.name = "com.unimacs.network.runloop"
         t.qualityOfService = .userInitiated
         t.stackSize = 1024 * 1024
         t.start()

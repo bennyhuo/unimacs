@@ -8,7 +8,7 @@ import OSLog
 
 // MARK: - Log Subsystem
 
-private let logSubsystem = Bundle.main.bundleIdentifier ?? "com.teleport"
+private let logSubsystem = Bundle.main.bundleIdentifier ?? "com.unimacs"
 
 // MARK: - Log Module
 
@@ -61,7 +61,7 @@ private let logSubsystem = Bundle.main.bundleIdentifier ?? "com.teleport"
     /// Check if this module's logging is enabled
     var isEnabled: Bool {
         // Default to enabled if not set
-        let prefs = TPPreferencesManager.shared()
+        let prefs = PreferencesManager.shared()
         // Use value(forPref:) to check if key exists
         if prefs.value(forPref: settingsKey) == nil {
             return true // Default enabled
@@ -125,7 +125,7 @@ struct Log {
 // MARK: - Log Level Helper
 
 private func currentMinLogLevel() -> LogLevel {
-    let rawValue = TPPreferencesManager.shared().int(forPref: Settings.logLevelKey)
+    let rawValue = PreferencesManager.shared().int(forPref: Settings.logLevelKey)
     return LogLevel(rawValue: rawValue) ?? .debug
 }
 
@@ -213,13 +213,13 @@ private func commonLog(
 		// Always persist the full log stream to the rotating local file.
 		// This keeps high-frequency connection logs off the console while
 		// remaining available for troubleshooting.
-		TPFileLogger.shared.append(level: level, category: module.displayName, message: formattedMessage)
+		FileLogger.shared.append(level: level, category: module.displayName, message: formattedMessage)
 		
 		// Console (unified log) only receives key logs: warnings and errors.
 		// When the user enables debug logging, mirror everything to the console
 		// for live development as well.
 		let mirrorToConsole = level >= .warning
-			|| TPPreferencesManager.shared().bool(forPref: Settings.enableDebugLogKey)
+			|| PreferencesManager.shared().bool(forPref: Settings.enableDebugLogKey)
 		guard mirrorToConsole else { return }
 		
 		let logger = module.logger
@@ -314,7 +314,7 @@ func networkDebugLog(
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
         let timestamp = dateFormatter.string(from: Date())
-        let logFileName = "teleport_logs_\(timestamp).txt"
+        let logFileName = "unimacs_logs_\(timestamp).txt"
         let logFileURL = tempDir.appendingPathComponent(logFileName)
         
         do {
@@ -324,7 +324,7 @@ func networkDebugLog(
             let predicate = NSPredicate(format: "subsystem == %@", logSubsystem)
             let entries = try store.getEntries(at: position, matching: predicate)
             
-            var logContent = "Teleport Log Export\n"
+            var logContent = "Unimacs Log Export\n"
             logContent += "Exported: \(Date())\n"
             logContent += "Duration: Last \(Int(duration / 60)) minutes\n"
             logContent += "App Version: \(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown")\n"
@@ -351,11 +351,11 @@ func networkDebugLog(
         }
     }
     
-    /// Package the local rotating log files (~/Library/Logs/Teleport/) into a
+    /// Package the local rotating log files (~/Library/Logs/Unimacs/) into a
     /// single zip archive in the temporary directory.
     /// - Returns: URL to the zip archive, or nil if no logs exist / archiving failed.
     @objc func exportLogArchive() -> URL? {
-        let logDir = TPFileLogger.shared.logDirectoryURL
+        let logDir = FileLogger.shared.logDirectoryURL
 
         // Make sure the directory exists and actually contains log files.
         let contents = (try? FileManager.default.contentsOfDirectory(
@@ -370,7 +370,7 @@ func networkDebugLog(
 
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyyMMdd_HHmmss"
-        let archiveName = "teleport_logs_\(dateFormatter.string(from: Date())).zip"
+        let archiveName = "unimacs_logs_\(dateFormatter.string(from: Date())).zip"
         let destinationURL = FileManager.default.temporaryDirectory.appendingPathComponent(archiveName)
         try? FileManager.default.removeItem(at: destinationURL)
 

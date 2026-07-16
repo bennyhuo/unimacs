@@ -71,7 +71,7 @@ class PasteboardMonitor: NSObject {
     private var isAppActive = false
     
     // Performance optimization
-    private let monitoringQueue = DispatchQueue(label: "com.teleport.pasteboard.monitor", qos: .utility)
+    private let monitoringQueue = DispatchQueue(label: "com.unimacs.pasteboard.monitor", qos: .utility)
     private var isActivelyMonitoring = false
     private var adaptiveInterval: TimeInterval = 0.5
     private var aggressiveMonitoring = false
@@ -430,7 +430,7 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
 		PasteboardMonitor.shared.setAggressiveMonitoring(true)
 	}
 
-	func clientDidStartControl(using connection: NetworkConnection, remoteHost: TPRemoteHost) {
+	func clientDidStartControl(using connection: NetworkConnection, remoteHost: RemoteHost) {
 		mode = .controllingRemote
 		if isSwitchingControl {
 			isSwitchingControl = false
@@ -589,19 +589,19 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
             debugLog("Sending file pasteboard: \(filePaths.count) files", module: .clipboard)
 			let filePasteTransfer = TPOutgoingPasteboardFileTransfer.shared() as! TPOutgoingPasteboardFileTransfer
 			filePasteTransfer.setFilePaths(filePaths)
-			TPTransfersManager.shared.beginTransfer(filePasteTransfer, using: connection)
+			TransfersManager.shared.beginTransfer(filePasteTransfer, using: connection)
 		} else {
             debugLog("Sending general pasteboard", module: .clipboard)
-			let generalPasteboardTransfer = TPOutgoingPasteboardTransfer.shared()
-			TPTransfersManager.shared.beginTransfer(generalPasteboardTransfer, using: connection)
+			let generalPasteboardTransfer = OutgoingPasteboardTransfer.shared()
+			TransfersManager.shared.beginTransfer(generalPasteboardTransfer, using: connection)
 		}
 
 		// Only sync find pasteboard if it has content
 		let findPasteboard = NSPasteboard(name: .find)
 		if let findString = findPasteboard.string(forType: .string), !findString.isEmpty {
-			let findPasteboardTransfer = TPOutgoingPasteboardTransfer.shared()
+			let findPasteboardTransfer = OutgoingPasteboardTransfer.shared()
 			findPasteboardTransfer.setPasteboardName(NSPasteboard.Name.find.rawValue)
-			TPTransfersManager.shared.beginTransfer(findPasteboardTransfer, using: connection)
+			TransfersManager.shared.beginTransfer(findPasteboardTransfer, using: connection)
 		}
 	}
     

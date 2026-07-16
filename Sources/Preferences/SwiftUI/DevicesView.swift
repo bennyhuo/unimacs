@@ -1,7 +1,5 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
-//
-//  Device management interface similar to macOS Bluetooth settings.
 
 import SwiftUI
 
@@ -23,7 +21,7 @@ struct DevicesView: View {
                         .font(.title2)
                         .fontWeight(.semibold)
                     
-                    Text("Manage paired devices and discover nearby Macs running teleport.")
+                    Text("Manage paired devices and discover nearby Macs running Unimacs.")
                         .font(.callout)
                         .foregroundColor(.secondary)
                 }
@@ -75,7 +73,7 @@ struct DevicesView: View {
                         EmptyDevicesPlaceholder(
                             icon: "magnifyingglass",
                             title: "No Nearby Devices",
-                            message: "Looking for other Macs running teleport on the same network."
+                            message: "Looking for other Macs running Unimacs on the same network."
                         )
                     } else {
                         ForEach(viewModel.nearbyDevices) { device in
@@ -625,7 +623,7 @@ struct LocalDeviceDetailView: View {
                     }
                     
                     // Show MAC address if available
-                    let macAddresses = TPLocalHost.shared.macAddresses.map { $0.description }
+                    let macAddresses = LocalHost.shared.macAddresses.map { $0.description }
                     if !macAddresses.isEmpty {
                         DetailSection(title: "Hardware") {
                             MacAddressRow(addresses: macAddresses)

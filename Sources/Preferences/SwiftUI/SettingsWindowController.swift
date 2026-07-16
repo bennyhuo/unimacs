@@ -1,7 +1,5 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
-//
-//  Window controller for the SwiftUI settings interface.
 
 import SwiftUI
 import AppKit
@@ -39,10 +37,10 @@ class SettingsWindowController: NSWindowController {
 	private func setupWindow() {
 		guard let window = window else { return }
 
-		window.title = "teleport"
+		window.title = "Unimacs"
 		window.minSize = NSSize(width: 750, height: 500)
 		window.center()
-		window.setFrameAutosaveName("TeleportSettingsWindow")
+		window.setFrameAutosaveName("UnimacsSettingsWindow")
 
 		window.toolbarStyle = .unified
 		window.titlebarAppearsTransparent = false

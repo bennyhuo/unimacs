@@ -58,7 +58,7 @@ extension NSWorkspace {
             interfaceNumber += 1
         }
         
-		let ipAddress = TPNetworkConfigurationWatcher.shared.selectedLocalIpAddress
+		let ipAddress = NetworkConfigurationWatcher.shared.selectedLocalIpAddress
         if let id = identifier {
             return "\(id)_\(ipAddress)"
         }

@@ -1,8 +1,5 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
-//
-//  Modern SwiftUI layout view for arranging connected displays.
-//  Style aligned with macOS System Settings display arrangement.
 
 import SwiftUI
 
@@ -50,7 +47,7 @@ struct ModernLayoutView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Accessibility Permission Required")
                             .font(.headline)
-                        Text("Teleport requires Accessibility permission to control mouse and keyboard. Please authorize it in System Settings.")
+                        Text("Unimacs requires Accessibility permission to control mouse and keyboard. Please authorize it in System Settings.")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
@@ -264,11 +261,11 @@ final class LayoutViewModel: ObservableObject {
     func startObserving() {
         warningLog("[LayoutSyncUI] startObserving called", module: .control)
         hostObserver = NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("TPHostDidUpdateNotification"),
+            forName: NSNotification.Name("HostDeviceDidUpdateNotification"),
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            warningLog("[LayoutSyncUI] Received TPHostDidUpdateNotification", module: .control)
+            warningLog("[LayoutSyncUI] Received HostDeviceDidUpdateNotification", module: .control)
             self?.loadLayouts()
         }
         
@@ -314,7 +311,7 @@ final class LayoutViewModel: ObservableObject {
         warningLog("[LayoutSyncUI] loadLayouts called", module: .control)
         isAccessibilityTrusted = AccessibilityManager.isTrusted
         // Load local host
-        let localHost = TPLocalHost.shared
+        let localHost = LocalHost.shared
         localHostLayout = HostLayout(from: localHost)
         
         // Load connected remote hosts
@@ -382,15 +379,15 @@ final class LayoutViewModel: ObservableObject {
         allScreens = screens
     }
     
-    private func getConnectedHosts() -> [TPRemoteHost] {
+    private func getConnectedHosts() -> [RemoteHost] {
         // Get all hosts that are in controlled state (being actively controlled)
-        let controlledHosts = TPHostsManager.shared.hosts(with: .controlled) as? [TPRemoteHost] ?? []
+        let controlledHosts = HostDevicesManager.shared.hosts(with: .controlled) as? [RemoteHost] ?? []
         
         // Also get all paired online hosts - they should be shown in layout
         // because they are available for control
-        let peeredOnlineHosts = TPHostsManager.shared.hosts(with: .peeredOnline) as? [TPRemoteHost] ?? []
+        let peeredOnlineHosts = HostDevicesManager.shared.hosts(with: .peeredOnline) as? [RemoteHost] ?? []
         
-        var result: [TPRemoteHost] = []
+        var result: [RemoteHost] = []
         var seenIds: Set<String> = []
         
         // Add controlled hosts first (higher priority)
@@ -492,7 +489,7 @@ final class LayoutViewModel: ObservableObject {
         let movingRect = CGRect(origin: hostLayout.position, size: hostLayout.bounds.size)
         guard movingRect != .zero else { return }
 
-        // Glue to the nearest edge (no threshold). This matches TPRemoteHost.adjustedHostDesktopRect.
+        // Glue to the nearest edge (no threshold). This matches RemoteHost.adjustedHostDesktopRect.
         let result = TPGluedRect(localBounds, movingRect, excluding: [])
         hostLayout.position = result.rect.origin
 
@@ -502,15 +499,15 @@ final class LayoutViewModel: ObservableObject {
     }
     
     private func saveHostPosition(_ layout: HostLayout) {
-        guard let host = TPHostsManager.shared.host(withIdentifier: layout.id) else { return }
+        guard let host = HostDevicesManager.shared.host(withIdentifier: layout.id) else { return }
         // Save the position as desktopOrigin
         host.desktopOrigin = NSPoint(x: layout.position.x, y: layout.position.y)
-        TPHostsManager.shared.saveHosts()
+        HostDevicesManager.shared.saveHosts()
         
         // Broadcast the new layout with an incremented version number
-        let newVersion = TPHostsManager.shared.incrementLayoutVersion()
-        if let desktop = TPHostsManager.shared.currentUnifiedDesktop(version: newVersion) {
-            TPHostsManager.shared.broadcastUnifiedDesktop(desktop)
+        let newVersion = HostDevicesManager.shared.incrementLayoutVersion()
+        if let desktop = HostDevicesManager.shared.currentUnifiedDesktop(version: newVersion) {
+            HostDevicesManager.shared.broadcastUnifiedDesktop(desktop)
         }
     }
 }
@@ -525,7 +522,7 @@ struct HostLayout: Identifiable {
     let bounds: CGRect  // Bounding rect of all screens in host's local coordinate space
     var position: CGPoint  // Position of bounds.origin in global coordinates
     
-    init(from host: TPHost) {
+    init(from host: HostDevice) {
         self.id = host.identifier
         self.name = host.computerName
         self.address = host.address
@@ -545,7 +542,7 @@ struct HostLayout: Identifiable {
         self.bounds = unionRect.isNull ? CGRect(x: 0, y: 0, width: 1920, height: 1080) : unionRect
         
         // Get position from remote host
-        if let remoteHost = host as? TPRemoteHost {
+        if let remoteHost = host as? RemoteHost {
             // Use adjustedHostDesktopRect which handles gluing/snapping to local desktop
             let adjustedRect = remoteHost.adjustedHostDesktopRect
             if adjustedRect != .zero {

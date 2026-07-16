@@ -120,7 +120,7 @@ final class TPHotBorder: NSObject {
 	}
 
 	func delayedActivate() {
-		let inhibitionPeriod = TPPreferencesManager.shared().float(forPref: Settings.inhibitionPeriodKey)
+		let inhibitionPeriod = PreferencesManager.shared().float(forPref: Settings.inhibitionPeriodKey)
 		if inhibitionPeriod > 0.0 {
 			_state = .activatingState
 			Timer.scheduledTimer(timeInterval: TimeInterval(inhibitionPeriod), target: self, selector: #selector(activate), userInfo: nil, repeats: false)
@@ -219,7 +219,7 @@ final class TPHotBorder: NSObject {
 	/// takes effect the next time triggers are rebuilt (which happens on host /
 	/// connection changes), without leaking windows.
 	private func syncOverlay() {
-		let wantsVisual = TPPreferencesManager.shared().bool(forPref: Settings.visibleBordersKey)
+		let wantsVisual = PreferencesManager.shared().bool(forPref: Settings.visibleBordersKey)
 		if wantsVisual {
 			if let overlay {
 				overlay.update(frame: frame, side: _side)
@@ -271,7 +271,7 @@ enum HotBorderVisualStyle: Int32, CaseIterable, Identifiable {
 	}
 
 	static var current: HotBorderVisualStyle {
-		HotBorderVisualStyle(rawValue: TPPreferencesManager.shared().int(forPref: Settings.hotBorderStyleKey)) ?? .glow
+		HotBorderVisualStyle(rawValue: PreferencesManager.shared().int(forPref: Settings.hotBorderStyleKey)) ?? .glow
 	}
 }
 

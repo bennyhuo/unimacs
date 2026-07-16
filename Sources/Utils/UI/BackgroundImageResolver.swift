@@ -93,7 +93,7 @@ class BackgroundImageResolver : NSObject {
         }
     }
 	
-	static func desktopImageUrl(for screen: TPScreen) -> URL? {
+	static func desktopImageUrl(for screen: Screen) -> URL? {
 		if let screen = screen.toNSScreen() {
 			if let imageUrl = NSWorkspace.shared.desktopImageURL(for: screen) {
 				if FileManager.default.fileExists(atPath: imageUrl.absoluteString) {
@@ -104,7 +104,7 @@ class BackgroundImageResolver : NSObject {
 		return nil
 	}
 
-    static func desktopImage(for screen: TPScreen) -> NSImage {
+    static func desktopImage(for screen: Screen) -> NSImage {
         if let imageUrl = desktopImageUrl(for: screen) {
             do {
                 let imageData = try Data(contentsOf: imageUrl)

@@ -11,7 +11,7 @@ private let MAX_STRING = 20
 
 enum CGEventSerializer {
     
-    static func serialize(_ e: Any, mode: TPSerializationMode) -> Data? {
+    static func serialize(_ e: Any, mode: SerializationMode) -> Data? {
         switch mode {
         case .direct:
             // CGEvent is a CFType, use type ID comparison
@@ -91,7 +91,7 @@ enum CGEventSerializer {
     
     static func deserialize(
         _ eventData: Data,
-        mode: TPSerializationMode,
+        mode: SerializationMode,
         eventSource: CGEventSource?,
         currentMouseLocation: CGPoint
     ) -> CGEvent? {

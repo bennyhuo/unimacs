@@ -5,7 +5,7 @@
 
 import Foundation
 
-let RV_SERVICE = "_teleport._tcp"
+let RV_SERVICE = "_unimacs._tcp"
 
 class Publisher: NSObject, NetServiceDelegate {
 	@objc nonisolated(unsafe) static let shared: Publisher = Publisher()
@@ -15,7 +15,7 @@ class Publisher: NSObject, NetServiceDelegate {
 	
 	override init() {
 		super.init()
-		TPLocalHost.shared.observe(observer: self, selector: #selector(updateTXTRecord))
+		LocalHost.shared.observe(observer: self, selector: #selector(updateTXTRecord))
 	}
 	
 	@objc func start(with port: Int32) {
@@ -26,7 +26,7 @@ class Publisher: NSObject, NetServiceDelegate {
 		stop()
 		
 		debugLog("Publisher start on port: \(port)", module: .network)
-		let service = NetService(domain: "", type: RV_SERVICE, name: TPLocalHost.shared.bonjourName, port: port)
+		let service = NetService(domain: "", type: RV_SERVICE, name: LocalHost.shared.bonjourName, port: port)
 		service.delegate = self
 		service.publish()
 
