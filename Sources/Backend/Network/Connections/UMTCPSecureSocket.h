@@ -27,3 +27,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype) initWithDelegate:(id<UMTCPSecureSocketDelegate>)delegate;
 NS_ASSUME_NONNULL_END
 @end
+
+NS_ASSUME_NONNULL_BEGIN
+@interface UMObjCExceptionCatcher : NSObject
++ (BOOL)catchException:(void (NS_NOESCAPE ^)(void))block error:(NSError **)error NS_SWIFT_NAME(catchException(_:));
+@end
+NS_ASSUME_NONNULL_END
+

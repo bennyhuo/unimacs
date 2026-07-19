@@ -4,7 +4,14 @@
 import SwiftUI
 import Combine
 import SecurityInterface
+import CryptoKit
 import Darwin
+
+enum BlackHoleStatus {
+    case available
+    case installedButNeedReboot
+    case missing
+}
 
 @MainActor
 final class SettingsViewModel: ObservableObject {
@@ -127,6 +134,33 @@ final class SettingsViewModel: ObservableObject {
     @Published var hotBorderStyle: HotBorderVisualStyle {
         didSet { prefs.setValue(hotBorderStyle.rawValue, forKey: Settings.hotBorderStyleKey) }
     }
+    
+    // MARK: - Audio & Mic Sync Settings
+    
+
+    @Published var audioUseCompression: Bool {
+        didSet {
+            prefs.setValue(NSNumber(value: audioUseCompression), forKey: "TPAudioUseCompression")
+            AudioController.shared.streamManager.useCompression = audioUseCompression
+        }
+    }
+    
+    @Published var selectedVirtualDeviceName: String {
+        didSet { AudioController.shared.selectedVirtualDeviceName = selectedVirtualDeviceName }
+    }
+    
+    @Published var muteLocalSpeakers: Bool {
+        didSet { AudioController.shared.muteLocalSpeakers = muteLocalSpeakers }
+    }
+    
+    @Published var enableAdaptiveSpeed: Bool {
+        didSet { AudioController.shared.enableAdaptiveSpeed = enableAdaptiveSpeed }
+    }
+    
+    @Published var availableInputDevices: [String] = []
+    @Published var isBlackHoleInstalled: Bool = false
+    @Published var isInstallingBlackHole: Bool = false
+    @Published var blackHoleStatus: BlackHoleStatus = .missing
     
     // MARK: - Log Module Settings
     
@@ -257,9 +291,11 @@ final class SettingsViewModel: ObservableObject {
         calculateCacheSize()
         // Check periodically to start monitoring if directory is created later
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            if self.directoryMonitor == nil {
-                self.calculateCacheSize()
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                if self.directoryMonitor == nil {
+                    self.calculateCacheSize()
+                }
             }
         }
     }
@@ -339,6 +375,34 @@ final class SettingsViewModel: ObservableObject {
         let savedThreshold = prefs.int(forPref: Settings.transferProgressThresholdKey)
         transferProgressThreshold = savedThreshold > 0 ? Int(savedThreshold) : Settings.transferProgressThresholdDefault
         
+        // Load audio synchronization settings
+        selectedVirtualDeviceName = AudioController.shared.selectedVirtualDeviceName
+        muteLocalSpeakers = AudioController.shared.muteLocalSpeakers
+        enableAdaptiveSpeed = AudioController.shared.enableAdaptiveSpeed
+        
+        if let compressPref = prefs.value(forKey: "TPAudioUseCompression") as? NSNumber {
+            audioUseCompression = compressPref.boolValue
+        } else {
+            audioUseCompression = false
+        }
+        
+        availableInputDevices = AudioController.shared.getInputDevices()
+        let hasDevice = availableInputDevices.contains { $0.lowercased().contains("blackhole") }
+        if hasDevice {
+            blackHoleStatus = .available
+            isBlackHoleInstalled = true
+        } else {
+            let driverPath = "/Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver"
+            var isDir: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: driverPath, isDirectory: &isDir)
+            if exists && isDir.boolValue {
+                blackHoleStatus = .installedButNeedReboot
+            } else {
+                blackHoleStatus = .missing
+            }
+            isBlackHoleInstalled = false
+        }
+        
         // Load log module states (must be after all stored properties are initialized)
         for module in LogModule.allCases {
             logModuleStates[module] = module.isEnabled
@@ -352,6 +416,123 @@ final class SettingsViewModel: ObservableObject {
     
     func resetConnections() {
         MainController.shared().resetAllConnections()
+    }
+    
+    func checkBlackHoleStatus() {
+        availableInputDevices = AudioController.shared.getInputDevices()
+        let hasDevice = availableInputDevices.contains { $0.lowercased().contains("blackhole") }
+        if hasDevice {
+            blackHoleStatus = .available
+            isBlackHoleInstalled = true
+        } else {
+            let driverPath = "/Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver"
+            var isDir: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: driverPath, isDirectory: &isDir)
+            if exists && isDir.boolValue {
+                blackHoleStatus = .installedButNeedReboot
+            } else {
+                blackHoleStatus = .missing
+            }
+            isBlackHoleInstalled = false
+        }
+    }
+    
+    private nonisolated static let blackHolePkgURL = URL(string: "https://existential.audio/downloads/BlackHole2ch-0.7.1.pkg")!
+    private nonisolated static let blackHoleExpectedSHA256 = "57b540f27a3e29c37e310e01bee0fdfab76733087e47f997ef9dccf851400dcf"
+    private nonisolated static let blackHoleExpectedSigner = "Developer ID Installer: Existential Audio Inc. (Q5C99V536K)"
+
+    private nonisolated static func verifyBlackHolePackage(at pkgURL: URL) throws {
+        let data = try Data(contentsOf: pkgURL, options: .mappedIfSafe)
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard digest == blackHoleExpectedSHA256 else {
+            throw NSError(
+                domain: "com.bennyhuo.unimacs.blackhole",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "SHA-256 mismatch (expected \(blackHoleExpectedSHA256), got \(digest))"]
+            )
+        }
+
+        let checkProcess = Process()
+        checkProcess.executableURL = URL(fileURLWithPath: "/usr/sbin/pkgutil")
+        checkProcess.arguments = ["--check-signature", pkgURL.path]
+        let outPipe = Pipe()
+        checkProcess.standardOutput = outPipe
+        checkProcess.standardError = outPipe
+        try checkProcess.run()
+        checkProcess.waitUntilExit()
+
+        let sigOutput = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        guard checkProcess.terminationStatus == 0,
+              sigOutput.contains("Status: signed by a developer certificate issued by Apple for distribution"),
+              sigOutput.contains(blackHoleExpectedSigner) else {
+            throw NSError(
+                domain: "com.bennyhuo.unimacs.blackhole",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Installer signature check failed: \(sigOutput)"]
+            )
+        }
+    }
+
+    func installBlackHole() {
+        guard !isInstallingBlackHole else { return }
+        isInstallingBlackHole = true
+        
+        URLSession.shared.downloadTask(with: Self.blackHolePkgURL) { [weak self] localUrl, _, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                NSLog("SettingsViewModel: Download failed: \(error)")
+                DispatchQueue.main.async {
+                    self.isInstallingBlackHole = false
+                }
+                return
+            }
+            
+            guard let localUrl = localUrl else {
+                NSLog("SettingsViewModel: Download failed, no file")
+                DispatchQueue.main.async {
+                    self.isInstallingBlackHole = false
+                }
+                return
+            }
+            
+            let stagingDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("unimacs-blackhole-\(UUID().uuidString)", isDirectory: true)
+            let tempDest = stagingDir.appendingPathComponent("BlackHole2ch-0.7.1.pkg")
+            defer {
+                try? FileManager.default.removeItem(at: stagingDir)
+            }
+            
+            do {
+                try FileManager.default.createDirectory(
+                    at: stagingDir,
+                    withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o700]
+                )
+                try FileManager.default.moveItem(at: localUrl, to: tempDest)
+                try Self.verifyBlackHolePackage(at: tempDest)
+                
+                // Execute installation with admin rights (triggers native macOS dialog)
+                let escapedPkgPath = "'" + tempDest.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+                let appleScript = "do shell script \"/usr/sbin/installer -pkg \(escapedPkgPath) -target /\" with administrator privileges"
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                process.arguments = ["-e", appleScript]
+                
+                try process.run()
+                process.waitUntilExit()
+                
+                DispatchQueue.main.async {
+                    self.isInstallingBlackHole = false
+                    self.checkBlackHoleStatus()
+                }
+            } catch {
+                NSLog("SettingsViewModel: Verifying downloaded PKG or executing installation failed: \(error)")
+                DispatchQueue.main.async {
+                    self.isInstallingBlackHole = false
+                }
+            }
+        }.resume()
     }
     
     private func loadIPAddresses() {

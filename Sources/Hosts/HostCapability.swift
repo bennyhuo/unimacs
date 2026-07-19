@@ -5,7 +5,7 @@
 
 import Foundation
 
-let MAX_CAPABILITIES = 4
+let MAX_CAPABILITIES = 5
 
 struct HostCapability: OptionSet {
     let rawValue: UInt
@@ -15,4 +15,5 @@ struct HostCapability: OptionSet {
     static let eventTaps        = HostCapability(rawValue: 1 << 1)
     static let directEventTaps  = HostCapability(rawValue: 1 << 2)
     static let portable         = HostCapability(rawValue: 1 << 3)
+    static let audioSync        = HostCapability(rawValue: 1 << 4)
 }

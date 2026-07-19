@@ -35,5 +35,9 @@
 	<string>1</string>
 	<key>TPRevision</key>
 	<string>DEFINED_BY_GIT</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Microphone access is required to stream local audio input to the remote Mac.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Screen recording permission is required to capture and stream system audio to the remote Mac. Only system audio is captured; your screen content will not be recorded.</string>
 </dict>
 </plist>

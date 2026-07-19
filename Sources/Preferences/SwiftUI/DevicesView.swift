@@ -46,6 +46,7 @@ struct DevicesView: View {
                         ForEach(viewModel.pairedDevices) { device in
                             PairedDeviceRow(
                                 device: device,
+                                viewModel: viewModel,
                                 onConnect: { viewModel.connect(to: device) },
                                 onDisconnect: { viewModel.disconnect(from: device) },
                                 onUnpair: { viewModel.unpair(device: device) },
@@ -172,6 +173,7 @@ struct DevicesSection<Content: View, Trailing: View>: View {
 @available(macOS 13.0, *)
 struct PairedDeviceRow: View {
     let device: DeviceInfo
+    let viewModel: DevicesViewModel
     let onConnect: () -> Void
     let onDisconnect: () -> Void
     let onUnpair: () -> Void
@@ -279,6 +281,52 @@ struct PairedDeviceRow: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundColor(.accentColor)
+                }
+                
+                if device.isConnected {
+                    // Share Output Button
+                    Button {
+                        let newValue = !device.shareOutput
+                        if let host = device.remoteHost {
+                            host.shareOutput = newValue
+                            viewModel.updateAudioSharingState(for: host)
+                        }
+                    } label: {
+                        Image(systemName: device.shareOutput ? "speaker.wave.2.fill" : "speaker.wave.2")
+                            .font(.system(size: 16))
+                            .foregroundColor(!device.hasSpeakerHardware ? .secondary.opacity(0.5) : (device.shareOutput ? .accentColor : .secondary))
+                            .frame(width: 28, height: 28)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill((device.shareOutput && device.hasSpeakerHardware) ? Color.accentColor.opacity(0.15) : Color.clear)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!device.hasSpeakerHardware)
+                    .opacity(device.hasSpeakerHardware ? 1.0 : 0.4)
+                    .help(!device.hasSpeakerHardware ? "No audio output hardware available on target host" : (device.shareOutput ? "Stop Sharing Output" : "Share Output"))
+                    
+                    // Share Input Button
+                    Button {
+                        let newValue = !device.shareInput
+                        if let host = device.remoteHost {
+                            host.shareInput = newValue
+                            viewModel.updateAudioSharingState(for: host)
+                        }
+                    } label: {
+                        Image(systemName: device.shareInput ? "mic.fill" : "mic")
+                            .font(.system(size: 16))
+                            .foregroundColor(!device.hasMicHardware ? .secondary.opacity(0.5) : (device.shareInput ? .accentColor : .secondary))
+                            .frame(width: 28, height: 28)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill((device.shareInput && device.hasMicHardware) ? Color.accentColor.opacity(0.15) : Color.clear)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!device.hasMicHardware)
+                    .opacity(device.hasMicHardware ? 1.0 : 0.4)
+                    .help(!device.hasMicHardware ? "No microphone hardware available on target host" : (device.shareInput ? "Stop Sharing Input" : "Share Input"))
                 }
                 
                 // Info button

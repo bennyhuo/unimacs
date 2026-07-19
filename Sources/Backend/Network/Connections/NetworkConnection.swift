@@ -428,6 +428,15 @@ case .connectingState:
         case .transferRequest: return "TransferRequest"
         case .transferSuccess: return "TransferSuccess"
         case .transferFailure: return "TransferFailure"
+        case .layoutUpdate: return "LayoutUpdate"
+        case .unpairNotification: return "UnpairNotification"
+        case .disconnectNotification: return "DisconnectNotification"
+        case .audioSyncStartRequest: return "AudioSyncStartRequest"
+        case .audioSyncStartSuccess: return "AudioSyncStartSuccess"
+        case .audioSyncStopNotification: return "AudioSyncStopNotification"
+        case .audioMicRouteUpdate: return "AudioMicRouteUpdate"
+        case .audioOutputRouteUpdate: return "AudioOutputRouteUpdate"
+        case .audioHardwareStatusUpdate: return "AudioHardwareStatusUpdate"
         @unknown default: return "Unknown(\(msgType.rawValue))"
         }
     }

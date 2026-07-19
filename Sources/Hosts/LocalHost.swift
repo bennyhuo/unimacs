@@ -124,6 +124,8 @@ class LocalHost: HostDevice {
 				AccessibilityManager.isTrusted && !PreferencesManager.shared().bool(forPref: Settings.tigerBehaviorKey)
 			case .portable:
 				SystemInfo.isLaptop
+			case .audioSync:
+				true
 			default:
 				false
 			}

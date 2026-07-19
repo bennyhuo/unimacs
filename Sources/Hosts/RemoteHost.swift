@@ -61,6 +61,50 @@ final class RemoteHost: HostDevice, NSCopying {
 	return hasValidMacAddress && hostState == .peeredOffline
 	}
 	
+	var shareOutput: Bool {
+		get {
+			return (options.value(forKey: "shareOutput") as? NSNumber)?.boolValue ?? false
+		}
+		set {
+			options.setValue(NSNumber(value: newValue), forKey: "shareOutput")
+			self.notifyChange()
+		}
+	}
+
+	var shareInput: Bool {
+		get {
+			return (options.value(forKey: "shareInput") as? NSNumber)?.boolValue ?? false
+		}
+		set {
+			options.setValue(NSNumber(value: newValue), forKey: "shareInput")
+			self.notifyChange()
+		}
+	}
+	
+	var hasSpeakerHardware: Bool {
+		get {
+			return (options.value(forKey: "hasSpeakerHardware") as? NSNumber)?.boolValue ?? true
+		}
+		set {
+			if hasSpeakerHardware != newValue {
+				options.setValue(NSNumber(value: newValue), forKey: "hasSpeakerHardware")
+				self.notifyChange()
+			}
+		}
+	}
+
+	var hasMicHardware: Bool {
+		get {
+			return (options.value(forKey: "hasMicHardware") as? NSNumber)?.boolValue ?? true
+		}
+		set {
+			if hasMicHardware != newValue {
+				options.setValue(NSNumber(value: newValue), forKey: "hasMicHardware")
+				self.notifyChange()
+			}
+		}
+	}
+	
     // MARK: - Initializers
 
     init(identifier: String, address: String, port: Int) {

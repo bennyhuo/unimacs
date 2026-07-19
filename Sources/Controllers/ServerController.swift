@@ -393,6 +393,73 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
                 return true
             }
             return false
+        case .audioSyncStartRequest:
+            let info = message.infoDict
+            if let peerPortVal = info["port"] as? Int {
+                let peerPort = UInt16(peerPortVal)
+                let clientShareOutput = (info["shareOutput"] as? Bool) ?? false
+                let clientShareInput = (info["shareInput"] as? Bool) ?? false
+                do {
+                    try AudioController.shared.streamManager.startSysListener { localPort in
+                        DispatchQueue.main.async {
+                            let rawIp = connection.connectedHost?.address ?? "127.0.0.1"
+                            var ipAddress = rawIp
+                            if rawIp.lowercased().hasPrefix("fe80"), let interface = connection.networkInterfaceName {
+                                ipAddress = "\(rawIp)%\(interface)"
+                            }
+                            
+                            // Start sync as HOST role
+                            AudioController.shared.startAudioSync(
+                                peerHostId: host.identifier,
+                                peerIp: ipAddress,
+                                localUdpPort: localPort,
+                                peerUdpPort: peerPort,
+                                isHostRole: true,
+                                shareOutput: clientShareOutput,
+                                shareInput: clientShareInput
+                            )
+                            
+                            // Reply with success
+                            let response = Message.create(with: .audioSyncStartSuccess, andInfoDict: [
+                                "port": Int(localPort),
+                                "shareOutput": clientShareOutput,
+                                "shareInput": clientShareInput
+                            ])
+                            connection.sendMessage(response)
+                            NSLog("ServerController: Started audio sync, sent audioSyncStartSuccess. Local: \(localPort), Remote: \(peerPort)")
+                        }
+                    }
+                } catch {
+                    NSLog("ServerController: Failed to start audio listener: \(error)")
+                }
+            }
+            return true
+        case .audioMicRouteUpdate:
+            let info = message.infoDict
+            if let targetStr = info["target"] as? String, let target = AudioMicTarget(rawValue: targetStr) {
+                AudioController.shared.setMicrophoneTarget(target, notifyPeer: false)
+            }
+            return true
+        case .audioOutputRouteUpdate:
+            let info = message.infoDict
+            if let enabled = info["enabled"] as? Bool {
+                AudioController.shared.setHostSystemCaptureEnabled(enabled)
+            }
+            return true
+        case .audioSyncStopNotification:
+            AudioController.shared.stopAudioSync()
+            return true
+        case .audioHardwareStatusUpdate:
+            let info = message.infoDict
+            let hasMic = info["hasMic"] as? Bool ?? true
+            let hasSpeaker = info["hasSpeaker"] as? Bool ?? true
+            if let host = connection.connectedHost as? RemoteHost {
+                DispatchQueue.main.async {
+                    host.hasMicHardware = hasMic
+                    host.hasSpeakerHardware = hasSpeaker
+                }
+            }
+            return true
         default:
             switch message.msgType {
             case .transferRequest, .transferSuccess, .transferFailure:

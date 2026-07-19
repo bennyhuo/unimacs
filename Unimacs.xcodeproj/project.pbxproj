@@ -62,6 +62,10 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				App/UnimacsApp.swift,
+				Backend/Audio/AudioController.swift,
+				Backend/Audio/AudioStreamManager.swift,
+				Backend/Audio/RingBuffer.swift,
+				Backend/Audio/ScreenCaptureKitAudioEngine.swift,
 				Backend/EventTaps/CGEventSerializer.swift,
 				Backend/EventTaps/CursorVisibilityController.swift,
 				Backend/EventTaps/EmergencyStopDetector.swift,

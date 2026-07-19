@@ -450,6 +450,118 @@ struct SettingsTabView: View {
                     .padding(.vertical, 4)
                 }
                 
+                // Audio & Mic Sync Section
+                SettingsSection(title: "Audio & Mic Sync") {
+                    SettingsRow(
+                        title: "Audio Compression",
+                        description: "Compress audio samples to save local network bandwidth. Raw PCM has the lowest latency."
+                    ) {
+                        Toggle("", isOn: $viewModel.audioUseCompression)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+
+                    Divider()
+
+                    SettingsRow(
+                        title: "Mute Local Speakers",
+                        description: "Automatically mute local speakers when sharing system audio output."
+                    ) {
+                        Toggle("", isOn: $viewModel.muteLocalSpeakers)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+
+                    Divider()
+
+                    SettingsRow(
+                        title: "Adaptive Audio Speed",
+                        description: "Automatically adjust playback speed to catch up and prevent packet loss during network lag."
+                    ) {
+                        Toggle("", isOn: $viewModel.enableAdaptiveSpeed)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+
+                    Divider()
+
+                    SettingsRow(
+                        title: "Virtual Mic Status",
+                        description: "Microphone routing uses BlackHole 2ch by Existential Audio (GPLv3) to loop back audio on the remote Mac."
+                    ) {
+                        HStack(spacing: 6) {
+                            switch viewModel.blackHoleStatus {
+                            case .available:
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                Text("BlackHole 2ch Available")
+                                    .fontWeight(.medium)
+                            case .installedButNeedReboot:
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.orange)
+                                Text("Installed (Reboot Required)")
+                                    .fontWeight(.medium)
+                            case .missing:
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.red)
+                                Text("BlackHole 2ch Missing")
+                                    .fontWeight(.medium)
+                            }
+                        }
+                    }
+
+                    if viewModel.blackHoleStatus != .available {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.orange)
+                                Text(viewModel.blackHoleStatus == .installedButNeedReboot ? "Reboot Required" : "Virtual Audio Device Not Detected")
+                                    .fontWeight(.medium)
+                            }
+                            
+                            if viewModel.blackHoleStatus == .installedButNeedReboot {
+                                Text("BlackHole has been successfully installed, but macOS requires a system restart before CoreAudio can load it. Please reboot your Mac.")
+                                    .font(.callout)
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Text("Please install [BlackHole 2ch](https://existential.audio/blackhole/) (by Existential Audio, GPLv3) to enable microphone routing. Install the signed official package below or run: brew install blackhole-2ch")
+                                    .font(.callout)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            HStack(spacing: 12) {
+                                if viewModel.blackHoleStatus == .missing {
+                                    Button(action: {
+                                        viewModel.installBlackHole()
+                                    }) {
+                                        if viewModel.isInstallingBlackHole {
+                                            HStack(spacing: 6) {
+                                                ProgressView()
+                                                    .controlSize(.small)
+                                                Text("Installing...")
+                                            }
+                                        } else {
+                                            Text("Install BlackHole")
+                                        }
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(viewModel.isInstallingBlackHole)
+                                }
+                                
+                                Button(action: {
+                                    viewModel.checkBlackHoleStatus()
+                                }) {
+                                    Text("Re-check Status")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(viewModel.isInstallingBlackHole)
+                            }
+                            .padding(.top, 4)
+                        }
+                        .padding(.vertical, 8)
+                    }
+                }
+                
                 // Debug Section
                 SettingsSection(title: "Advanced") {
                     SettingsRow(
@@ -972,7 +1084,7 @@ struct AboutTabView: View {
                 
                 // Credits & Copyright
                 VStack(spacing: 6) {
-                    Text("Forked from [johndbritton/teleport](https://github.com/johndbritton/teleport) and originally created as [Teleport](https://github.com/abyssoft/teleport) by Julien Robert (Abyssoft).")
+                    Text("Forked from [johndbritton/teleport](https://github.com/johndbritton/teleport) and originally created as [Teleport](https://github.com/abyssoft/teleport) by Julien Robert (Abyssoft). Virtual microphone routing powered by [BlackHole](https://existential.audio/blackhole/) (Existential Audio, GPLv3).")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -1101,7 +1213,7 @@ struct AboutView: View {
             
             // Credits & Copyright
             VStack(spacing: 6) {
-                Text("Forked from [johndbritton/teleport](https://github.com/johndbritton/teleport) and originally created as [Teleport](https://github.com/abyssoft/teleport) by Julien Robert (Abyssoft).")
+                Text("Forked from [johndbritton/teleport](https://github.com/johndbritton/teleport) and originally created as [Teleport](https://github.com/abyssoft/teleport) by Julien Robert (Abyssoft). Virtual microphone routing powered by [BlackHole](https://existential.audio/blackhole/) (Existential Audio, GPLv3).")
                     .font(.caption2)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)

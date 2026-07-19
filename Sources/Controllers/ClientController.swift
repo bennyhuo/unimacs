@@ -559,6 +559,26 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
         }
 		
 		self._updateTriggers(for: host, showVisualHint: true)
+        
+        // Start Audio Sync Negotiation
+        if (host.shareOutput || host.shareInput) && host.hasCapability(.audioSync) {
+            do {
+                try AudioController.shared.streamManager.startMicListener { localUdpPort in
+                    DispatchQueue.main.async {
+                        let infoDict: [AnyHashable: Any] = [
+                            "port": Int(localUdpPort),
+                            "shareOutput": host.shareOutput,
+                            "shareInput": host.shareInput
+                        ]
+                        let message = Message.create(with: .audioSyncStartRequest, andInfoDict: infoDict)
+                        connection.sendMessage(message)
+                        NSLog("ClientController: Sent audioSyncStartRequest on port \(localUdpPort) with shareOutput=\(host.shareOutput), shareInput=\(host.shareInput)")
+                    }
+                }
+            } catch {
+                NSLog("ClientController: Failed to start audio listener: \(error)")
+            }
+        }
     }
     
     @MainActor
@@ -573,6 +593,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
         }
         
         cancelPendingControlRequest()
+        AudioController.shared.stopAudioSync()
     }
     
     @MainActor
@@ -633,14 +654,103 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
             }
             self.requestedStopControl(withInfoDict: message.infoDict)
             return true
+        case .audioSyncStartSuccess:
+            let info = message.infoDict
+            if let peerPortVal = info["port"] as? Int {
+                let peerPort = UInt16(peerPortVal)
+                let localPort = AudioController.shared.streamManager.sysLocalPort
+                let rawIp = connection.connectedHost?.address ?? "127.0.0.1"
+                var ipAddress = rawIp
+                if rawIp.lowercased().hasPrefix("fe80"), let interface = connection.networkInterfaceName {
+                    ipAddress = "\(rawIp)%\(interface)"
+                }
+                
+                AudioController.shared.startAudioSync(
+                    peerHostId: host.identifier,
+                    peerIp: ipAddress,
+                    localUdpPort: localPort,
+                    peerUdpPort: peerPort,
+                    isHostRole: false,
+                    shareOutput: host.shareOutput,
+                    shareInput: host.shareInput
+                )
+                NSLog("ClientController: Audio sync fully established. Local: \(localPort), Remote: \(peerPort) on \(ipAddress)")
+            }
+            return true
+        case .audioMicRouteUpdate:
+            let info = message.infoDict
+            if let targetStr = info["target"] as? String, let target = AudioMicTarget(rawValue: targetStr) {
+                AudioController.shared.setMicrophoneTarget(target, notifyPeer: false)
+            }
+            return true
+        case .audioSyncStopNotification:
+            AudioController.shared.stopAudioSync()
+            return true
+        case .audioHardwareStatusUpdate:
+            let info = message.infoDict
+            let hasMic = info["hasMic"] as? Bool ?? true
+            let hasSpeaker = info["hasSpeaker"] as? Bool ?? true
+            if let host = connection.connectedHost as? RemoteHost {
+                DispatchQueue.main.async {
+                    let oldMic = host.hasMicHardware
+                    debugLog("ClientController: Received audioHardwareStatusUpdate from \(host.computerName): hasMic=\(hasMic) (was \(oldMic)), hasSpeaker=\(hasSpeaker), shareInput=\(host.shareInput)", module: .network)
+                    host.hasMicHardware = hasMic
+                    host.hasSpeakerHardware = hasSpeaker
+                    if (!oldMic && hasMic && host.shareInput) || (oldMic && !hasMic) {
+                        self.updateAudioSharingState(for: host)
+                    }
+                }
+            }
+            return true
         default:
             switch message.msgType {
             case .transferRequest, .transferSuccess, .transferFailure:
                 super.connection(connection, receivedMessage: message)
                 return true
             default:
-                // Leave server-side control requests and other messages to ServerController.
                 return false
+            }
+        }
+    }
+    
+    @MainActor
+    func updateAudioSharingState(for host: RemoteHost) {
+        guard let connection = DeviceConnectionManager.shared.connection(for: host) else {
+            return
+        }
+        
+        let shareOutput = host.shareOutput
+        let shareInput = host.shareInput
+        
+        if !shareOutput && !shareInput {
+            if AudioController.shared.isSyncActive {
+                let msg = Message.create(with: .audioSyncStopNotification, andInfoDict: [:])
+                _ = connection.sendMessage(msg)
+                AudioController.shared.stopAudioSync()
+                NSLog("ClientController: Stopped audio sync because both sharing options were disabled.")
+            }
+        } else {
+            if !AudioController.shared.isSyncActive {
+                do {
+                    try AudioController.shared.streamManager.startMicListener { localUdpPort in
+                        DispatchQueue.main.async {
+                            let infoDict: [AnyHashable: Any] = [
+                                "port": Int(localUdpPort),
+                                "shareOutput": shareOutput,
+                                "shareInput": shareInput
+                            ]
+                            let message = Message.create(with: .audioSyncStartRequest, andInfoDict: infoDict)
+                            connection.sendMessage(message)
+                            NSLog("ClientController: Sent audioSyncStartRequest dynamically on port \(localUdpPort)")
+                        }
+                    }
+                } catch {
+                    NSLog("ClientController: Failed to start audio listener dynamically: \(error)")
+                }
+            } else {
+                AudioController.shared.setShareOutputEnabled(shareOutput)
+                let micTarget: AudioMicTarget = shareInput ? .remote : .local
+                AudioController.shared.setMicrophoneTarget(micTarget, notifyPeer: true)
             }
         }
     }

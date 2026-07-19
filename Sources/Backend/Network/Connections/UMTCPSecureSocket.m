@@ -536,3 +536,23 @@ OSStatus _UMTCPSecureSocketWrite(SSLConnectionRef connection, const void *data, 
 	UMTCPSecureSocket * socket = (__bridge UMTCPSecureSocket*)connection;
 	return [socket _sslSendData:data length:dataLength];
 }
+
+@implementation UMObjCExceptionCatcher
++ (BOOL)catchException:(void (NS_NOESCAPE ^)(void))block error:(NSError **)error {
+    @try {
+        if (block) {
+            block();
+        }
+        return YES;
+    } @catch (NSException *exception) {
+        if (error) {
+            *error = [NSError errorWithDomain:exception.name code:-1 userInfo:@{
+                NSLocalizedDescriptionKey: exception.reason ?: @"Objective-C Exception",
+                @"NSExceptionUserInfo": exception.userInfo ?: @{}
+            }];
+        }
+        return NO;
+    }
+}
+@end
+

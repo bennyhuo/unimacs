@@ -339,6 +339,10 @@ extension DeviceInfo {
         reconnectSecondsRemaining: Int? = nil,
         isPortable: Bool = false,
         lastError: String? = nil,
+        shareOutput: Bool = false,
+        shareInput: Bool = false,
+        hasSpeakerHardware: Bool = true,
+        hasMicHardware: Bool = true,
         remoteHost: RemoteHost?
     ) {
         self.id = id
@@ -357,6 +361,10 @@ extension DeviceInfo {
         self.reconnectSecondsRemaining = reconnectSecondsRemaining
         self.isPortable = isPortable
         self.lastError = lastError
+        self.shareOutput = shareOutput
+        self.shareInput = shareInput
+        self.hasSpeakerHardware = hasSpeakerHardware
+        self.hasMicHardware = hasMicHardware
         self.remoteHost = remoteHost
     }
 }

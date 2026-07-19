@@ -44,6 +44,14 @@ enum MsgType: Int {
 
     // Manual disconnect notification (peer should not auto-reconnect)
     case disconnectNotification
+    
+    // Audio Synchronization
+    case audioSyncStartRequest
+    case audioSyncStartSuccess
+    case audioSyncStopNotification
+    case audioMicRouteUpdate
+    case audioOutputRouteUpdate
+    case audioHardwareStatusUpdate
 }
 
 public struct MouseDelta {

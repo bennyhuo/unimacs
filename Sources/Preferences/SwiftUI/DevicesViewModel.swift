@@ -23,6 +23,10 @@ struct DeviceInfo: Identifiable, Equatable {
     let macAddresses: [String]
     let isPortable: Bool
     let lastError: String?
+    let shareOutput: Bool
+    let shareInput: Bool
+    let hasSpeakerHardware: Bool
+    let hasMicHardware: Bool
     
     // Reference to the actual remote host
     weak var remoteHost: RemoteHost?
@@ -39,6 +43,10 @@ struct DeviceInfo: Identifiable, Equatable {
         self.remoteHost = host
         self.macAddresses = host.macAddresses.map { $0.description }
         self.lastError = host.lastError
+        self.shareOutput = host.shareOutput
+        self.shareInput = host.shareInput
+        self.hasSpeakerHardware = host.hasSpeakerHardware
+        self.hasMicHardware = host.hasMicHardware
         
         let manager = DeviceConnectionManager.shared
         self.linkPhase = manager.linkPhase(for: host)
@@ -140,7 +148,11 @@ struct DeviceInfo: Identifiable, Equatable {
         lhs.isConnected == rhs.isConnected &&
         lhs.isControlling == rhs.isControlling &&
         lhs.isPortable == rhs.isPortable &&
-        lhs.lastError == rhs.lastError
+        lhs.lastError == rhs.lastError &&
+        lhs.shareOutput == rhs.shareOutput &&
+        lhs.shareInput == rhs.shareInput &&
+        lhs.hasSpeakerHardware == rhs.hasSpeakerHardware &&
+        lhs.hasMicHardware == rhs.hasMicHardware
     }
 }
 
@@ -393,6 +405,11 @@ final class DevicesViewModel: ObservableObject {
     func clearError(for device: DeviceInfo) {
         guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
         host.lastError = nil
+        loadDevices()
+    }
+    
+    func updateAudioSharingState(for host: RemoteHost) {
+        ClientController.shared.updateAudioSharingState(for: host)
         loadDevices()
     }
     
