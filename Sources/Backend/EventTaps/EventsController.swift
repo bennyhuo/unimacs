@@ -31,6 +31,37 @@ private func EventTapDebugLog(_ message: String) {
 @_silgen_name("CGSCurrentEventTimestamp")
 func CGSCurrentEventTimestamp() -> CGEventTimestamp
 
+private var isTriggeringForceQuit = false
+
+private func showForceQuitDialog() {
+    guard !isTriggeringForceQuit else { return }
+    isTriggeringForceQuit = true
+    
+    NSLog("[EventsController] Triggering showForceQuitDialog via Process (osascript)")
+    
+    DispatchQueue.global(qos: .userInitiated).async {
+        let task = Process()
+        task.launchPath = "/usr/bin/osascript"
+        task.arguments = ["-e", "tell application \"System Events\" to key code 53 using {command down, option down}"]
+        
+        task.terminationHandler = { proc in
+            NSLog("[EventsController] osascript terminated with code: %d", proc.terminationStatus)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                isTriggeringForceQuit = false
+            }
+        }
+        
+        do {
+            try task.run()
+        } catch {
+            NSLog("[EventsController] Failed to launch osascript process: %@", error.localizedDescription)
+            DispatchQueue.main.async {
+                isTriggeringForceQuit = false
+            }
+        }
+    }
+}
+
 // Event type names for debugging
 private let eventTypeName: [String] = [
     "NullEvent", "LMouseDown", "LMouseUp", "RMouseDown", "RMouseUp",
@@ -49,6 +80,19 @@ private func isMouseEventType(_ eventType: CGEventType) -> Bool {
            eventType == .leftMouseDragged ||
            eventType == .rightMouseDragged ||
            eventType == .otherMouseDragged
+}
+
+private func isForceQuitShortcutEvent(_ event: CGEvent) -> Bool {
+    guard event.type == .keyDown else { return false }
+    let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+    guard keyCode == Int64(ESC_KEYCODE) else { return false }
+    
+    let flags = event.flags
+    let matches = flags.contains(.maskCommand) && flags.contains(.maskAlternate) && !flags.contains(.maskShift)
+    if matches {
+        NSLog("[EventsController] Detected Cmd+Option+Esc shortcut!")
+    }
+    return matches
 }
 
 // MARK: - EventsListener Protocol
@@ -72,6 +116,9 @@ public protocol EventsListener: NSObjectProtocol {
     
     // MARK: - Properties
     
+    /// Tag stamped onto synthetic CGEvents posted on the controlled host so local event taps can distinguish them.
+    static let injectedEventUserDataTag: Int64 = 0x554D_4556
+    
     public private(set) var eventsListener: EventsListener?
     
     public var currentScreenIndex: Int = 0
@@ -84,12 +131,14 @@ public protocol EventsListener: NSObjectProtocol {
     private lazy var emergencyStopDetector = EmergencyStopDetector(
         onProgress: { [weak self] count in
             DispatchQueue.main.async {
-                self?.eventsListener?.gotEmergencyStopProgress(count: count)
+                let listener = self?.eventsListener ?? ClientController.shared
+                listener.gotEmergencyStopProgress(count: count)
             }
         },
         onTrigger: { [weak self] in
             DispatchQueue.main.async {
-                self?.eventsListener?.gotEmergencyStopEvent()
+                let listener = self?.eventsListener ?? ClientController.shared
+                listener.gotEmergencyStopEvent()
             }
         }
     )
@@ -222,7 +271,11 @@ public protocol EventsListener: NSObjectProtocol {
     @objc public func _stopGettingEvents() {
         _isControllingSnapshot = false
         let listener = EventTapListener.shared
-        listener.stop()
+        listener.removeDelegate(self)
+        let alwaysObserve = PreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey)
+        if !alwaysObserve {
+            listener.stop()
+        }
         
         DispatchQueue.main.async {
             MainController.shared().leaveFrontmost()
@@ -258,6 +311,12 @@ public protocol EventsListener: NSObjectProtocol {
             return
         }
         
+        if isForceQuitShortcutEvent(event) {
+            DispatchQueue.main.async {
+                showForceQuitDialog()
+            }
+        }
+        
         let eventType = event.type
         if isMouseEventType(eventType) {
             let deltaX = event.getIntegerValueField(.mouseEventDeltaX)
@@ -279,6 +338,7 @@ public protocol EventsListener: NSObjectProtocol {
         if let source = eventSource {
             event.setSource(source)
         }
+        event.setIntegerValueField(.eventSourceUserData, value: Self.injectedEventUserDataTag)
         
         event.post(tap: .cgSessionEventTap)
     }
@@ -512,7 +572,9 @@ extension EventsController: EventTapListenerDelegate {
             return Unmanaged.passRetained(event)
         }
         
-        _sendEvent(toListener: event)
+        if !emergencyStopDetector.isEmergencyStopEvent(event) {
+            _sendEvent(toListener: event)
+        }
 
         DispatchQueue.main.async {
             CursorVisibilityController.shared.handleEventTapTick(isControlling: true, eventType: type)

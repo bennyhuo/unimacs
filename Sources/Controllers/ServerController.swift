@@ -5,7 +5,6 @@
 
 import Foundation
 import AppKit
-import IOKit
 
 enum ServerState: Int {
     case idle
@@ -222,12 +221,6 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
         }
         
         SystemPowerManager.wakeUpScreen()
-        
-        let entry = IORegistryEntryFromPath(kIOMasterPortDefault, "IOService:/IOResources/IODisplayWrangler")
-        if entry != MACH_PORT_NULL {
-            IORegistryEntrySetCFProperty(entry, "IORequestIdle" as CFString, kCFBooleanFalse)
-            IOObjectRelease(entry)
-        }
     }
     
     // MARK: - Stop control

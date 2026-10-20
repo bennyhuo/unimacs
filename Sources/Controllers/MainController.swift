@@ -7,20 +7,6 @@ import Cocoa
 import Foundation
 import CoreGraphics
 
-// MARK: - C Function Declarations
-
-// Private CGS types and functions for process switching
-private struct CPSProcessSerNum {
-    var hi: UInt32 = 0
-    var lo: UInt32 = 0
-}
-
-@_silgen_name("CPSGetFrontProcess")
-private func CPSGetFrontProcess(_ psn: UnsafeMutablePointer<CPSProcessSerNum>) -> CGError
-
-@_silgen_name("CPSSetFrontProcess")
-private func CPSSetFrontProcess(_ psn: UnsafePointer<CPSProcessSerNum>) -> CGError
-
 // MARK: - MainController
 
 @MainActor
@@ -32,7 +18,7 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     
     private static var _sharedController: MainController?
     
-    private var frontProcessNum = CPSProcessSerNum()
+    private var previousFrontApp: NSRunningApplication?
     private var wakeTimer: Timer?
     private var hasPendingNetworkReset = false
     
@@ -84,7 +70,6 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
         infoLog("=== Application Started/Restarted ===", module: .general)
 
         MainController._sharedController = self
-        frontProcessNum.lo = 0
         
         // Setup Notifications
         DistributedNotificationCenter.default().addObserver(
@@ -195,6 +180,10 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
 		watcher.startWatching()
 		
         PasteboardMonitor.shared.start()
+
+        // Sync login item registration with the stored preference
+        let addToLogin = PreferencesManager.shared().bool(forPref: Settings.addToLoginItemsKey)
+        LoginItemManager.updateRegistration(enabled: addToLogin)
 
 		// Ensure server is listening and proactively connect to paired peers.
 		if ServerController.shared.allowControl {
@@ -557,22 +546,20 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     // MARK: - UI
     
     @objc func goFrontmost() {
-        let result = CPSGetFrontProcess(&frontProcessNum)
-        if result != CGError.success {
-            frontProcessNum.lo = 0
-            debugLog("get front process failed", module: .control)
-        } else {
-            debugLog("get front process succeded: hi=\(frontProcessNum.hi) low=\(frontProcessNum.lo)", module: .control)
+        let frontApp = NSWorkspace.shared.frontmostApplication
+        if frontApp?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            previousFrontApp = frontApp
+            debugLog("Saved previous frontmost app: \(frontApp?.localizedName ?? "unknown")", module: .control)
         }
         
         NSApp.activate(ignoringOtherApps: true)
     }
     
     @objc func leaveFrontmost() {
-        if frontProcessNum.lo > 0 {
-            _ = CPSSetFrontProcess(&frontProcessNum)
-            debugLog("switched back to process hi=\(frontProcessNum.hi) low=\(frontProcessNum.lo)", module: .control)
-            frontProcessNum.lo = 0
+        if let app = previousFrontApp {
+            app.activate(options: [])
+            debugLog("Switched back to previous frontmost app: \(app.localizedName ?? "unknown")", module: .control)
+            previousFrontApp = nil
         }
     }
     

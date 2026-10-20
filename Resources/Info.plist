@@ -39,5 +39,7 @@
 	<string>Microphone access is required to stream local audio input to the remote Mac.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Screen recording permission is required to capture and stream system audio to the remote Mac. Only system audio is captured; your screen content will not be recorded.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Automation permission is required to display the Force Quit panel.</string>
 </dict>
 </plist>

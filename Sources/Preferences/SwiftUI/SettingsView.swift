@@ -89,6 +89,18 @@ struct SettingsTabView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
+                // General Section
+                SettingsSection(title: "General") {
+                    SettingsRow(
+                        title: "Launch at login",
+                        description: "Automatically start Unimacs when you log in to your Mac"
+                    ) {
+                        Toggle("", isOn: $viewModel.addToLoginItems)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+                }
+
                 // Sharing Section
                 SettingsSection(title: "Sharing") {
                     SettingsRow(title: "Network") {
@@ -329,18 +341,7 @@ struct SettingsTabView: View {
                         .labelsHidden()
                         .toggleStyle(.switch)
                     }
-                    
-                    Divider()
-                    
-                    SettingsRow(
-                        title: "Play sound when switching",
-                        description: "Audio feedback when switching between Macs"
-                    ) {
-                        Toggle("", isOn: $viewModel.playSwitchSound)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                    }
-                    
+                                        
                     Divider()
                     
                     SettingsRow(

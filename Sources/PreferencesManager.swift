@@ -7,57 +7,55 @@ import Cocoa
 
 // MARK: - Constants
 
-let CURRENT_PREFS_VERSION = 7
-let PREFS_VERSION = "prefsVersion"
-let ALLOW_CONTROL = "allowControl"
-let REQUIRE_KEY = "requireKey"
-let AUTOCHECK_VERSION = "autocheckVersion"
-let TRUST_REQUEST_BEHAVIOR = "trustRequestBehavior"
-let ENABLED_ENCRYPTION = "enableEncryption"
-let SWITCH_KEY_TAG = "switchKeyTag"
-let INHIBITION_PERIOD = "hotBorderActivationDelay"
-let SYNC_FIND_PASTEBOARD = "syncFindPasteboard"
-let WARNED_ABOUT_ACCESSIBILITY = "warnedAboutAccessibility"
-let HIDE_CONTROL_BEZEL = "hideControlBezel"
-let TRUST_LOCAL_CERTIFICATE = "trustLocalCertificate"
-let CERTIFICATE_IDENTIFIER = "certificateIdentifier"
-let SHOW_SWITCH_ANIMATION = "showSwitchAnimation"
-let SHOW_TEXTUAL_STATUS = "showTextualStatus"
-let ADD_TO_LOGIN_ITEMS = "addToLoginItems"
-let DISCONNECT_ON_NETWORK_CONFIG_CHANGE = "disconnectOnNetworkConfigChange"
-let WRAP_ON_STOP_CONTROL = "wrapOnStopControl"
-let PLAY_SWITCH_SOUND = "playSwitchSound"
-let ENABLE_DEBUG_LOG = "enableLogging"
-let SWITCH_SOUND_PATH = "switchSoundPath"
-let APPLICATIONS_DISABLING_UNIMACS = "appIdentifiersDisablingUnimacs"
-let SYNC_MODIFIERS = "syncModifiers"
+let CURRENT_PREFS_VERSION = Settings.currentPrefsVersion
+let PREFS_VERSION = Settings.prefsVersionKey
+let ALLOW_CONTROL = Settings.allowControlKey
+let REQUIRE_KEY = Settings.requireKeyKey
+let AUTOCHECK_VERSION = Settings.autocheckVersionKey
+let TRUST_REQUEST_BEHAVIOR = Settings.trustRequestBehaviorKey
+let ENABLED_ENCRYPTION = Settings.enabledEncryptionKey
+let SWITCH_KEY_TAG = Settings.switchKeyTagKey
+let INHIBITION_PERIOD = Settings.inhibitionPeriodKey
+let SYNC_FIND_PASTEBOARD = Settings.syncFindPasteboardKey
+let WARNED_ABOUT_ACCESSIBILITY = Settings.warnedAboutAccessibilityKey
+let HIDE_CONTROL_BEZEL = Settings.hideControlBezelKey
+let TRUST_LOCAL_CERTIFICATE = Settings.trustLocalCertificateKey
+let CERTIFICATE_IDENTIFIER = Settings.certificateIdentifierKey
+let SHOW_SWITCH_ANIMATION = Settings.showSwitchAnimationKey
+let SHOW_TEXTUAL_STATUS = Settings.showTextualStatusKey
+let ADD_TO_LOGIN_ITEMS = Settings.addToLoginItemsKey
+let DISCONNECT_ON_NETWORK_CONFIG_CHANGE = Settings.disconnectOnNetworkConfigChangeKey
+let WRAP_ON_STOP_CONTROL = Settings.wrapOnStopControlKey
+let ENABLE_DEBUG_LOG = Settings.enableDebugLogKey
+let APPLICATIONS_DISABLING_UNIMACS = Settings.applicationsDisablingUnimacsKey
+let SYNC_MODIFIERS = Settings.syncModifiersKey
 /// When enabled, the control connection uses the Swift Network.framework stack
 /// (`NWConnection`/`NWListener`); when disabled it falls back to the legacy ObjC
 /// CFSocket/SecureTransport implementation (`UMTCPSecureSocket`).
-let USE_SWIFT_NETWORK_STACK = "useSwiftNetworkStack"
+let USE_SWIFT_NETWORK_STACK = Settings.useSwiftNetworkStackKey
 /// When enabled, input events are streamed directly to the remote host for full
 /// gesture support. When disabled, the compatibility event-taps mode is used.
-let USE_DIRECT_EVENT_TAPS = "useDirectEventTaps"
+let USE_DIRECT_EVENT_TAPS = Settings.useDirectEventTapsKey
 /// Cursor hiding strategy while controlling a remote machine. When enabled
 /// (Scheme A, the default), Unimacs is brought to the foreground behind a
 /// transparent shield window and the public `CGDisplayHideCursor` API is used —
 /// this works reliably on macOS 26+. When disabled (Scheme B), the legacy
 /// private `SetsCursorInBackground` background hack is used instead.
-let USE_CURSOR_SHIELD_WINDOW = "useCursorShieldWindow"
-let ALWAYS_OBSERVE_EVENTS = "alwaysObserveEvents"
-let ENABLE_KEEP_AWAKE = "enableKeepAwake"
-let KEEP_AWAKE_INTERVAL = "keepAwakeInterval"
-let SYNC_LOCK_SLEEP = "syncLockSleep"
+let USE_CURSOR_SHIELD_WINDOW = Settings.useCursorShieldWindowKey
+let ALWAYS_OBSERVE_EVENTS = Settings.alwaysObserveEventsKey
+let ENABLE_KEEP_AWAKE = Settings.enableKeepAwakeKey
+let KEEP_AWAKE_INTERVAL = Settings.keepAwakeIntervalKey
+let SYNC_LOCK_SLEEP = Settings.syncLockSleepKey
 
 
-let COMMAND_PORT = "commandPort"
-let TRANSFER_PORT = "transferPort"
+let COMMAND_PORT = Settings.commandPortKey
+let TRANSFER_PORT = Settings.transferPortKey
 
-let COMMAND_KEY_TAG = 20
-let ALT_KEY_TAG = 19
-let CTRL_KEY_TAG = 18
-let SHIFT_KEY_TAG = 17
-let CAPSLOCK_KEY_TAG = 16
+let COMMAND_KEY_TAG = Settings.commandKeyTag
+let ALT_KEY_TAG = Settings.altKeyTag
+let CTRL_KEY_TAG = Settings.ctrlKeyTag
+let SHIFT_KEY_TAG = Settings.shiftKeyTag
+let CAPSLOCK_KEY_TAG = Settings.capslockKeyTag
 
 // Legacy constants for ObjC compatibility
 let TRUST_REQUEST_ASK: Int32 = 0
@@ -146,8 +144,8 @@ class PreferencesManager: NSObject {
             AUTOCHECK_VERSION: true,
             // Secret stuff
             HIDE_CONTROL_BEZEL: false,
-            "visibleBorders": false,
-            "hotBorderStyle": 0,
+            Settings.visibleBordersKey: false,
+            Settings.hotBorderStyleKey: 0,
             INHIBITION_PERIOD: 0.2,
             SYNC_FIND_PASTEBOARD: false,
             WARNED_ABOUT_ACCESSIBILITY: false,
@@ -162,7 +160,6 @@ class PreferencesManager: NSObject {
             ADD_TO_LOGIN_ITEMS: true,
             DISCONNECT_ON_NETWORK_CONFIG_CHANGE: true,
             WRAP_ON_STOP_CONTROL: false,
-            PLAY_SWITCH_SOUND: false,
             ENABLE_DEBUG_LOG: false,
             SYNC_MODIFIERS: true,
             USE_SWIFT_NETWORK_STACK: false,
@@ -297,16 +294,5 @@ class PreferencesManager: NSObject {
               let userInfo = notification.userInfo,
               let value = userInfo[key] else { return }
         setValue(value, forKey: key)
-    }
-    
-    @objc private func defaultsWillChange(_ notification: Notification) {
-        guard let keyPath = notification.object as? String else { return }
-        willChangeValue(forKey: keyPath)
-    }
-    
-    @objc private func defaultsDidChange(_ notification: Notification) {
-        guard let keyPath = notification.object as? String else { return }
-        defaultsController.defaults.synchronize()
-        didChangeValue(forKey: keyPath)
     }
 }

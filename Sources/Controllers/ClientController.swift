@@ -4,8 +4,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 import Cocoa
-import IOKit.pwr_mgt
-import IOKit
 
 enum ClientState: Int {
     case idleState
@@ -31,9 +29,6 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
         }
     }
     private var _hotBorders = [String: TPHotBorder]()
-    private var _sleepNotifier: io_object_t = 0
-    private var _sleepService: io_connect_t = 0
-    private var _sleepNotifyPortRef: IONotificationPortRef?
     
     /// Pending control request info for when connection is being established
     private var _pendingControlRequestInfo: [AnyHashable: Any]?
@@ -43,7 +38,6 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
         super.init()
         
         _hotBorders = [:]
-        _sleepService = 0
         _state = .idleState
         
 		HostDevice.observe(observer: self, selector: #selector(updateTriggers(_:)), object: nil)
@@ -92,7 +86,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		let shouldActivateHotBorder = !host.isInState(.controlled)
 		let identifier = host.identifier
 		
-		debugLog("Trigger: host=\(host.computerName) canControl=\(canControl) online=\(isOnlineOrControlled) wakeable=\(host.wakeable)", module: .control)
+		debugLog("Trigger: host=\(host.computerName) canControl=\(canControl) online=\(isOnlineOrControlled)", module: .control)
 		
 		var hotBorder = _hotBorders[identifier]
 		
@@ -367,14 +361,6 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		StatusItemController.default.update(with: .controlling, host: controlledHost)
 		controlledHost.hostState = .controlled
 		self.updateTriggersAndShowVisualHint(false)
-		
-		if !PreferencesManager.shared().bool(forPref: HIDE_CONTROL_BEZEL) {
-			BezelController.default().setMode(.controlling(host: controlledHost, emergencyHint: "⌃⌥⇧⎋ to release"))
-		}
-		
-		if PreferencesManager.shared().bool(forPref: PLAY_SWITCH_SOUND) {
-			SoundUtils.playSwitchSound()
-		}
 
 		self.updateEventsController()
 		if let ec = self.eventsController {
@@ -388,6 +374,11 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 			self.stopControl()
 			return
 		}
+		
+		if !PreferencesManager.shared().bool(forPref: HIDE_CONTROL_BEZEL) {
+			BezelController.default().setMode(.controlling(host: controlledHost, emergencyHint: "⌃⌥⇧⎋ to release"))
+		}
+		
 		TPClipboardTransferCoordinator.shared.clientDidStartControl(using: currentConnection, remoteHost: controlledHost)
 		
 		DisplaySleepAssertion.activate(reason: "startControl")
@@ -489,10 +480,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 			StatusItemController.default.update(with: .idle, host: nil)
 			self.currentConnection?.connectedHost?.hostState = .peeredOnline
 			DisplaySleepAssertion.deactivate()
-			
-			if PreferencesManager.shared().bool(forPref: PLAY_SWITCH_SOUND) {
-				SoundUtils.playSwitchSound()
-			}
+
 		}
 		
 		cancelPendingControlRequest()
@@ -531,14 +519,14 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 	
 	@MainActor
 	func gotEmergencyStopProgress(count: Int) {
-		if count < 3 {
+		if count <= 3 {
 			BezelController.default().setMode(.emergency(
 				title: "Emergency Stop",
 				subtitle: "Releasing... (\(count)/3)",
 				count: count,
 				maxCount: 3
 			))
-		} else if count < 10 {
+		} else if count <= 10 {
 			BezelController.default().setMode(.emergency(
 				title: "Force Quit App",
 				subtitle: "Terminating... (\(count - 3)/7)",

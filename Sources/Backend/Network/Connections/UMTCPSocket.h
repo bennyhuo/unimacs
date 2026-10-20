@@ -38,8 +38,6 @@ typedef NS_ENUM(NSInteger, TPSocketState) {
 	TPSocketState _socketState;
 }
 
-+ (BOOL)wakeUpHostWithMACAddress:(IOEthernetAddress*)macAddress;
-
 - (instancetype) initWithDelegate:(id<UMTCPSocketDelegate>)delegate NS_DESIGNATED_INITIALIZER;
 
 @property (nonatomic, unsafe_unretained) id<UMTCPSocketDelegate> delegate;

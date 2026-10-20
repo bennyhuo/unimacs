@@ -1,6 +1,8 @@
+.DS_Store
 *.cer
 *.provisionprofile
 build
+Build
 Unimacs.xcodeproj/xcuserdata
 Unimacs.xcodeproj/project.xcworkspace/xcuserdata
 Unimacs.xcodeproj/project.xcworkspace/xcshareddata

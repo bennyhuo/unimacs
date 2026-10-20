@@ -7,9 +7,9 @@ import Cocoa
 import CoreGraphics
 
 @objc(BezelWindow)
-final class BezelWindow: NSWindow {
+final class BezelWindow: NSPanel {
 	override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
-		super.init(contentRect: contentRect, styleMask: .borderless, backing: .buffered, defer: false)
+		super.init(contentRect: contentRect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
 		commonInit()
 	}
 
@@ -18,12 +18,19 @@ final class BezelWindow: NSWindow {
 		fatalError("BezelWindow does not support init(coder:)")
 	}
 
+	override var canBecomeKey: Bool { false }
+	override var canBecomeMain: Bool { false }
+
 	private func commonInit() {
 		backgroundColor = .clear
 		alphaValue = 1.0
 		isOpaque = false
 		hasShadow = false
-		level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.overlayWindow)))
+		hidesOnDeactivate = false
+		isFloatingPanel = true
+		level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()) + 1)
+		collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
 		ignoresMouseEvents = true
+		isReleasedWhenClosed = false
 	}
 }

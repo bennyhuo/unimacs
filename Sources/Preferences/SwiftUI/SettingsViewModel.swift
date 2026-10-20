@@ -4,6 +4,7 @@
 import SwiftUI
 import Combine
 import SecurityInterface
+import ServiceManagement
 import CryptoKit
 import Darwin
 
@@ -20,6 +21,13 @@ final class SettingsViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     
     // MARK: - Core Settings
+    
+    @Published var addToLoginItems: Bool {
+        didSet {
+            prefs.setValue(addToLoginItems, forKey: Settings.addToLoginItemsKey)
+            LoginItemManager.updateRegistration(enabled: addToLoginItems)
+        }
+    }
     
     @Published var allowControl: Bool {
         didSet { prefs.setValue(allowControl, forKey: Settings.allowControlKey) }
@@ -54,17 +62,17 @@ final class SettingsViewModel: ObservableObject {
         didSet { prefs.setValue(useDirectEventTaps, forKey: Settings.useDirectEventTapsKey) }
     }
 
-    /// Cursor hiding strategy while controlling a remote Mac. When enabled
-    /// (Scheme A, the default), Unimacs is brought to the foreground behind a
-    /// transparent shield window and the public cursor-hiding API is used, which
-    /// works reliably on macOS 26+. When disabled (Scheme B), the legacy private
-    /// background hack is used instead. Takes effect on the next control session.
     /// When enabled, the cursor is warped to the center of the main screen
     /// after a control session ends. Off by default.
     @Published var warpCursorOnStopControl: Bool {
         didSet { prefs.setValue(warpCursorOnStopControl, forKey: Settings.wrapOnStopControlKey) }
     }
 
+    /// Cursor hiding strategy while controlling a remote Mac. When enabled
+    /// (Scheme A, the default), Unimacs is brought to the foreground behind a
+    /// transparent shield window and the public cursor-hiding API is used, which
+    /// works reliably on macOS 26+. When disabled (Scheme B), the legacy private
+    /// background hack is used instead. Takes effect on the next control session.
     @Published var useCursorShieldWindow: Bool {
         didSet { prefs.setValue(useCursorShieldWindow, forKey: Settings.useCursorShieldWindowKey) }
     }
@@ -108,10 +116,6 @@ final class SettingsViewModel: ObservableObject {
     
     @Published var showSwitchAnimation: Bool {
         didSet { prefs.setValue(showSwitchAnimation, forKey: Settings.showSwitchAnimationKey) }
-    }
-    
-    @Published var playSwitchSound: Bool {
-        didSet { prefs.setValue(playSwitchSound, forKey: Settings.playSwitchSoundKey) }
     }
     
     // MARK: - Debug
@@ -342,6 +346,7 @@ final class SettingsViewModel: ObservableObject {
         prefs = PreferencesManager.shared()
         
         // Load initial values from preferences
+        addToLoginItems = prefs.bool(forPref: Settings.addToLoginItemsKey)
         allowControl = prefs.bool(forPref: Settings.allowControlKey)
         trustRequestBehavior = TrustRequestBehavior(rawValue: prefs.int(forPref: Settings.trustRequestBehaviorKey)) ?? .ask
         
@@ -364,7 +369,6 @@ final class SettingsViewModel: ObservableObject {
         
         hideControlBezel = prefs.bool(forPref: Settings.hideControlBezelKey)
         showSwitchAnimation = prefs.bool(forPref: Settings.showSwitchAnimationKey)
-        playSwitchSound = prefs.bool(forPref: Settings.playSwitchSoundKey)
         
         enableLogging = prefs.bool(forPref: Settings.enableDebugLogKey)
         logLevel = LogLevel(rawValue: prefs.int(forPref: Settings.logLevelKey)) ?? .debug
@@ -386,28 +390,12 @@ final class SettingsViewModel: ObservableObject {
             audioUseCompression = false
         }
         
-        availableInputDevices = AudioController.shared.getInputDevices()
-        let hasDevice = availableInputDevices.contains { $0.lowercased().contains("blackhole") }
-        if hasDevice {
-            blackHoleStatus = .available
-            isBlackHoleInstalled = true
-        } else {
-            let driverPath = "/Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver"
-            var isDir: ObjCBool = false
-            let exists = FileManager.default.fileExists(atPath: driverPath, isDirectory: &isDir)
-            if exists && isDir.boolValue {
-                blackHoleStatus = .installedButNeedReboot
-            } else {
-                blackHoleStatus = .missing
-            }
-            isBlackHoleInstalled = false
-        }
-        
         // Load log module states (must be after all stored properties are initialized)
         for module in LogModule.allCases {
             logModuleStates[module] = module.isEnabled
         }
         
+        checkBlackHoleStatus()
         loadIPAddresses()
         calculateCacheSize()
     }

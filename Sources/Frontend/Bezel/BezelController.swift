@@ -64,12 +64,10 @@ final class BezelController: NSObject {
 			bezelView.setMode(.controlling(host: host, emergencyHint: hint))
 			bezelWindow.orderFront(nil)
 			bezelWindow.orderFrontRegardless()
-			bezelWindow.collectionBehavior = [.canJoinAllSpaces, .stationary]
 		case .emergency(let title, let subtitle, let count, let maxCount):
 			bezelView.setMode(.emergency(title: title, subtitle: subtitle, count: count, maxCount: maxCount))
 			bezelWindow.orderFront(nil)
 			bezelWindow.orderFrontRegardless()
-			bezelWindow.collectionBehavior = [.canJoinAllSpaces, .stationary]
 			
 			// Auto dismiss or roll back after 2 seconds
 			textTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
@@ -79,7 +77,6 @@ final class BezelController: NSObject {
 			bezelView.setMode(.notification(title: title, subtitle: subtitle, icon: icon))
 			bezelWindow.orderFront(nil)
 			bezelWindow.orderFrontRegardless()
-			bezelWindow.collectionBehavior = [.canJoinAllSpaces, .stationary]
 			
 			if duration > 0 {
 				textTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in

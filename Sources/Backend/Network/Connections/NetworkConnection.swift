@@ -233,14 +233,19 @@ case .connectingState:
     /// The single point that writes a message to the socket. Always runs on `sendQueue`.
     /// All public send paths funnel through here so writes never interleave.
     private func performSend(_ message: Message) -> Bool {
+        let isEventMsg = (message.msgType == .event)
         let msgTypeDesc = messageTypeDescription(message.msgType)
-        let infoDesc = messageInfoDescription(message)
-        debugLog("[Conn:\(connectionId)] Sending message: type=\(msgTypeDesc)\(infoDesc)", module: .network)
+        if !isEventMsg {
+            let infoDesc = messageInfoDescription(message)
+            debugLog("[Conn:\(connectionId)] Sending message: type=\(msgTypeDesc)\(infoDesc)", module: .network)
+        }
 
         let result = _channel.send(message.rawData)
 
         if result {
-            debugLog("[Conn:\(connectionId)] Message sent successfully: type=\(msgTypeDesc)", module: .network)
+            if !isEventMsg {
+                debugLog("[Conn:\(connectionId)] Message sent successfully: type=\(msgTypeDesc)", module: .network)
+            }
         } else {
             let socketState = _channel.state
             errorLog("[Conn:\(connectionId)] Failed to send message: type=\(msgTypeDesc), socketState=\(socketState.rawValue)", module: .network)
@@ -366,8 +371,6 @@ case .connectingState:
     func channelDidFailToConnect(_ channel: MessageChannel) {}
 
     func channel(_ channel: MessageChannel, didReceiveData data: Data) {
-        debugLog("[Conn:\(connectionId)] Got raw data (\(data.count) bytes), buffer size=\(msgBuffer.count)", module: .network)
-        
         guard !data.isEmpty else {
             warningLog("[Conn:\(connectionId)] Received empty data from socket", module: .network)
             return
@@ -377,20 +380,22 @@ case .connectingState:
         
         var cont = true
         while msgBuffer.count >= MessageHeaderLength && cont {
-			guard let message = Message(rawData: msgBuffer) else {
-				cont = false
-				continue
-			}
-			let msgLength = Int(message.msgLength)
-			if msgLength > 0 {
-				let msgTypeDesc = messageTypeDescription(message.msgType)
-				let infoDesc = messageInfoDescription(message)
-				debugLog("[Conn:\(connectionId)] Received message: type=\(msgTypeDesc), length=\(msgLength)\(infoDesc)", module: .network)
-				msgBuffer.removeSubrange(0..<msgLength)
-				delegate?.connection(self, receivedMessage: message)
-			} else {
-				cont = false
-			}
+            guard let message = Message(rawData: msgBuffer) else {
+                cont = false
+                continue
+            }
+            let msgLength = Int(message.msgLength)
+            if msgLength > 0 {
+                if message.msgType != .event {
+                    let msgTypeDesc = messageTypeDescription(message.msgType)
+                    let infoDesc = messageInfoDescription(message)
+                    debugLog("[Conn:\(connectionId)] Received message: type=\(msgTypeDesc), length=\(msgLength)\(infoDesc)", module: .network)
+                }
+                msgBuffer.removeSubrange(0..<msgLength)
+                delegate?.connection(self, receivedMessage: message)
+            } else {
+                cont = false
+            }
         }
     }
     

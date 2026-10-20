@@ -14,22 +14,6 @@ final class BezelView: NSVisualEffectView {
 		static let minWidth: CGFloat = 240.0           // Minimum width
 	}
 
-	private static let paragraphStyle: NSMutableParagraphStyle = {
-		let style = NSMutableParagraphStyle()
-		style.alignment = .center
-		return style
-	}()
-
-	private static let titleAttributes: [NSAttributedString.Key: Any] = [
-		.font: NSFont.systemFont(ofSize: 24, weight: .bold),
-		.paragraphStyle: paragraphStyle
-	]
-
-	private static let textAttributes: [NSAttributedString.Key: Any] = [
-		.font: NSFont.systemFont(ofSize: 16, weight: .medium),
-		.paragraphStyle: paragraphStyle
-	]
-
 	private let titleLabel: NSTextField = {
 		let label = NSTextField(labelWithString: "")
 		label.isEditable = false
@@ -155,24 +139,6 @@ final class BezelView: NSVisualEffectView {
 				height: titleHeight
 			)
 			subtitleLabel.isHidden = true
-		}
-	}
-
-	@objc(setRemoteHost:)
-	func setRemoteHost(_ remoteHost: RemoteHost?) {
-		if let remoteHost = remoteHost {
-			setMode(.controlling(host: remoteHost, emergencyHint: nil))
-		} else {
-			setMode(.hidden)
-		}
-	}
-
-	@objc(setText:)
-	func setText(_ text: String?) {
-		if let text = text {
-			setMode(.notification(title: "", subtitle: text, icon: .logo))
-		} else {
-			setMode(.hidden)
 		}
 	}
 }

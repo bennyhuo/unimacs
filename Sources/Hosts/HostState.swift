@@ -18,6 +18,5 @@ struct HostState: OptionSet {
     
     static let peered: HostState      = [.peeredOffline, .peeredOnline, .controlled, .peering]
     static let online: HostState      = [.shared, .peeredOnline, .controlled, .incompatible, .peering]
-    static let draggable: HostState   = [.shared, .peeredOnline]
     static let all: HostState         = HostState(rawValue: 0xFFFF)
 }

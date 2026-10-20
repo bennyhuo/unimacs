@@ -23,6 +23,11 @@ class EmergencyStopDetector {
     }
     
     func processEvent(_ event: CGEvent) {
+        // Ignore synthetic events injected by Unimacs on the controlled machine
+        if event.getIntegerValueField(.eventSourceUserData) == EventsController.injectedEventUserDataTag {
+            return
+        }
+
         let currentTime = Date().timeIntervalSince1970
         
         // 1. Reset count if time window exceeded
@@ -42,12 +47,12 @@ class EmergencyStopDetector {
             lastEventTime = currentTime
             NSLog("[EmergencyStop] emergency events: %d", emergencyStopEventCount)
             
-            onProgress(emergencyStopEventCount)
-            
             if emergencyStopEventCount >= 3 {
                 NSLog("[EmergencyStop] emergency stop key sequence detected, triggering callback.")
                 onTrigger()
             }
+            
+            onProgress(emergencyStopEventCount)
             
             if emergencyStopEventCount >= 10 {
                 NSLog("[EmergencyStop] emergency stop key sequence triggered 10 times, terminating application.")
@@ -69,7 +74,7 @@ class EmergencyStopDetector {
         }
     }
     
-    private func isEmergencyStopEvent(_ event: CGEvent) -> Bool {
+    func isEmergencyStopEvent(_ event: CGEvent) -> Bool {
         if event.type != .keyDown {
             return false
         }

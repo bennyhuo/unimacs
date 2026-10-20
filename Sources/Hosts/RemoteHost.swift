@@ -57,10 +57,6 @@ final class RemoteHost: HostDevice, NSCopying {
 		}
 	}
 	
-	var wakeable: Bool {
-	return hasValidMacAddress && hostState == .peeredOffline
-	}
-	
 	var shareOutput: Bool {
 		get {
 			return (options.value(forKey: "shareOutput") as? NSNumber)?.boolValue ?? false

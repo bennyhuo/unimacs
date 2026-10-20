@@ -1079,7 +1079,9 @@ extension DeviceConnectionManager: NetworkConnectionDelegate {
         Task { @MainActor in
             guard let host = connection.connectedHost else { return }
             
-            debugLog("[RECV] From \(host.computerName): \(message.debugInfo)", module: .network, connectionId: connection.connectionId)
+            if message.msgType != .event {
+                debugLog("[RECV] From \(host.computerName): \(message.debugInfo)", module: .network, connectionId: connection.connectionId)
+            }
             
             if message.msgType == .disconnectNotification {
                 warningLog("[RECV] received disconnectNotification from \(host.computerName)", module: .network)

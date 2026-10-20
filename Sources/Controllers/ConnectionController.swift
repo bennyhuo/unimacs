@@ -10,10 +10,8 @@ let DISCONNECT_WHEN_STOP_CONTROL = false
 
 @MainActor
 @objcMembers
-class ConnectionController: NSObject, TPHotBorderDelegate, NetworkConnectionDelegate {
+class ConnectionController: NSObject, TPHotBorderDelegate {
 	
-    @IBOutlet weak var delegate: AnyObject?
-    
     private var _currentConnection: NetworkConnection?
     private var _eventsController: EventsController?
     
@@ -56,7 +54,6 @@ class ConnectionController: NSObject, TPHotBorderDelegate, NetworkConnectionDele
     override init() {
         super.init()
         _currentConnection = nil
-		SoundUtils.preheatSwitchSoundIfNeeded()
 		LocalHost.shared.observe(observer: self, selector: #selector(_localHostDidChange(_:)))
     }
     

@@ -33,7 +33,6 @@
 		A7BB550E0A1BD00D007044EA /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = /System/Library/Frameworks/IOKit.framework; sourceTree = "<absolute>"; };
 		A7E612E609EDC0210024712F /* SecurityInterface.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SecurityInterface.framework; path = /System/Library/Frameworks/SecurityInterface.framework; sourceTree = "<absolute>"; };
 		B29F63692F01E97900486ABF /* UnimacsDebug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = UnimacsDebug.entitlements; sourceTree = "<group>"; };
-		B2F6A27A2EF3FD2B0092634B /* SwiftPlayground.playground */ = {isa = PBXFileReference; lastKnownFileType = file.playground; path = SwiftPlayground.playground; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.swift; };
 		F506C035013D953901CA16C8 /* PreferencePanes.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PreferencePanes.framework; path = /System/Library/Frameworks/PreferencePanes.framework; sourceTree = "<absolute>"; };
 /* End PBXFileReference section */
 
@@ -42,19 +41,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				/Localized/Localizable.strings,
-				"icon-about.png",
-				"icon-refresh.png",
-				Lock_White.tif,
-				"menuicon-black.png",
-				"menuicon-white.png",
-				menuicon.png,
-				MultipleFiles.icns,
-				remove.tiff,
-				"sharedscreen-on.tiff",
-				sharedscreen.tiff,
-				"switch-sound.wav",
 				Unimacs.icns,
-				whitelogo.png,
 			);
 			target = A7C9DEC8059F496500E67CB3 /* Unimacs */;
 		};
@@ -115,7 +102,6 @@
 				Frontend/HotBorder/HotBorder.swift,
 				Frontend/HotBorder/HotBorderMonitor.swift,
 				Frontend/StatusItem/StatusItemController.swift,
-				Frontend/NSBezierPathExtensions.swift,
 				Frontend/Transfers/TransferProgressController.swift,
 				Hosts/RemoteHostOptions.swift,
 				Hosts/HostDevice.swift,
@@ -133,32 +119,25 @@
 				Preferences/SwiftUI/SettingsView.swift,
 				Preferences/SwiftUI/SettingsViewModel.swift,
 				Preferences/SwiftUI/SettingsWindowController.swift,
-				Preferences/ClosingWindow.swift,
-				Preferences/LinkTextField.swift,
-				Preferences/SettingsTableView.swift,
-				Preferences/VersionTextField.swift,
 				Settings.swift,
 				PreferencesManager.swift,
 				Utils/CoderExtensions.swift,
 				Utils/Data/LegacyKeyedArchiver.swift,
-				"Utils/FileManager+TPUtils.swift",
 				Utils/HostSnapping.swift,
 				Utils/IdentityManager.swift,
+				Utils/LoginItemManager.swift,
 				Utils/Network/IOEthernetAddress.swift,
 				Utils/Network/IpAddress.swift,
 				Utils/Network/NetworkUtils.swift,
 				Utils/Network/PingManager.swift,
 				Utils/Network/NetworkConfigurationWatcher.swift,
-				Utils/Network/WakeOnLan.swift,
 				Utils/Notifiable.swift,
 				"Utils/NSData+TPUtils.swift",
-				"Utils/NSWorkspace+TPUtils.swift",
 				"Utils/Process+TPUtils.swift",
 				"Utils/String+TPUtils.swift",
 				Utils/System/AccessibilityManager.swift,
 				Utils/System/DisplaySleepAssertion.swift,
 				Utils/System/PasteboardMonitor.swift,
-				Utils/System/SoundUtils.swift,
 				Utils/System/SystemInfo.swift,
 				Utils/System/SystemPowerManager.swift,
 				Utils/System/SystemStatusObserver.swift,
@@ -200,7 +179,6 @@
 			isa = PBXGroup;
 			children = (
 				B29F63692F01E97900486ABF /* UnimacsDebug.entitlements */,
-				B2F6A27A2EF3FD2B0092634B /* SwiftPlayground.playground */,
 				B2E93B592EDEC7AD00B392EF /* Resources */,
 				B2FFA2962EDE63EB006D3198 /* Sources */,
 				52ACC2312565FAB500345EBE /* Unimacs.entitlements */,
@@ -280,7 +258,6 @@
 			buildConfigurationList = A729278308564D7C00518F7E /* Build configuration list for PBXNativeTarget "Unimacs" */;
 			buildPhases = (
 				A7C9DEC4059F496500E67CB3 /* Headers */,
-				A786E22C1A19DFA500E66B43 /* Update strings */,
 				A7C9DEC5059F496500E67CB3 /* Resources */,
 				A7C9DEC6059F496500E67CB3 /* Sources */,
 				A7C9DEC7059F496500E67CB3 /* Frameworks */,
@@ -351,20 +328,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = "/usr/bin/perl -w";
 			shellScript = "# Xcode auto-versioning script for Subversion\n# by Axel Andersson, modified by Daniel Jalkut to add\n# \"--revision HEAD\" to the svn info line, which allows\n# the latest revision to always be used.\n\nuse strict;\n\ndie \"$0: Must be run from Xcode\" unless $ENV{\"BUILT_PRODUCTS_DIR\"};\n\nmy $REV = `git describe`;\nmy $INFO = \"$ENV{BUILT_PRODUCTS_DIR}/$ENV{WRAPPER_NAME}/Contents/Info.plist\";\n\nmy $version = $REV;\n\nopen(FH, \"$INFO\") or die \"$0: $INFO: $!\";\nmy $info = join(\"\", <FH>);\nclose(FH);\n\n$info =~ s/([\\t ]+<key>TPRevision<\\/key>\\n[\\t ]+<string>).*?(<\\/string>)/$1$version$2/;\n\nopen(FH, \">$INFO\") or die \"$0: $INFO: $!\";\nprint FH $info;\nclose(FH);\n";
-		};
-		A786E22C1A19DFA500E66B43 /* Update strings */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputPaths = (
-			);
-			name = "Update strings";
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "echo \"Updating string files\"\nfind Sources -name '*.m' -exec genstrings -u -littleEndian -o English.lproj {} +\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

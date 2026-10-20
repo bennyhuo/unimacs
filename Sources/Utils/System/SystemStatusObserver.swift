@@ -14,16 +14,8 @@ final class SystemStatusObserver: NSObject {
     private static let KEY_SCREEN_UNLOCKED = "com.apple.screenIsUnlocked"
 
     private(set) var isLocked: Bool = false
-    private var lockObserver: Any?
-    private var unlockObserver: Any?
-    private var rootPowerDomainRef: io_connect_t = 0
-    private var notifierObject: io_object_t = 0
-    private var notifyPortRef: IONotificationPortRef?
 
     func register() {
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(willSleep), name: NSWorkspace.willSleepNotification, object: nil)
-
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(didWake), name: NSWorkspace.didWakeNotification, object: nil)
 
@@ -40,10 +32,6 @@ final class SystemStatusObserver: NSObject {
     func unregister() {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         DistributedNotificationCenter.default().removeObserver(self)
-    }
-
-    @objc private func willSleep() {
-
     }
 
 	@objc private func didWake() {
