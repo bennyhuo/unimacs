@@ -97,7 +97,7 @@ class EventTapListener: @unchecked Sendable {
             options: .defaultTap,
             eventsOfInterest: CGEventMask(UInt64.max) & ~(UInt64(NX_KITDEFINEDMASK) | UInt64(NX_APPDEFINEDMASK)),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
-                guard let refcon = refcon else { return Unmanaged.passRetained(event) }
+                guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
                 let listener = Unmanaged<EventTapListener>.fromOpaque(refcon).takeUnretainedValue()
                 return listener.handleEventCallback(proxy: proxy, type: type, event: event)
             },
@@ -148,6 +148,12 @@ class EventTapListener: @unchecked Sendable {
     }
     
     private func handleEventCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type.rawValue >= CGEventType.tapDisabledByTimeout.rawValue {
+            _ = start()
+            NSLog("[EventTap] eventCallback, reenable on type=\(type.rawValue)")
+            return nil
+        }
+
         delegatesLock.lock()
         let activeDelegates = weakDelegates.compactMap { $0.value }
         delegatesLock.unlock()
@@ -163,6 +169,6 @@ class EventTapListener: @unchecked Sendable {
             }
         }
         
-        return shouldSwallow ? nil : Unmanaged.passRetained(currentEvent)
+        return shouldSwallow ? nil : Unmanaged.passUnretained(currentEvent)
     }
 }

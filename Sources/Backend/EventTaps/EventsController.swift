@@ -103,13 +103,6 @@ public protocol EventsListener: NSObjectProtocol {
     func gotEmergencyStopProgress(count: Int)
 }
 
-// MARK: - SerializationMode
-
-@objc public enum SerializationMode: Int {
-    case legacy
-    case direct
-}
-
 // MARK: - EventsController
 
 @objc public class EventsController: NSObject {
@@ -329,6 +322,7 @@ public protocol EventsListener: NSObjectProtocol {
         }
         
         event.location = currentMouseLocation
+        
         _postEvent(event)
     }
     
@@ -562,14 +556,8 @@ extension EventsController: EventTapListenerDelegate {
         type: CGEventType,
         event: CGEvent
     ) -> Unmanaged<CGEvent>? {
-        if type.rawValue >= CGEventType.tapDisabledByTimeout.rawValue {
-            _ = listener.start()
-            NSLog("[EventTap] eventCallback, reenable on type=\(type.rawValue)")
-            return nil
-        }
-        
         guard _isControllingSnapshot else {
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
         }
         
         if !emergencyStopDetector.isEmergencyStopEvent(event) {

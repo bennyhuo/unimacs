@@ -109,6 +109,6 @@ extension EmergencyStopDetector: EventTapListenerDelegate {
         if type == .keyDown || type == .flagsChanged {
             processEvent(event)
         }
-        return Unmanaged.passRetained(event)
+        return Unmanaged.passUnretained(event)
     }
 }

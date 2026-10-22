@@ -9,7 +9,38 @@ import CoreGraphics
 
 private let MAX_STRING = 20
 
+@objc public enum SerializationMode: Int {
+    case legacy
+    case direct
+}
+
 enum CGEventSerializer {
+    
+    /// Private SkyLight `SLSEventRecord` fields that cache sender-side window and display geometry:
+    /// - Field 51 (`0x33`, offset `0x3c`): Window number on the sender host.
+    /// - Field 106 (`0x6a`, offset `0xd8`): Cached target window height on the sender host.
+    /// - Field 107 (`0x6b`, offset `0xda`): Cached primary display height on the sender host.
+    ///
+    /// In macOS 27.2+, `-[NSEvent _initWithCGEvent:eventRef:]` transforms popup menu window coordinates
+    /// to desktop space and flips Y using field 107 (`CGEventGetIntegerValueField(event, 107)`) when
+    /// non-zero, only falling back to the local primary screen height (`[NSScreen _zeroScreenHeight]`)
+    /// when field 107 is `0`. Because `SLEventSetLocation` (`event.location = ...`) and `WindowServer`
+    /// annotation do not overwrite a non-zero field 107, a raw `CGEvent.data` payload serialized on a
+    /// controlling Mac with a different primary screen height shifts popup menu hit-testing vertically
+    /// by `senderMainScreenHeight - receiverMainScreenHeight`.
+    static let windowNumberField = CGEventField(rawValue: 51)!
+    static let cachedWindowHeightField = CGEventField(rawValue: 106)!
+    static let cachedMainDisplayHeightField = CGEventField(rawValue: 107)!
+    
+    /// Clears sender-specific window and screen geometry cached inside a deserialized `SLSEventRecord`
+    /// so the controlled Mac recomputes unflipped coordinates using its own display and window geometry.
+    static func sanitizeDirectEvent(_ event: CGEvent) {
+        event.setIntegerValueField(windowNumberField, value: 0)
+        event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: 0)
+        event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: 0)
+        event.setIntegerValueField(cachedWindowHeightField, value: 0)
+        event.setIntegerValueField(cachedMainDisplayHeightField, value: 0)
+    }
     
     static func serialize(_ e: Any, mode: SerializationMode) -> Data? {
         switch mode {
@@ -99,7 +130,11 @@ enum CGEventSerializer {
         
         switch mode {
         case .direct:
-            return CGEvent(withDataAllocator: nil, data: eventData as CFData)
+            guard let event = CGEvent(withDataAllocator: nil, data: eventData as CFData) else {
+                return nil
+            }
+            sanitizeDirectEvent(event)
+            return event
             
         case .legacy:
             let nsEventData = eventData as NSData
