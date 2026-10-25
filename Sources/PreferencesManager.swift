@@ -46,6 +46,9 @@ let ALWAYS_OBSERVE_EVENTS = Settings.alwaysObserveEventsKey
 let ENABLE_KEEP_AWAKE = Settings.enableKeepAwakeKey
 let KEEP_AWAKE_INTERVAL = Settings.keepAwakeIntervalKey
 let SYNC_LOCK_SLEEP = Settings.syncLockSleepKey
+let SKIP_CLIPBOARD_AFTER_LOCAL_PASTE = Settings.skipClipboardAfterLocalPasteKey
+let ENABLE_CLIPBOARD_TIMEOUT = Settings.enableClipboardTimeoutKey
+let CLIPBOARD_TIMEOUT_INTERVAL = Settings.clipboardTimeoutIntervalKey
 
 
 let COMMAND_PORT = Settings.commandPortKey
@@ -168,7 +171,10 @@ class PreferencesManager: NSObject {
             ALWAYS_OBSERVE_EVENTS: true,
             ENABLE_KEEP_AWAKE: true,
             KEEP_AWAKE_INTERVAL: 30.0,
-            SYNC_LOCK_SLEEP: true
+            SYNC_LOCK_SLEEP: true,
+            SKIP_CLIPBOARD_AFTER_LOCAL_PASTE: true,
+            ENABLE_CLIPBOARD_TIMEOUT: true,
+            CLIPBOARD_TIMEOUT_INTERVAL: Settings.clipboardTimeoutIntervalDefault
         ]
        
         return controller

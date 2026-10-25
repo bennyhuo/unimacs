@@ -37,34 +37,36 @@ class IncomingPasteboardTransfer: TPIncomingTransfer {
             return
         }
 
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name(pboardName))
-        let typesStrings = Array(dictionary.keys)
-        let types = typesStrings.map { NSPasteboard.PasteboardType($0) }
+        PasteboardAccess.sync {
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name(pboardName))
+            let typesStrings = Array(dictionary.keys)
+            let types = typesStrings.map { NSPasteboard.PasteboardType($0) }
 
-		let markerType = NSPasteboard.PasteboardType(Bundle.main.bundleIdentifier ?? "unimacs")
-		var declaredTypes = types
-		declaredTypes.append(markerType)
+            let markerType = NSPasteboard.PasteboardType(Bundle.main.bundleIdentifier ?? "unimacs")
+            var declaredTypes = types
+            declaredTypes.append(markerType)
 
-        pasteboard.declareTypes(declaredTypes, owner: nil)
+            pasteboard.declareTypes(declaredTypes, owner: nil)
 
-        for typeString in typesStrings {
-            var data = dictionary[typeString]
+            for typeString in typesStrings {
+                var data = dictionary[typeString]
 
-            if let currentData = data, TPTypeNeedsSwapping(typeString) {
-                if let string = String(data: currentData, encoding: .utf16BigEndian) {
-					if let newData = string.data(using: String.Encoding.utf16LittleEndian) {
-                        data = newData
+                if let currentData = data, TPTypeNeedsSwapping(typeString) {
+                    if let string = String(data: currentData, encoding: .utf16BigEndian) {
+                        if let newData = string.data(using: String.Encoding.utf16LittleEndian) {
+                            data = newData
+                        }
                     }
+                }
+
+                if let finalData = data, !finalData.isEmpty {
+                    pasteboard.setData(finalData, forType: NSPasteboard.PasteboardType(typeString))
                 }
             }
 
-            if let finalData = data, !finalData.isEmpty {
-                pasteboard.setData(finalData, forType: NSPasteboard.PasteboardType(typeString))
-            }
+            // Marker so `PasteboardMonitor` can ignore changes applied by Unimacs itself.
+            pasteboard.setData(Data([1]), forType: markerType)
         }
-
-		// Marker so `PasteboardMonitor` can ignore changes applied by Unimacs itself.
-		pasteboard.setData(Data([1]), forType: markerType)
         _didApplyPasteboard = true
     }
 

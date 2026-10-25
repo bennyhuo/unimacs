@@ -188,6 +188,18 @@ final class SettingsViewModel: ObservableObject {
         didSet { prefs.setValue(transferProgressThreshold, forKey: Settings.transferProgressThresholdKey) }
     }
     
+    @Published var skipClipboardAfterLocalPaste: Bool {
+        didSet { prefs.setValue(skipClipboardAfterLocalPaste, forKey: Settings.skipClipboardAfterLocalPasteKey) }
+    }
+    
+    @Published var enableClipboardTimeout: Bool {
+        didSet { prefs.setValue(enableClipboardTimeout, forKey: Settings.enableClipboardTimeoutKey) }
+    }
+    
+    @Published var clipboardTimeoutInterval: Double {
+        didSet { prefs.setValue(clipboardTimeoutInterval, forKey: Settings.clipboardTimeoutIntervalKey) }
+    }
+    
     // MARK: - Cache Management
     
     @Published var cacheSize: String = "Calculating..."
@@ -378,6 +390,28 @@ final class SettingsViewModel: ObservableObject {
         // Load transfer threshold, use default if not set
         let savedThreshold = prefs.int(forPref: Settings.transferProgressThresholdKey)
         transferProgressThreshold = savedThreshold > 0 ? Int(savedThreshold) : Settings.transferProgressThresholdDefault
+        
+        if prefs.value(forPref: Settings.skipClipboardAfterLocalPasteKey) != nil {
+            skipClipboardAfterLocalPaste = prefs.bool(forPref: Settings.skipClipboardAfterLocalPasteKey)
+        } else {
+            skipClipboardAfterLocalPaste = true
+        }
+        
+        if prefs.value(forPref: Settings.enableClipboardTimeoutKey) != nil {
+            enableClipboardTimeout = prefs.bool(forPref: Settings.enableClipboardTimeoutKey)
+        } else {
+            enableClipboardTimeout = true
+        }
+        
+        let savedClipboardTimeout = Double(prefs.float(forPref: Settings.clipboardTimeoutIntervalKey))
+        if savedClipboardTimeout > 0 {
+            clipboardTimeoutInterval = min(
+                max(savedClipboardTimeout, Settings.clipboardTimeoutIntervalMin),
+                Settings.clipboardTimeoutIntervalMax
+            )
+        } else {
+            clipboardTimeoutInterval = Settings.clipboardTimeoutIntervalDefault
+        }
         
         // Load audio synchronization settings
         selectedVirtualDeviceName = AudioController.shared.selectedVirtualDeviceName

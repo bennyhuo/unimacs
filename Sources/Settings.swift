@@ -77,6 +77,18 @@ class Settings {
     static let transferProgressThresholdKey: String = "transferProgressThreshold"
     static let transferProgressThresholdDefault: Int = 100  // 100 KB
 
+    /// When enabled, if the user copies content and pastes it locally on the same Mac,
+    /// that clipboard content will not be transferred when moving the cursor to another Mac.
+    static let skipClipboardAfterLocalPasteKey: String = "skipClipboardAfterLocalPaste"
+
+    /// When enabled, newly copied clipboard content expires for cross-Mac transfer
+    /// if the user does not switch to another Mac within `clipboardTimeoutIntervalKey` seconds.
+    static let enableClipboardTimeoutKey: String = "enableClipboardTimeout"
+    static let clipboardTimeoutIntervalKey: String = "clipboardTimeoutInterval"
+    static let clipboardTimeoutIntervalDefault: Double = 60.0
+    static let clipboardTimeoutIntervalMin: Double = 30.0
+    static let clipboardTimeoutIntervalMax: Double = 600.0
+
     // MARK: - Key Tags (Numeric Constants)
 
     static let commandKeyTag: Int = 20

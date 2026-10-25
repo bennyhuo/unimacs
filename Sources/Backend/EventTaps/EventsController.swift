@@ -324,6 +324,12 @@ public protocol EventsListener: NSObjectProtocol {
         event.location = currentMouseLocation
         
         _postEvent(event)
+        
+        if let shortcutAction = ClipboardShortcutDetector.classify(cgEvent: event) {
+            DispatchQueue.main.async {
+                TPClipboardTransferCoordinator.shared.handleDetectedShortcut(shortcutAction)
+            }
+        }
     }
     
     @objc public func _postEvent(_ event: CGEvent) {

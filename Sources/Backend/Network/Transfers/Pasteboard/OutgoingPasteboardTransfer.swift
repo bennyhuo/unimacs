@@ -6,6 +6,7 @@
 class OutgoingPasteboardTransfer: TPOutgoingTransfer {
     private var _pasteboardName: String
     private var _maxSize: UInt64 = 0
+    private var _capturedChangeCount: Int = 0
 
 	required init() {
         _pasteboardName = NSPasteboard.Name.general.rawValue
@@ -53,46 +54,51 @@ class OutgoingPasteboardTransfer: TPOutgoingTransfer {
         var infoDict = super.infoDict()
         
         infoDict[TPPasteboardTransferNameKey] = _pasteboardName
-		infoDict[TPPasteboardTransferChangeCountKey] = NSNumber(value: NSPasteboard(name: NSPasteboard.Name(_pasteboardName)).changeCount)
+		infoDict[TPPasteboardTransferChangeCountKey] = NSNumber(value: _capturedChangeCount)
         
         return infoDict
     }
 
 	override func dataToTransfer() -> Data? {
-        var dictionary = [String: Data]()
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name(_pasteboardName))
-        let pasteboardTypes = pasteboard.types ?? []
-        
-        var pasteboardSize: UInt64 = 0
-        for type in pasteboardTypes {
-            let typeString = type.rawValue
-            if TPTypeNeedsIgnoring(typeString) {
-                continue
-            }
-            
-            if var data = pasteboard.data(forType: type) {
-                if TPTypeNeedsSwapping(typeString) {
-                    if let string = String(data: data, encoding: .utf16LittleEndian) {
-                        if let newData = string.data(using: .utf16BigEndian) {
-                            data = newData
+        PasteboardAccess.sync {
+            var dictionary = [String: Data]()
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name(_pasteboardName))
+            let pasteboardTypes = pasteboard.types ?? []
+            _capturedChangeCount = pasteboard.changeCount
+
+            debugLog("Materializing pasteboard '\(_pasteboardName)' (\(pasteboardTypes.count) types) off main", module: .clipboard)
+
+            var pasteboardSize: UInt64 = 0
+            for type in pasteboardTypes {
+                let typeString = type.rawValue
+                if TPTypeNeedsIgnoring(typeString) {
+                    continue
+                }
+
+                if var data = pasteboard.data(forType: type) {
+                    if TPTypeNeedsSwapping(typeString) {
+                        if let string = String(data: data, encoding: .utf16LittleEndian) {
+                            if let newData = string.data(using: .utf16BigEndian) {
+                                data = newData
+                            }
                         }
                     }
-                }
-                
-                if !data.isEmpty {
-                    dictionary[typeString] = data
-                    pasteboardSize += UInt64(data.count)
+
+                    if !data.isEmpty {
+                        dictionary[typeString] = data
+                        pasteboardSize += UInt64(data.count)
+                    }
                 }
             }
+
+            if pasteboardSize == 0 {
+                return nil
+            } else if _maxSize > 0 && pasteboardSize > _maxSize {
+                return nil
+            }
+
+            return try? NSKeyedArchiver.archivedData(withRootObject: dictionary, requiringSecureCoding: false)
         }
-        
-        if pasteboardSize == 0 {
-            return nil
-        } else if _maxSize > 0 && pasteboardSize > _maxSize {
-            return nil
-        }
-        
-        return try? NSKeyedArchiver.archivedData(withRootObject: dictionary, requiringSecureCoding: false)
     }
 
     var generationCount: CFIndex {

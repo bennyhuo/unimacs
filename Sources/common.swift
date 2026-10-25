@@ -477,3 +477,19 @@ func networkDebugLog(
         }
     }
 }
+
+// MARK: - Threading Utilities
+
+/// Executes the given closure on the main thread.
+/// If already executing on the main thread, the closure runs immediately.
+/// Otherwise, it dispatches to the main queue (async by default, or sync if specified).
+func runOnMainThread(sync: Bool = false, _ action: @escaping () -> Void) {
+    if Thread.isMainThread {
+        action()
+    } else if sync {
+        DispatchQueue.main.sync(execute: action)
+    } else {
+        DispatchQueue.main.async(execute: action)
+    }
+}
+

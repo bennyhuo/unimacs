@@ -377,6 +377,7 @@ class TPIncomingPasteboardFileTransfer: TPIncomingTransfer {
 	private var _representedFiles: [TPFileRepresentation]?
 	private var _unarchiver: TPFileUnarchiver?
 	private var _didLogArchiveHeader: Bool = false
+	private var _didApplyPasteboard = false
 
 	var shouldBeEncrypted: Bool {
 		return true
@@ -446,7 +447,7 @@ let sizeString = String.sizeString(for: size)
 		_unarchiver?.write(data)
 	}
 
-	override func _receiverDataTransferCompleted() {
+	override func _prepareReceivedDataBeforeCompletion() {
 		_unarchiver?.close()
 		_unarchiver = nil
 
@@ -461,7 +462,9 @@ let sizeString = String.sizeString(for: size)
 			}
 		}
 
-		if !urls.isEmpty {
+		guard !urls.isEmpty else { return }
+
+		PasteboardAccess.sync {
 			let pasteboard = NSPasteboard.general
 			pasteboard.clearContents()
 
@@ -471,14 +474,16 @@ let sizeString = String.sizeString(for: size)
 			pasteboard.declareTypes([filenamesType, markerType], owner: nil)
 			pasteboard.setPropertyList(urls.map { $0.path }, forType: filenamesType)
 			pasteboard.setData(Data([1]), forType: markerType)
-
-			// Clean up old files, keeping only the current one
-			self.cleanupOldFiles(keeping: destPath)
-
-			// Re-baseline the coordinator so we don't transfer the file back when control stops
-			TPClipboardTransferCoordinator.shared.didApplyIncomingPasteboard()
 		}
 
+		cleanupOldFiles(keeping: destPath)
+		_didApplyPasteboard = true
+	}
+
+	override func _receiverDataTransferCompleted() {
+		if _didApplyPasteboard {
+			TPClipboardTransferCoordinator.shared.didApplyIncomingPasteboard()
+		}
 		super._receiverDataTransferCompleted()
 	}
 

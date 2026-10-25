@@ -375,6 +375,66 @@ struct SettingsTabView: View {
                 // Transfer Section
                 SettingsSection(title: "Transfer") {
                     VStack(alignment: .leading, spacing: 12) {
+                        SettingsRow(
+                            title: "Skip clipboard sync after local paste",
+                            description: "Do not transfer copied content to another Mac after it has already been pasted on the current Mac."
+                        ) {
+                            Toggle("", isOn: $viewModel.skipClipboardAfterLocalPaste)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                        }
+
+                        Divider()
+
+                        SettingsRow(
+                            title: "Expire clipboard sync after timeout",
+                            description: "Only transfer copied content if you move to another Mac within the timeout window."
+                        ) {
+                            Toggle("", isOn: $viewModel.enableClipboardTimeout)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                        }
+
+                        if viewModel.enableClipboardTimeout {
+                            Divider()
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("Clipboard sync timeout")
+                                        .font(.body)
+                                    Spacer()
+                                    Text("\(Int(viewModel.clipboardTimeoutInterval))s")
+                                        .font(.body)
+                                        .foregroundColor(.secondary)
+                                        .fontWeight(.medium)
+                                }
+
+                                HStack(spacing: 12) {
+                                    Text("30s")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+
+                                    Slider(
+                                        value: $viewModel.clipboardTimeoutInterval,
+                                        in: Settings.clipboardTimeoutIntervalMin...Settings.clipboardTimeoutIntervalMax,
+                                        step: 10
+                                    )
+                                    .frame(maxWidth: .infinity)
+
+                                    Text("600s")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Text("If you stay on the current Mac longer than this after copying, the clipboard won't be sent when switching.")
+                                    .font(.callout)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.vertical, 4)
+                        }
+
+                        Divider()
+
                         HStack {
                             Text("Show progress for transfers larger than")
                                 .font(.body)
