@@ -86,7 +86,7 @@ struct DeviceDetailView: View {
                             DetailRow(label: "Screens", value: "\(displayDevice.screenCount)")
                         }
                         if displayDevice.osVersion > 0 {
-                            DetailRow(label: "OS Version", value: formatOSVersion(displayDevice.osVersion))
+                            DetailRow(label: "OS Version", value: SystemInfo.formatOSVersion(displayDevice.osVersion))
                         }
                         if !displayDevice.macAddresses.isEmpty {
                             MacAddressRow(addresses: displayDevice.macAddresses)
@@ -166,14 +166,6 @@ struct DeviceDetailView: View {
         }
         .frame(width: 400, height: 520)
         .background(Color(nsColor: .windowBackgroundColor))
-    }
-    
-    // MARK: - Helpers
-    
-    private func formatOSVersion(_ version: Int) -> String {
-        let major = version / 100
-        let minor = version % 100
-        return "macOS \(major).\(minor)"
     }
 }
 

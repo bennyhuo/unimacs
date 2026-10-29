@@ -280,68 +280,20 @@ final class AudioController: NSObject, AudioStreamManagerDelegate, ScreenCapture
     }
     
     private func getDevices(isInput: Bool) -> [String] {
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: AudioObjectPropertyElement(0)
-        )
-        
-        var dataSize: UInt32 = 0
-        var status = AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            0,
-            nil,
-            &dataSize
-        )
-        guard status == noErr else { return [] }
-        
-        let deviceCount = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
-        var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
-        status = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            0,
-            nil,
-            &dataSize,
-            &deviceIDs
-        )
-        guard status == noErr else { return [] }
-        
-        let scope: AudioObjectPropertyScope = isInput ? kAudioObjectPropertyScopeInput : kAudioObjectPropertyScopeOutput
-        var deviceNames = [String]()
-        for deviceID in deviceIDs {
-            var streamAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyStreams,
-                mScope: scope,
-                mElement: AudioObjectPropertyElement(0)
-            )
-            var streamSize: UInt32 = 0
-            status = AudioObjectGetPropertyDataSize(deviceID, &streamAddress, 0, nil, &streamSize)
-            guard status == noErr && streamSize > 0 else { continue }
-            let streamCount = Int(streamSize) / MemoryLayout<AudioStreamID>.size
-            guard streamCount > 0 else { continue }
-            
-            // Query Device Name
-            var nameAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceNameCFString,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: AudioObjectPropertyElement(0)
-            )
-            var nameSize = UInt32(MemoryLayout<CFString?>.size)
-            var deviceNameCF: CFString?
-            status = AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &deviceNameCF)
-            if status == noErr, let name = deviceNameCF as String? {
-                debugLog("AudioController: [DeviceQuery] \(isInput ? "Input" : "Output") Device [ID:\(deviceID)] '\(name)': streams=\(streamCount)", module: .network)
-                deviceNames.append(name)
-            }
-        }
-        return deviceNames
-        return deviceNames
+        return queryAudioDevices(isInput: isInput).map { $0.name }
     }
     
     /// Find AudioDeviceID by name matching
     private func findDeviceID(named name: String, isInput: Bool) -> AudioDeviceID? {
+        let lowerTarget = name.lowercased()
+        if let match = queryAudioDevices(isInput: isInput).first(where: { $0.name.lowercased().contains(lowerTarget) }) {
+            return match.id
+        }
+        return queryAudioDevices(isInput: nil).first(where: { $0.name.lowercased().contains(lowerTarget) })?.id
+    }
+
+    /// Queries CoreAudio hardware devices, optionally filtered by stream direction (`isInput`).
+    private func queryAudioDevices(isInput: Bool?) -> [(id: AudioDeviceID, name: String)] {
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -356,7 +308,7 @@ final class AudioController: NSObject, AudioStreamManagerDelegate, ScreenCapture
             nil,
             &dataSize
         )
-        guard status == noErr else { return nil }
+        guard status == noErr else { return [] }
         
         let deviceCount = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
         var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
@@ -368,25 +320,45 @@ final class AudioController: NSObject, AudioStreamManagerDelegate, ScreenCapture
             &dataSize,
             &deviceIDs
         )
-        guard status == noErr else { return nil }
+        guard status == noErr else { return [] }
         
+        var result = [(id: AudioDeviceID, name: String)]()
         for deviceID in deviceIDs {
-            var nameAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceNameCFString,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: AudioObjectPropertyElement(0)
-            )
-            var nameSize = UInt32(MemoryLayout<CFString?>.size)
-            var deviceNameCF: CFString?
-            status = AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &deviceNameCF)
-            
-            if status == noErr, let deviceName = deviceNameCF as String? {
-                if deviceName.lowercased().contains(name.lowercased()) {
-                    return deviceID
+            if let isInput = isInput {
+                let scope: AudioObjectPropertyScope = isInput ? kAudioObjectPropertyScopeInput : kAudioObjectPropertyScopeOutput
+                var streamAddress = AudioObjectPropertyAddress(
+                    mSelector: kAudioDevicePropertyStreams,
+                    mScope: scope,
+                    mElement: AudioObjectPropertyElement(0)
+                )
+                var streamSize: UInt32 = 0
+                status = AudioObjectGetPropertyDataSize(deviceID, &streamAddress, 0, nil, &streamSize)
+                guard status == noErr && streamSize > 0 else { continue }
+                let streamCount = Int(streamSize) / MemoryLayout<AudioStreamID>.size
+                guard streamCount > 0 else { continue }
+                
+                if let name = audioDeviceName(for: deviceID) {
+                    debugLog("AudioController: [DeviceQuery] \(isInput ? "Input" : "Output") Device [ID:\(deviceID)] '\(name)': streams=\(streamCount)", module: .network)
+                    result.append((id: deviceID, name: name))
                 }
+            } else if let name = audioDeviceName(for: deviceID) {
+                result.append((id: deviceID, name: name))
             }
         }
-        return nil
+        return result
+    }
+
+    private func audioDeviceName(for deviceID: AudioDeviceID) -> String? {
+        var nameAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceNameCFString,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: AudioObjectPropertyElement(0)
+        )
+        var nameSize = UInt32(MemoryLayout<CFString?>.size)
+        var deviceNameCF: CFString?
+        let status = AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &deviceNameCF)
+        guard status == noErr, let name = deviceNameCF as String? else { return nil }
+        return name
     }
     
     // MARK: - Core Audio Sync Actions
@@ -1008,8 +980,18 @@ final class AudioController: NSObject, AudioStreamManagerDelegate, ScreenCapture
     
     /// Get current system default output device ID
     func getDefaultOutputDeviceID() -> AudioDeviceID? {
+        getDefaultAudioDeviceID(selector: kAudioHardwarePropertyDefaultOutputDevice)
+    }
+    
+    /// Set system default output device ID
+    @discardableResult
+    func setDefaultOutputDeviceID(_ deviceID: AudioDeviceID) -> Bool {
+        setDefaultAudioDeviceID(deviceID, selector: kAudioHardwarePropertyDefaultOutputDevice)
+    }
+
+    private func getDefaultAudioDeviceID(selector: AudioObjectPropertySelector) -> AudioDeviceID? {
         var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: AudioObjectPropertyElement(0)
         )
@@ -1025,12 +1007,10 @@ final class AudioController: NSObject, AudioStreamManagerDelegate, ScreenCapture
         )
         return status == noErr ? deviceID : nil
     }
-    
-    /// Set system default output device ID
-    @discardableResult
-    func setDefaultOutputDeviceID(_ deviceID: AudioDeviceID) -> Bool {
+
+    private func setDefaultAudioDeviceID(_ deviceID: AudioDeviceID, selector: AudioObjectPropertySelector) -> Bool {
         var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: AudioObjectPropertyElement(0)
         )
@@ -1158,43 +1138,13 @@ final class AudioController: NSObject, AudioStreamManagerDelegate, ScreenCapture
     
     /// Get current system default input device ID
     func getDefaultInputDeviceID() -> AudioDeviceID? {
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: AudioObjectPropertyElement(0)
-        )
-        var deviceID = AudioDeviceID(0)
-        var dataSize = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let status = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            0,
-            nil,
-            &dataSize,
-            &deviceID
-        )
-        return status == noErr ? deviceID : nil
+        getDefaultAudioDeviceID(selector: kAudioHardwarePropertyDefaultInputDevice)
     }
     
     /// Set system default input device ID
     @discardableResult
     func setDefaultInputDeviceID(_ deviceID: AudioDeviceID) -> Bool {
-        var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: AudioObjectPropertyElement(0)
-        )
-        var deviceIDVar = deviceID
-        let dataSize = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let status = AudioObjectSetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &propertyAddress,
-            0,
-            nil,
-            dataSize,
-            &deviceIDVar
-        )
-        return status == noErr
+        setDefaultAudioDeviceID(deviceID, selector: kAudioHardwarePropertyDefaultInputDevice)
     }
     
     /// Check and automatically route default system input to BlackHole virtual device

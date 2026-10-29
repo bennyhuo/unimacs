@@ -51,6 +51,26 @@ class HostDevice: Notifiable, NSCoding {
 	var screens: [Screen] = []
 	var capabilities: HostCapability { [] }
 
+	/// Bounding rectangle enclosing all screens of this host (`.null` when empty).
+	var desktopFrame: NSRect {
+		screens.unionFrame
+	}
+
+	/// Human-readable macOS version string (e.g., `"macOS 15.2"`).
+	var formattedOSVersion: String {
+		SystemInfo.formatOSVersion(osVersion)
+	}
+
+	/// Whether this host is a portable Mac (laptop).
+	var isPortable: Bool {
+		hasCapability(.portable)
+	}
+
+	/// SF Symbol icon name representing this host's form factor.
+	var systemIconName: String {
+		isPortable ? "laptopcomputer" : "desktopcomputer"
+	}
+
     override class var notificationName: Notification.Name {
         .hostDidUpdate
     }

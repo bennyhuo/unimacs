@@ -8,29 +8,6 @@ import Foundation
 // Assuming PING_MAX_COUNT was a preprocessor macro defined elsewhere (e.g., "5")
 let PING_MAX_COUNT = "2"
 
-/// Represents a network interface with its IPv4 address and subnet mask
-private struct InterfaceInfo {
-	let name: String
-	let ipAddress: String
-	let subnetMask: String
-	
-	/// Check if the given IP address is in the same subnet as this interface
-	func isInSameSubnet(targetIP: String) -> Bool {
-		guard let ifIP = ipToUInt32(ipAddress),
-			  let mask = ipToUInt32(subnetMask),
-			  let target = ipToUInt32(targetIP) else {
-			return false
-		}
-		return (ifIP & mask) == (target & mask)
-	}
-	
-	private func ipToUInt32(_ ip: String) -> UInt32? {
-		let parts = ip.split(separator: ".").compactMap { UInt32($0) }
-		guard parts.count == 4 else { return nil }
-		return (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]
-	}
-}
-
 /**
  Manages asynchronous ping operations, ensuring only one ping is active per host.
  */
@@ -57,55 +34,9 @@ class PingManager : NSObject {
 		}
 	}
 	
-	/// Get all network interfaces with IPv4 addresses
-	private static func getAllInterfaces() -> [InterfaceInfo] {
-		var interfaces: [InterfaceInfo] = []
-		var ifaddr: UnsafeMutablePointer<ifaddrs>?
-		
-		guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return [] }
-		defer { freeifaddrs(ifaddr) }
-		
-		for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
-			let interface = ptr.pointee
-			let name = String(cString: interface.ifa_name)
-			
-			// Filter for 'en' and 'bridge' prefixes (physical/bridge network interfaces)
-			guard name.hasPrefix("en") || name.hasPrefix("bridge") else { continue }
-			
-			// Skip interfaces that are not UP or are LOOPBACK
-			guard (interface.ifa_flags & UInt32(IFF_UP)) != 0,
-				  (interface.ifa_flags & UInt32(IFF_LOOPBACK)) == 0 else { continue }
-			
-			// Check for IPv4 family
-			guard interface.ifa_addr.pointee.sa_family == UInt8(AF_INET) else { continue }
-			
-			// Get IP address
-			var ipBuffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-			interface.ifa_addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sockaddr_in_ptr in
-				var addr = sockaddr_in_ptr.pointee.sin_addr
-				inet_ntop(AF_INET, &addr, &ipBuffer, socklen_t(INET_ADDRSTRLEN))
-			}
-			let ipAddress = String(cString: ipBuffer)
-			
-			// Get subnet mask
-			var maskBuffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-			if let netmask = interface.ifa_netmask {
-				netmask.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sockaddr_in_ptr in
-					var addr = sockaddr_in_ptr.pointee.sin_addr
-					inet_ntop(AF_INET, &addr, &maskBuffer, socklen_t(INET_ADDRSTRLEN))
-				}
-			}
-			let subnetMask = String(cString: maskBuffer)
-			
-			interfaces.append(InterfaceInfo(name: name, ipAddress: ipAddress, subnetMask: subnetMask))
-		}
-		
-		return interfaces
-	}
-	
 	/// Filter interfaces that could potentially reach the target IP (same subnet or all if none match)
 	private static func getCandidateInterfaces(for targetIP: String) -> [String] {
-		let allInterfaces = getAllInterfaces()
+		let allInterfaces = NetworkUtils.activeIPv4Interfaces(onlySupported: true)
 		
 		// First, try to find interfaces in the same subnet
 		let sameSubnetInterfaces = allInterfaces.filter { $0.isInSameSubnet(targetIP: targetIP) }

@@ -53,14 +53,11 @@ struct DeviceInfo: Identifiable, Equatable {
         self.reconnectSecondsRemaining = manager.reconnectSecondsRemaining(for: host)
         
         let state = host.hostState
-        self.isPaired = state.contains(.peeredOffline) ||
-                       state.contains(.peeredOnline) ||
-                       state.contains(.controlled) ||
-                       state.contains(.peering)
+        self.isPaired = host.isInState(.peered) || state.contains(.peering)
         self.isConnected = linkPhase == .connected
         self.isControlling = state.contains(.controlled)
         self.isBeingControlled = false
-        self.isPortable = host.hasCapability(.portable)
+        self.isPortable = host.isPortable
     }
     
     var systemIconName: String {
@@ -68,32 +65,16 @@ struct DeviceInfo: Identifiable, Equatable {
     }
     
     var statusText: String {
-        if isControlling {
-            return "Controlling"
-        }
-        if let error = lastError, linkPhase == .disconnected || linkPhase == .unavailable {
-            return error
-        }
-        switch linkPhase {
-        case .connected:
-            return "Connected"
-        case .connecting:
-            return "Connecting…"
-        case .reconnecting:
-            if let seconds = reconnectSecondsRemaining, seconds > 0 {
-                return "Reconnecting in \(seconds)s…"
-            }
-            return "Connecting…"
-        case .disconnected:
-            return "Disconnected"
-        case .unavailable:
-            return "Unavailable"
-        }
+        formattedStatusText(controllingText: "Controlling")
     }
     
     var connectionStatusText: String {
+        formattedStatusText(controllingText: "Controlling this device")
+    }
+    
+    private func formattedStatusText(controllingText: String) -> String {
         if isControlling {
-            return "Controlling this device"
+            return controllingText
         }
         if let error = lastError, linkPhase == .disconnected || linkPhase == .unavailable {
             return error
@@ -288,12 +269,12 @@ final class DevicesViewModel: ObservableObject {
         // Load Local Device Details
         let localHost = LocalHost.shared
         localName = localHost.computerName
-        localOSVersion = formatOSVersion(localHost.osVersion)
+        localOSVersion = localHost.formattedOSVersion
         localScreenCount = localHost.screens.count
-        localSystemIconName = localHost.hasCapability(.portable) ? "laptopcomputer" : "desktopcomputer"
+        localSystemIconName = localHost.systemIconName
         
         let watcher = NetworkConfigurationWatcher.shared
-        let addresses = watcher.localIpAddresses.filter { $0 != "0.0.0.0" }
+        let addresses = watcher.nonWildcardLocalIpAddresses
         localIPAddresses = addresses.isEmpty ? ["Offline"] : addresses
         localPort = Int(PreferencesManager.shared().port(forPref: COMMAND_PORT))
         
@@ -322,12 +303,6 @@ final class DevicesViewModel: ObservableObject {
         }
         
         updateCountdownTimer()
-    }
-    
-    private func formatOSVersion(_ version: Int) -> String {
-        let major = version / 100
-        let minor = version % 100
-        return "macOS \(major).\(minor)"
     }
     
     private func linkPhaseSortRank(_ phase: DeviceLinkPhase) -> Int {
@@ -379,15 +354,7 @@ final class DevicesViewModel: ObservableObject {
             disconnect(from: device)
         }
         
-        AuthenticationManager.default.host(host, setTrusted: false)
-        
-        if host.isInState(.online) {
-            host.hostState = .shared
-        } else {
-            host.hostState = []
-        }
-        
-        HostDevicesManager.shared.saveHosts()
+        HostDevicesManager.shared.unpairHost(host)
         loadDevices()
     }
     

@@ -39,13 +39,20 @@ final class AudioStreamManager {
     var useCompression: Bool = false // If true, converts Float to Int16 before sending
     
     init() {}
+
+    private static func makeUDPParameters() -> NWParameters {
+        let params = NWParameters.udp
+        if let ipOptions = params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
+            ipOptions.version = .v4
+        }
+        return params
+    }
     
     /// Start listening for incoming system audio packets (Client role)
     func startSysListener(completion: @escaping (UInt16) -> Void) throws {
         stopSysListener()
         
-        let params = NWParameters.udp
-        let listener = try NWListener(using: params, on: .any)
+        let listener = try NWListener(using: Self.makeUDPParameters(), on: .any)
         
         listener.stateUpdateHandler = { [weak self] state in
             switch state {
@@ -83,8 +90,7 @@ final class AudioStreamManager {
     func startMicListener(completion: @escaping (UInt16) -> Void) throws {
         stopMicListener()
         
-        let params = NWParameters.udp
-        let listener = try NWListener(using: params, on: .any)
+        let listener = try NWListener(using: Self.makeUDPParameters(), on: .any)
         
         listener.stateUpdateHandler = { [weak self] state in
             switch state {
@@ -123,7 +129,7 @@ final class AudioStreamManager {
         stopSysSender()
         
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
-        let connection = NWConnection(to: endpoint, using: .udp)
+        let connection = NWConnection(to: endpoint, using: Self.makeUDPParameters())
         
         connection.stateUpdateHandler = { state in
             switch state {
@@ -150,7 +156,7 @@ final class AudioStreamManager {
         stopMicSender()
         
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
-        let connection = NWConnection(to: endpoint, using: .udp)
+        let connection = NWConnection(to: endpoint, using: Self.makeUDPParameters())
         
         connection.stateUpdateHandler = { state in
             switch state {

@@ -93,7 +93,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		// Hot border
 		// NOTE: local host may have multiple screens; the hot border must be clipped by the
 		// whole local desktop (union of screens), not a single screen frame.
-		let localDesktopFrame = LocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
+		let localDesktopFrame = LocalHost.shared.desktopFrame
 		
 		let hasValidRemotePlacement = (host.hostDesktopRect != .zero)
 
@@ -202,7 +202,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		
 		if DeviceConnectionManager.shared.isReachableForControl(remoteHost) {
 			// `location` is window-local. Convert it to a point relative to the *local desktop bounding rect*.
-			let localDesktopRect = LocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
+			let localDesktopRect = LocalHost.shared.desktopFrame
 			let localCocoaPoint = hotBorder.screenPoint(fromLocalPoint: location, flipped: false)
 			let desktopRelativeLocation = NSPoint(
 				x: localCocoaPoint.x - localDesktopRect.minX,
@@ -327,7 +327,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		
 		// The client desktop can span multiple screens (e.g. vertical stacked displays).
 		// Use the full desktop bounding rect so the return hot border can also span screens.
-		let clientDesktopRect = LocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
+		let clientDesktopRect = LocalHost.shared.desktopFrame
 		
 		// When the border spans multiple local screens, we must glue the remote host rect to the
 		// *actual* screen the cursor used to enter, otherwise the placement will be shifted and the
@@ -443,7 +443,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 			}
 		} else if let mouseValue = infoDict[TPMousePositionKey] as? NSData {
 			// Fallback (legacy): `TPMousePositionKey` is relative to the *local desktop bounding rect*.
-			let localDesktopRect = LocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
+			let localDesktopRect = LocalHost.shared.desktopFrame
 			let desktopRelative = mouseValue.pointValue
 			let localCocoaPoint = NSPoint(
 				x: localDesktopRect.minX + desktopRelative.x,
@@ -541,6 +541,15 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
     
     @MainActor
     func connectionDidEstablish(to host: RemoteHost, connection: NetworkConnection) {
+        if let currentHost = self.currentConnection?.connectedHost,
+           currentHost.identifier == host.identifier,
+           self.currentConnection !== connection {
+            if _state == .controllingState {
+                self.stopControl(withDisconnect: false)
+            }
+            self.currentConnection = nil
+        }
+
         // Only honor a pending control request from an explicit user-initiated attempt.
         if _state == .connectingState, _pendingControlRequestInfo != nil {
             fulfillPendingControlRequest(on: connection, for: host)
@@ -647,11 +656,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
             if let peerPortVal = info["port"] as? Int {
                 let peerPort = UInt16(peerPortVal)
                 let localPort = AudioController.shared.streamManager.sysLocalPort
-                let rawIp = connection.connectedHost?.address ?? "127.0.0.1"
-                var ipAddress = rawIp
-                if rawIp.lowercased().hasPrefix("fe80"), let interface = connection.networkInterfaceName {
-                    ipAddress = "\(rawIp)%\(interface)"
-                }
+                let ipAddress = connection.connectedHost?.address ?? NetworkUtils.loopbackIPv4Address
                 
                 AudioController.shared.startAudioSync(
                     peerHostId: host.identifier,

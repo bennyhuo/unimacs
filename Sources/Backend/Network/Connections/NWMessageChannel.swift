@@ -58,18 +58,14 @@ private enum NWTLSConfigurator {
         return nil
     }
 
-    /// Helper: extract a bare IP/host string from an endpoint (legacy returns IP only).
+    /// Helper: extract a bare IPv4/host string from an endpoint (legacy returns IP only).
     static func ipString(from endpoint: NWEndpoint?) -> String? {
         guard case let .hostPort(host, _)? = endpoint else { return nil }
-        let raw: String
         switch host {
-        case .ipv4(let address): raw = "\(address)"
-        case .ipv6(let address): raw = "\(address)"
-        case .name(let name, _): raw = name
-        @unknown default: return nil
+        case .ipv4(let address): return "\(address)"
+        case .name(let name, _): return name
+        default: return nil
         }
-        // Strip a possible IPv6 zone id, e.g. "fe80::1%en0".
-        return raw.components(separatedBy: "%").first
     }
 }
 
@@ -240,6 +236,9 @@ final class NWMessageChannel: MessageChannel {
             params = NWParameters(tls: tls, tcp: tcp)
         } else {
             params = NWParameters(tls: nil, tcp: tcp)
+        }
+        if let ipOptions = params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
+            ipOptions.version = .v4
         }
         params.serviceClass = .interactiveVoice
         return params
@@ -423,7 +422,7 @@ final class NWMessageListener: MessageListener {
 
         let params = makeParameters()
         let selectedIp = NetworkConfigurationWatcher.shared.selectedLocalIpAddress
-        let bindToSpecificIp = selectedIp != "0.0.0.0" && !selectedIp.isEmpty
+        let bindToSpecificIp = NetworkUtils.isSpecificBindableIP(selectedIp)
 
         let listener: NWListener
         do {
@@ -489,6 +488,9 @@ final class NWMessageListener: MessageListener {
             params = NWParameters(tls: tls, tcp: tcp)
         } else {
             params = NWParameters(tls: nil, tcp: tcp)
+        }
+        if let ipOptions = params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
+            ipOptions.version = .v4
         }
         params.allowLocalEndpointReuse = true
         return params

@@ -78,10 +78,8 @@ class TXTRecord {
 
     static func fromLocal() -> TXTRecord {
         let localHost = LocalHost.shared
-        var selectedIpAddress = NetworkConfigurationWatcher.shared.selectedLocalIpAddress
-        if selectedIpAddress == "0.0.0.0" || selectedIpAddress == "127.0.0.1" {
-            selectedIpAddress = ""
-        }
+        let selectedIp = NetworkConfigurationWatcher.shared.selectedLocalIpAddress
+        let selectedIpAddress = NetworkUtils.isSpecificBindableIP(selectedIp) ? selectedIp : ""
 
         return TXTRecord(
 			version: Self.currentTXTVersion,
@@ -121,15 +119,7 @@ class TXTRecord {
     /// Parse MAC addresses from string format "aa:bb:cc:dd:ee:ff,11:22:33:44:55:66"
     private static func parseMacAddresses(_ string: String?) -> [IOEthernetAddress] {
         guard let string = string, !string.isEmpty else { return [] }
-        return string.components(separatedBy: ",").compactMap { macString in
-            let parts = macString.components(separatedBy: ":")
-            guard parts.count == 6 else { return nil }
-            let bytes = parts.compactMap { UInt8($0, radix: 16) }
-            guard bytes.count == 6 else { return nil }
-            return bytes.withUnsafeBufferPointer { buffer in
-                IOEthernetAddress(buffer.baseAddress!)
-            }
-        }
+        return string.components(separatedBy: ",").compactMap { IOEthernetAddress(string: $0) }
     }
 
     func toData() -> Data {

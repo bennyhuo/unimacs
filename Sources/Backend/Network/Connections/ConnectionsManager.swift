@@ -76,7 +76,10 @@ extension SocketConnection: NetworkConnectionDelegate {
         debugLog("SocketConnection receivedMessage", module: .network)
         
         if message.msgType == .identification {
-            guard let infoDict = message.infoDict as? [String: Any] else { return }
+            guard let infoDict = message.infoDict as? [String: Any] else {
+                ConnectionsManager.shared.socketConnectionFailed(self)
+                return
+            }
             let protocolVersion = (infoDict[TPMsgProtocolVersionKey] as? NSNumber)?.intValue ?? 0
             
             if protocolVersion == PROTOCOL_VERSION {
@@ -84,6 +87,8 @@ extension SocketConnection: NetworkConnectionDelegate {
                     let remoteHost = HostDevicesManager.shared.updatedHost(from: hostData)
                     connection.connectedHost = remoteHost
                     ConnectionsManager.shared.socketConnection(self, succeededWithNetworkConnection: connection)
+                } else {
+                    ConnectionsManager.shared.socketConnectionFailed(self)
                 }
             } else {
                 let remoteHost: RemoteHost?
@@ -153,14 +158,7 @@ extension SocketConnection: NetworkConnectionDelegate {
     /// manual disconnect does not fall back to a fresh pairing flow when cert comparison
     /// alone would fail.
     fileprivate static func believesPaired(with remoteHost: RemoteHost) -> Bool {
-        if AuthenticationManager.default.isHostTrusted(remoteHost) {
-            return true
-        }
-        if let knownHost = HostDevicesManager.shared.host(withIdentifier: remoteHost.identifier),
-           knownHost.isInState(.peered) {
-            return true
-        }
-        return false
+        HostDevicesManager.shared.isPaired(with: remoteHost)
     }
     
     // MARK: - Connect to Host

@@ -409,14 +409,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
 
     /// Whether this machine still treats the remote host as a paired peer.
     private func believesPairedLocally(with host: RemoteHost) -> Bool {
-        if AuthenticationManager.default.isHostTrusted(host) {
-            return true
-        }
-        if let knownHost = HostDevicesManager.shared.host(withIdentifier: host.identifier),
-           knownHost.isInState(.peered) {
-            return true
-        }
-        return false
+        HostDevicesManager.shared.isPaired(with: host)
     }
 
     /// Restore DCM as the message delegate for a connection already in the persistent pool.
@@ -507,7 +500,14 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
 
         let hostId = host.identifier
         if connectingHosts.contains(hostId) {
-            return true
+            if resetRetryBudget {
+                // User explicitly clicked Connect/Retry while a previous outbound attempt was still in flight (or stuck).
+                // Cancel the previous pending outbound attempt so the fresh attempt can proceed immediately.
+                ConnectionsManager.shared.cancelPendingOutbound(forHostIdentifier: hostId)
+                connectingHosts.remove(hostId)
+            } else {
+                return true
+            }
         }
 
         if resetRetryBudget {
@@ -579,13 +579,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
 
     /// Apply unpair state from a peer notification and refresh UI immediately.
     private func finalizeRemoteUnpair(from host: RemoteHost, connection: NetworkConnection) {
-        AuthenticationManager.default.host(host, setTrusted: false)
-        if host.isInState(.online) {
-            host.hostState = .shared
-        } else {
-            host.hostState = []
-        }
-        HostDevicesManager.shared.saveHosts()
+        HostDevicesManager.shared.unpairHost(host)
 
         cancelReconnect(for: host.identifier)
         manuallyDisconnectedHosts.remove(host.identifier)
@@ -698,8 +692,13 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         }
 
         guard shouldInitiateOutboundConnection(to: host) else {
+            let currentRetry = reconnectRetryCount[hostId] ?? 0
             debugLog("Skipping reconnect schedule for \(host.computerName) because we wait for remote to dial us", module: .network)
             cleanupReconnectState(for: hostId)
+            if currentRetry == 0, host.isInState(.peeredOnline) {
+                reconnectRetryCount[hostId] = 1
+                schedulePassiveProbe(for: host)
+            }
             return
         }
 
@@ -920,19 +919,31 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         }
         guard connection.isConnected else {
             warningLog("Skipping registerConnection for \(host.computerName); socket not connected (state=\(connection.channelState.rawValue))", module: .network)
+            if let activeConnection = connections[host.identifier], activeConnection.isConnected {
+                connectingHosts.remove(host.identifier)
+                reconnectingHosts.remove(host.identifier)
+                notifyReachabilityChanged(for: host)
+            } else {
+                connectingHosts.remove(host.identifier)
+                scheduleReconnect(for: host.identifier)
+            }
             return
         }
         if let existing = connections[host.identifier], existing !== connection {
             if !existing.isConnected {
                 // Drop a stale registry entry whose socket already died.
-            } else if connection.origin == .accepted && existing.origin == .dialed {
-                // Peer dialed us while our outbound link is still registered (common after
-                // disconnect/reconnect races). Prefer the peer-initiated inbound leg.
-                warningLog("Replacing outbound with peer inbound for \(host.computerName) (existing=\(existing.connectionId), new=\(connection.connectionId))", module: .network)
+            } else if connection.origin == .accepted {
+                // Peer dialed us while a previous link (outbound or half-open inbound) is still
+                // registered (common after disconnect/reconnect races). Since a peer only initiates
+                // a new dial when it has no live link to us, the existing entry is stale on the
+                // peer's side — replace it with the fresh peer-initiated inbound leg.
+                warningLog("Replacing existing connection with peer inbound for \(host.computerName) (existing=\(existing.connectionId), existingOrigin=\(existing.origin.rawValue), new=\(connection.connectionId))", module: .network)
                 existing.disconnect()
             } else {
                 warningLog("Duplicate connection to \(host.computerName); keeping the established link (existing=\(existing.connectionId), new=\(connection.connectionId))", module: .network)
+                resetReconnectState(for: host.identifier)
                 connection.disconnect()
+                notifyReachabilityChanged(for: host)
                 return
             }
         }
@@ -1007,10 +1018,19 @@ extension DeviceConnectionManager: ClientConnectionsDelegate {
             guard let host = connection.connectedHost else { return }
             guard connection.isConnected else {
                 warningLog("Ignoring succeeded outbound handshake to \(host.computerName); socket already disconnected", module: .network)
+                if let activeConnection = connections[host.identifier], activeConnection.isConnected {
+                    connectingHosts.remove(host.identifier)
+                    reconnectingHosts.remove(host.identifier)
+                    notifyReachabilityChanged(for: host)
+                } else {
+                    connectingHosts.remove(host.identifier)
+                    scheduleReconnect(for: host.identifier)
+                }
                 return
             }
             guard believesPairedLocally(with: host) else {
                 warningLog("Ignoring succeeded outbound handshake to \(host.computerName); host no longer paired", module: .network)
+                cleanupReconnectState(for: host.identifier)
                 connection.disconnect()
                 return
             }

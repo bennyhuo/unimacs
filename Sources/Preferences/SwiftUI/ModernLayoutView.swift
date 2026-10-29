@@ -479,10 +479,7 @@ final class LayoutViewModel: ObservableObject {
         var hostLayout = connectedHostLayouts[index]
 
         // Calculate local host bounds (union of local screens, already in global coords)
-        var localBounds = CGRect.null
-        for screen in local.screens {
-            localBounds = localBounds.union(screen.frame)
-        }
+        let localBounds = local.bounds
         guard !localBounds.isNull else { return }
 
         // Remote host bounds in global coords (hostLayout.position is the global origin of hostLayout.bounds)
@@ -535,10 +532,7 @@ struct HostLayout: Identifiable {
         self.screens = screenLayouts
         
         // Calculate bounds (union of all screen frames)
-        var unionRect = CGRect.null
-        for screen in screens {
-            unionRect = unionRect.union(screen.frame)
-        }
+        let unionRect = host.desktopFrame
         self.bounds = unionRect.isNull ? CGRect(x: 0, y: 0, width: 1920, height: 1080) : unionRect
         
         // Get position from remote host

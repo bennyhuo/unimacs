@@ -42,6 +42,20 @@ class IOEthernetAddress: NSObject, NSCoding {
         self.bytes.initialize(from: bytes, count: Self.size)
     }
 
+    /// Parses a colon-separated hexadecimal MAC address string (e.g. `"aa:bb:cc:dd:ee:ff"`).
+    convenience init?(string: String) {
+        let parts = string.components(separatedBy: ":")
+        guard parts.count == Self.size else { return nil }
+        let parsedBytes = parts.compactMap { UInt8($0, radix: 16) }
+        guard parsedBytes.count == Self.size else { return nil }
+        self.init()
+        parsedBytes.withUnsafeBufferPointer { buffer in
+            if let base = buffer.baseAddress {
+                self.bytes.assign(from: base, count: Self.size)
+            }
+        }
+    }
+
     deinit {
         bytes.deallocate()
     }

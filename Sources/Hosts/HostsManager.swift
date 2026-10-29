@@ -387,10 +387,30 @@ class HostDevicesManager: NSObject {
             saveHosts()
             notifyChanges()
         } else {
+            host.hostState = []
             if _hosts.removeValue(forKey: host.identifier) != nil {
                 saveHosts()
                 notifyChanges()
             }
         }
+    }
+
+    /// Whether this machine considers the remote host a paired peer (checked via trust store or persisted peered state).
+    func isPaired(with host: RemoteHost) -> Bool {
+        if AuthenticationManager.default.isHostTrusted(host) {
+            return true
+        }
+        if let knownHost = self.host(withIdentifier: host.identifier),
+           knownHost.isInState(.peered) {
+            return true
+        }
+        return false
+    }
+
+    /// Synchronously clears trust and resets pairing state for the given host.
+    @MainActor
+    func unpairHost(_ host: RemoteHost) {
+        AuthenticationManager.default.host(host, setTrusted: false)
+        removeTrustedHostFromHosts(host)
     }
 }

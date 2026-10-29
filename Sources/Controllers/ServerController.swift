@@ -154,7 +154,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
 		ClientController.shared.updateTriggersAndShowVisualHint(false)
         
 		
-		let localDesktopFrame = LocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
+		let localDesktopFrame = LocalHost.shared.desktopFrame
         
 		// `screenPlacement` is expressed in a coordinate system whose origin is the *server desktop* bounding rect.
 		// Convert it to server global screen coordinates by adding the server desktop origin.
@@ -255,7 +255,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
                 messageInfoDict[TPSwitchControlKey] = true
                 self.pendingSwitchToHost = self.currentConnection?.connectedHost
                 
-                let localDesktopRect = LocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
+                let localDesktopRect = LocalHost.shared.desktopFrame
                 let localDesktopRelative = NSPoint(
                     x: serverCocoaPoint.x - localDesktopRect.minX,
                     y: serverCocoaPoint.y - localDesktopRect.minY
@@ -329,6 +329,13 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
     
     @MainActor
     func connectionDidEstablish(to host: RemoteHost, connection: NetworkConnection) {
+        if currentConnection?.connectedHost?.identifier == host.identifier,
+           currentConnection !== connection {
+            if state == .controlled {
+                stopControl(withDisconnect: false)
+            }
+            currentConnection = nil
+        }
         // Server receives incoming connections, no specific action needed on establishment
         // The connection is ready to receive control requests
         NSLog("ServerController: Connection established from \(host.computerName)")
@@ -395,11 +402,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
                 do {
                     try AudioController.shared.streamManager.startSysListener { localPort in
                         DispatchQueue.main.async {
-                            let rawIp = connection.connectedHost?.address ?? "127.0.0.1"
-                            var ipAddress = rawIp
-                            if rawIp.lowercased().hasPrefix("fe80"), let interface = connection.networkInterfaceName {
-                                ipAddress = "\(rawIp)%\(interface)"
-                            }
+                            let ipAddress = connection.connectedHost?.address ?? NetworkUtils.loopbackIPv4Address
                             
                             // Start sync as HOST role
                             AudioController.shared.startAudioSync(

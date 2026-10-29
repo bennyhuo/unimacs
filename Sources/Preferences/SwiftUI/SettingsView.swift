@@ -1043,39 +1043,6 @@ struct TrustedHostRow: View {
 struct AboutTabView: View {
     @State private var versionIndex = 0
     
-    private var appIcon: NSImage? {
-        NSApp.applicationIconImage
-    }
-    
-    private var appName: String {
-        Bundle.main.infoDictionary?["CFBundleDisplayName"] as? String ?? "Unimacs"
-    }
-    
-    private var version: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1.0"
-    }
-    
-    private var buildNumber: String {
-        Bundle.main.infoDictionary?["TPRevision"] as? String ?? ""
-    }
-    
-    private var copyright: String {
-        Bundle.main.localizedInfoDictionary?["NSHumanReadableCopyright"] as? String
-            ?? Bundle.main.infoDictionary?["NSHumanReadableCopyright"] as? String
-            ?? "Copyright © 2003–2012 abyssoft (Julien Robert), 2020–2023 John Britton, 2025–2026 Benny Huo."
-    }
-    
-    private var versionStrings: [String] {
-        var versions = [
-            "Version \(version)",
-            "Build \(buildNumber)"
-        ]
-        if let translationInfo = Bundle.main.localizedInfoDictionary?["TPTranslationInfoString"] as? String {
-            versions.append(translationInfo)
-        }
-        return versions
-    }
-    
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -1098,7 +1065,7 @@ struct AboutTabView: View {
                 Spacer()
                 
                 // App icon
-                if let icon = appIcon {
+                if let icon = NSApp.applicationIconImage {
                     Image(nsImage: icon)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
@@ -1107,10 +1074,11 @@ struct AboutTabView: View {
                 }
                 
                 // App name
-                Text(appName)
+                Text(SystemInfo.appName)
                     .font(.system(size: 28, weight: .semibold, design: .rounded))
                 
                 // Version (clickable to cycle)
+                let versionStrings = SystemInfo.appVersionStrings
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         versionIndex = (versionIndex + 1) % versionStrings.count
@@ -1127,17 +1095,17 @@ struct AboutTabView: View {
                 
                 // Links
                 HStack(spacing: 24) {
-                    Link(destination: URL(string: "https://github.com/bennyhuo/unimacs")!) {
+                    Link(destination: SystemInfo.githubRepositoryURL) {
                         Label("GitHub", systemImage: "link")
                             .font(.callout)
                     }
                     
-                    Link(destination: URL(string: "https://github.com/bennyhuo/unimacs/issues")!) {
+                    Link(destination: SystemInfo.githubIssuesURL) {
                         Label("Report Issue", systemImage: "exclamationmark.bubble")
                             .font(.callout)
                     }
                     
-                    Link(destination: URL(string: "https://github.com/bennyhuo/unimacs/blob/main/LICENSE")!) {
+                    Link(destination: SystemInfo.licenseURL) {
                         Label("GPL-2.0 License", systemImage: "doc.text")
                             .font(.callout)
                     }
@@ -1151,7 +1119,7 @@ struct AboutTabView: View {
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 460)
                     
-                    Text(copyright)
+                    Text(SystemInfo.appCopyright)
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -1172,39 +1140,6 @@ struct AboutView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var versionIndex = 0
     
-    private var appIcon: NSImage? {
-        NSApp.applicationIconImage
-    }
-    
-    private var appName: String {
-        Bundle.main.infoDictionary?["CFBundleDisplayName"] as? String ?? "Unimacs"
-    }
-    
-    private var version: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1.0"
-    }
-    
-    private var buildNumber: String {
-        Bundle.main.infoDictionary?["TPRevision"] as? String ?? ""
-    }
-    
-    private var copyright: String {
-        Bundle.main.localizedInfoDictionary?["NSHumanReadableCopyright"] as? String
-            ?? Bundle.main.infoDictionary?["NSHumanReadableCopyright"] as? String
-            ?? "Copyright © 2003–2012 abyssoft (Julien Robert), 2020–2023 John Britton, 2025–2026 Benny Huo."
-    }
-    
-    private var versionStrings: [String] {
-        var versions = [
-            "Version \(version)",
-            "Build \(buildNumber)"
-        ]
-        if let translationInfo = Bundle.main.localizedInfoDictionary?["TPTranslationInfoString"] as? String {
-            versions.append(translationInfo)
-        }
-        return versions
-    }
-    
     var body: some View {
         VStack(spacing: 0) {
             // Close button
@@ -1224,7 +1159,7 @@ struct AboutView: View {
             Spacer()
             
             // App icon
-            if let icon = appIcon {
+            if let icon = NSApp.applicationIconImage {
                 Image(nsImage: icon)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -1233,11 +1168,12 @@ struct AboutView: View {
             }
             
             // App name
-            Text(appName)
+            Text(SystemInfo.appName)
                 .font(.system(size: 26, weight: .semibold, design: .rounded))
                 .padding(.top, 12)
             
             // Version (clickable to cycle)
+            let versionStrings = SystemInfo.appVersionStrings
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     versionIndex = (versionIndex + 1) % versionStrings.count
@@ -1255,17 +1191,17 @@ struct AboutView: View {
             
             // Links
             HStack(spacing: 16) {
-                Link(destination: URL(string: "https://github.com/bennyhuo/unimacs")!) {
+                Link(destination: SystemInfo.githubRepositoryURL) {
                     Label("GitHub", systemImage: "link")
                         .font(.callout)
                 }
                 
-                Link(destination: URL(string: "https://github.com/bennyhuo/unimacs/issues")!) {
+                Link(destination: SystemInfo.githubIssuesURL) {
                     Label("Report Issue", systemImage: "exclamationmark.bubble")
                         .font(.callout)
                 }
                 
-                Link(destination: URL(string: "https://github.com/bennyhuo/unimacs/blob/main/LICENSE")!) {
+                Link(destination: SystemInfo.licenseURL) {
                     Label("GPL-2.0", systemImage: "doc.text")
                         .font(.callout)
                 }
@@ -1279,7 +1215,7 @@ struct AboutView: View {
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                 
-                Text(copyright)
+                Text(SystemInfo.appCopyright)
                     .font(.caption2)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)

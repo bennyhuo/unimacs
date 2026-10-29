@@ -642,7 +642,7 @@ struct TrustedHostInfo: Identifiable {
     }
     
     var systemIconName: String {
-        remoteHost.hasCapability(.portable) ? "laptopcomputer" : "desktopcomputer"
+        remoteHost.systemIconName
     }
 }
 

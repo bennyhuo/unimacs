@@ -234,7 +234,7 @@ final class RemoteHost: HostDevice, NSCopying {
     // MARK: - Screen / Placement
 
 	private var _fullHostRectInRemoteCoords: NSRect {
-		screens.reduce(NSRect.null) { $0.union($1.frame) }
+		desktopFrame
 	}
 	
 	/// Remote desktop bounding rect in remote coordinate space (union of remote screens).
@@ -282,7 +282,7 @@ final class RemoteHost: HostDevice, NSCopying {
     }
 	
 	private var _localDesktopFrame: NSRect {
-		LocalHost.shared.screens.reduce(NSRect.null) { $0.union($1.frame) }
+		LocalHost.shared.desktopFrame
 	}
 	
 	/// Glue the full remote desktop rect against the whole local desktop bounding rect.

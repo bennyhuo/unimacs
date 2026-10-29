@@ -72,6 +72,11 @@ extension Array where Element == Screen {
     var stringRepresentation: String {
         map { $0.stringRepresentation }.joined(separator: ";")
     }
+
+    /// Bounding rectangle enclosing all screens in the array (`.null` when empty).
+    var unionFrame: NSRect {
+        reduce(NSRect.null) { $0.union($1.frame) }
+    }
 }
 
 extension Array where Element == NSScreen {

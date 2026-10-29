@@ -329,10 +329,18 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
         if PreferencesManager.shared().bool(forPref: DISCONNECT_ON_NETWORK_CONFIG_CHANGE) {
             let activeConnection = ClientController.shared.currentConnection ?? ServerController.shared.currentConnection
             let activeInterface = activeConnection?.networkInterfaceName
+            let persistentInterfaceDown = activeConnection == nil && DeviceConnectionManager.shared.allConnections.contains { conn in
+                guard let iface = conn.networkInterfaceName else { return false }
+                return !NetworkUtils.isInterfaceUp(iface)
+            }
             
             if let activeInterface = activeInterface, !NetworkUtils.isInterfaceUp(activeInterface) {
                 debugLog("Active connection interface \(activeInterface) went DOWN, resetting immediately", module: .control)
                 BezelController.default().showText("Network disconnected, attempting to reconnect...", withDuration: 3.0)
+                hasPendingNetworkReset = false
+                resetAllConnections()
+            } else if persistentInterfaceDown {
+                debugLog("Persistent connection interface went DOWN while idle, resetting immediately", module: .control)
                 hasPendingNetworkReset = false
                 resetAllConnections()
             } else if DeviceConnectionManager.shared.isConnected {

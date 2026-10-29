@@ -6,7 +6,7 @@
 import Cocoa
 import SystemConfiguration
 
-private let LOCAL_IP_ANY_ADDR = "0.0.0.0"
+private let LOCAL_IP_ANY_ADDR = NetworkUtils.anyIPv4Address
 private let LOCAL_IP_KEY = "localIpAddress"
 
 @MainActor
@@ -25,6 +25,11 @@ protocol NetworkConfigurationWatcherDelegate: AnyObject {
     
     @objc var localIpAddresses: [String] = []
     @objc var selectedLocalIpAddress: String = LOCAL_IP_ANY_ADDR
+
+    /// Active local IPv4 addresses excluding the wildcard `"0.0.0.0"` entry.
+    var nonWildcardLocalIpAddresses: [String] {
+        localIpAddresses.filter { NetworkUtils.isSpecificBindableIP($0) }
+    }
     
     private override init() {
         super.init()
@@ -74,15 +79,9 @@ protocol NetworkConfigurationWatcherDelegate: AnyObject {
         
         // Watch for IPv4 configuration changes (e.g. new default route)
 		keys.append(SCDynamicStoreKeyCreateNetworkGlobalEntity(kCFAllocatorDefault, kSCDynamicStoreDomainState, kSCEntNetIPv4))
-        
-		// As above, but for IPv6
-		keys.append(SCDynamicStoreKeyCreateNetworkGlobalEntity(kCFAllocatorDefault, kSCDynamicStoreDomainState, kSCEntNetIPv6))
 
 		// Watch for IPv4 interface configuration changes
 		patterns.append(SCDynamicStoreKeyCreateNetworkInterfaceEntity(kCFAllocatorDefault, kSCDynamicStoreDomainState, kSCCompAnyRegex, kSCEntNetIPv4))
-
-		// As above, but for IPv6
-		patterns.append(SCDynamicStoreKeyCreateNetworkInterfaceEntity(kCFAllocatorDefault, kSCDynamicStoreDomainState, kSCCompAnyRegex, kSCEntNetIPv6))
 		
 		// Watch for DNS interface configuration changes
 		keys.append(SCDynamicStoreKeyCreateNetworkGlobalEntity(kCFAllocatorDefault, kSCDynamicStoreDomainState, kSCEntNetDNS))
@@ -125,41 +124,9 @@ protocol NetworkConfigurationWatcherDelegate: AnyObject {
         localIpAddresses.removeAll()
         localIpAddresses.append(LOCAL_IP_ANY_ADDR)
         
-        var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        
-        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else {
-            perror("getifaddrs")
-            return
-        }
-        defer { freeifaddrs(ifaddr) }
-        
-        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
-            let interface = ptr.pointee
-            guard interface.ifa_addr != nil else { continue }
-            
-            let family = interface.ifa_addr.pointee.sa_family
-            
-            // Skip interfaces that are not UP or are LOOPBACK
-            let flags = Int32(interface.ifa_flags)
-            if (flags & IFF_UP) == 0 || (flags & IFF_LOOPBACK) != 0 {
-                continue
-            }
-            
-            if family == UInt8(AF_INET) {
-                var addrBuf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-                
-                interface.ifa_addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sockaddr_in_ptr in
-                    var addr = sockaddr_in_ptr.pointee.sin_addr
-                    inet_ntop(AF_INET, &addr, &addrBuf, socklen_t(addrBuf.count))
-                }
-                
-                let infName = String(cString: interface.ifa_name)
-                if infName.hasPrefix("en") || infName.hasPrefix("bridge") {
-                    let ipAddress = String(cString: addrBuf)
-                    localIpAddresses.append(ipAddress)
-					networkDebugLog("\(String(cString: interface.ifa_name)) : \(ipAddress)")
-                }
-            }
+        for interface in NetworkUtils.activeIPv4Interfaces(onlySupported: true) {
+            localIpAddresses.append(interface.ipAddress)
+            networkDebugLog("\(interface.name) : \(interface.ipAddress)")
         }
     }
     
@@ -173,13 +140,13 @@ protocol NetworkConfigurationWatcherDelegate: AnyObject {
     }
     
     /// Interfaces Unimacs actually binds to (matches `updateLocalIpAddresses`). AWDL/AirDrop
-    /// (`awdl*`, `llw*`), tunnels (`utun*`) and similar flap constantly — especially their IPv6
-    /// keys — and must not drive reconnect/notification storms.
+    /// (`awdl*`, `llw*`), tunnels (`utun*`) and similar flap constantly and must not drive
+    /// reconnect/notification storms.
     private func isRelevantInterfaceKey(_ keyStr: String) -> Bool {
         let prefix = "State:/Network/Interface/"
         guard keyStr.hasPrefix(prefix) else { return false }
-        let name = keyStr.dropFirst(prefix.count).prefix { $0 != "/" }
-        return name.hasPrefix("en") || name.hasPrefix("bridge")
+        let name = String(keyStr.dropFirst(prefix.count).prefix { $0 != "/" })
+        return NetworkUtils.isSupportedInterfaceName(name)
     }
 
     // MARK: - Network Change Callback
@@ -187,12 +154,12 @@ protocol NetworkConfigurationWatcherDelegate: AnyObject {
     private func networkChangeCallback(store: SCDynamicStore, changedKeys: [String]) {
         networkDebugLog("_networkChangeCallBack triggered with \(changedKeys.count) changed keys")
         
-        // Drop changes on interfaces we never bind to (awdl/llw/utun/IPv6 link-local churn).
+        // Drop changes on interfaces we never bind to (awdl/llw/utun churn).
         // Without this, AirDrop/AWDL interface flapping floods networkChanged() and starves the
         // main thread (the "potentially harmful notification post rate" warning).
         let changedKeys = changedKeys.filter { isRelevantInterfaceKey($0) }
         if changedKeys.isEmpty {
-            networkDebugLog("  -> no relevant interface changes (ignoring awdl/llw/utun/IPv6 churn)")
+            networkDebugLog("  -> no relevant interface changes (ignoring awdl/llw/utun churn)")
             return
         }
         
