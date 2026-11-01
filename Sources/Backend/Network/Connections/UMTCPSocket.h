@@ -55,6 +55,7 @@ typedef NS_ENUM(NSInteger, TPSocketState) {
 
 @property (nonatomic, readonly, copy) NSString *localAddress;
 @property (nonatomic, readonly, copy) NSString *remoteAddress;
+@property (nonatomic, readonly, copy) NSString *lastErrorReason;
 @property (nonatomic, readonly) CFSocketNativeHandle nativeHandle;
 
 - (BOOL)sendData:(NSData*)data;

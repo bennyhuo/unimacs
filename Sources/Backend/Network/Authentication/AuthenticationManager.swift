@@ -71,9 +71,30 @@ private let trustedHostsKey = "TPTrustedHosts"
     
     @objc func connectionToServerFailed(_ host: RemoteHost, infoDict: [String: Any]?) {
         host.hostState = .shared
+        let rawReason = infoDict?["failureReason"] as? String
         
         DispatchQueue.main.async {
-            host.lastError = NSLocalizedString("The server may be down, or a network problem may have occurred.", comment: "")
+            let diagnosis = ConnectionFailureDiagnoser.diagnose(
+                rawReason: rawReason,
+                hostId: host.identifier,
+                hostName: host.computerName,
+                targetAddress: host.address,
+                targetPort: host.port,
+                localInterfaces: NetworkUtils.activeIPv4Interfaces(onlySupported: true),
+                selectedLocalIP: NetworkConfigurationWatcher.shared.selectedLocalIpAddress,
+                isBonjourOnline: host.isInState(.online)
+            )
+            host.lastError = diagnosis.shortReason
+            ActivityLogManager.shared.log(
+                level: .error,
+                category: .connection,
+                title: "Pairing connection to \(host.computerName) failed — \(diagnosis.shortReason)",
+                detail: diagnosis.whyFailed,
+                howToFix: diagnosis.howToFix,
+                hostId: host.identifier,
+                hostName: host.computerName,
+                actions: diagnosis.actions
+            )
         }
     }
     
@@ -102,6 +123,14 @@ private let trustedHostsKey = "TPTrustedHosts"
                 self.host(host, setTrusted: true)
                 DeviceConnectionManager.shared.adoptConnection(authConnection)
                 host.hostState = .peeredOnline
+                ActivityLogManager.shared.log(
+                    level: .success,
+                    category: .control,
+                    title: "Paired with \(host.computerName)",
+                    detail: "\(host.computerName) accepted the pairing request and is now a trusted Mac.",
+                    hostId: host.identifier,
+                    hostName: host.computerName
+                )
             }
             
         case .authenticationFailure:
@@ -111,6 +140,15 @@ private let trustedHostsKey = "TPTrustedHosts"
             
             Task { @MainActor in
                 host.lastError = explanation
+                ActivityLogManager.shared.log(
+                    level: .error,
+                    category: .control,
+                    title: "Pairing request rejected by \(host.computerName)",
+                    detail: explanation,
+                    howToFix: "Ensure 'Allow this Mac to be controlled' is enabled on \(host.computerName), then click Pair again and accept the prompt on \(host.computerName).",
+                    hostId: host.identifier,
+                    hostName: host.computerName
+                )
             }
             
             currentConnection?.disconnect()
@@ -204,6 +242,14 @@ private let trustedHostsKey = "TPTrustedHosts"
             debugLog("authentication request from host \(String(describing: host)) accepted", module: .general)
             
             self.host(host, setTrusted: true)
+            ActivityLogManager.shared.log(
+                level: .success,
+                category: .control,
+                title: "Accepted pairing request from \(host.computerName)",
+                detail: "\(host.computerName) is now a trusted Mac and can share mouse and keyboard control.",
+                hostId: host.identifier,
+                hostName: host.computerName
+            )
             
             let connection = authRequest.connection
             if LocalHost.shared.hasCustomBackgroundImage {
@@ -213,10 +259,19 @@ private let trustedHostsKey = "TPTrustedHosts"
             connection.sendAsync(Message.create(with: .authenticationSuccess))
             
         case .rejected:
+            let host = authRequest.demandingHost
             let infoDict = ["reason": NSLocalizedString("User rejected your trust request.", comment: "Reason for trust failure")]
             // Fire and forget - failure response
             authRequest.connection.sendAsync(Message.create(with: .authenticationFailure, andInfoDict: infoDict))
             debugLog("Rejecting authentication: user decision", module: .general)
+            ActivityLogManager.shared.log(
+                level: .warning,
+                category: .control,
+                title: "Rejected pairing request from \(host.computerName)",
+                detail: "You declined the incoming pairing prompt from \(host.computerName).",
+                hostId: host.identifier,
+                hostName: host.computerName
+            )
             
         case .aborted:
             debugLog("Authentication aborted", module: .general)

@@ -79,8 +79,20 @@ class LocalHost: HostDevice {
 	@objc func screenParametersChanged(notification: Notification) {
 		let newScreens = NSScreen.screens.toScreens()
 		if screens != newScreens {
+			let oldScreens = screens
 			debugLog("Screens changed: \(screens.count) -> \(newScreens.count)", module: .control)
 			screens = newScreens
+			let oldRects = oldScreens.map { $0.frame }
+			let newRects = newScreens.map { $0.frame }
+			let summary = DisplayChangeFormatter.describeLocalScreenChange(previous: oldRects, current: newRects)
+			Task { @MainActor in
+				ActivityLogManager.shared.log(
+					level: .info,
+					category: .display,
+					title: summary.title,
+					detail: summary.detail
+				)
+			}
 			notifyChange()
 		}
 	}

@@ -53,6 +53,60 @@ struct DeviceDetailView: View {
             // Details
             ScrollView {
                 VStack(spacing: 16) {
+                    // Troubleshooting / Diagnostics Section when there is a failure
+                    if !displayDevice.isConnected,
+                       let diagnosis = displayDevice.failureDiagnosis {
+                        DetailSection(title: "Diagnostics & How to Fix") {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(alignment: .top, spacing: 6) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundColor(.red)
+                                    Text(diagnosis.shortReason)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.red)
+                                }
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Why it failed")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.secondary)
+                                    Text(diagnosis.whyFailed)
+                                        .font(.caption)
+                                        .foregroundColor(.primary)
+                                        .textSelection(.enabled)
+                                }
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("How to fix")
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.orange)
+                                    Text(diagnosis.howToFix)
+                                        .font(.caption)
+                                        .foregroundColor(.primary)
+                                        .textSelection(.enabled)
+                                }
+
+                                if !diagnosis.actions.isEmpty {
+                                    HStack(spacing: 8) {
+                                        ForEach(diagnosis.actions) { action in
+                                            Button {
+                                                ActivityLogManager.shared.performAction(action)
+                                            } label: {
+                                                Label(action.title, systemImage: action.iconName)
+                                                    .font(.caption)
+                                            }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.small)
+                                        }
+                                    }
+                                    .padding(.top, 2)
+                                }
+                            }
+                        }
+                    }
+
                     // Connection Info
                     DetailSection(title: "Connection") {
                         if let error = displayDevice.lastError, displayDevice.linkPhase == .disconnected || displayDevice.linkPhase == .unavailable {
@@ -329,6 +383,9 @@ extension DeviceInfo {
         macAddresses: [String] = [],
         linkPhase: DeviceLinkPhase = .unavailable,
         reconnectSecondsRemaining: Int? = nil,
+        reconnectAttempt: Int = 0,
+        maxReconnectAttempts: Int = 5,
+        failureDiagnosis: ConnectionFailureDiagnosis? = nil,
         isPortable: Bool = false,
         lastError: String? = nil,
         shareOutput: Bool = false,
@@ -351,6 +408,9 @@ extension DeviceInfo {
         self.macAddresses = macAddresses
         self.linkPhase = linkPhase
         self.reconnectSecondsRemaining = reconnectSecondsRemaining
+        self.reconnectAttempt = reconnectAttempt
+        self.maxReconnectAttempts = maxReconnectAttempts
+        self.failureDiagnosis = failureDiagnosis
         self.isPortable = isPortable
         self.lastError = lastError
         self.shareOutput = shareOutput

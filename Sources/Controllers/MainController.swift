@@ -190,6 +190,42 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
 			ServerController.shared.startSharing()
 		}
 		DeviceConnectionManager.shared.autoConnectPairedDevices()
+
+		let activeIfaces = NetworkUtils.activeIPv4Interfaces(onlySupported: true)
+		let ifaceDesc = activeIfaces.isEmpty
+			? "No active network interfaces"
+			: activeIfaces.map { "\($0.name): \($0.ipAddress)" }.joined(separator: ", ")
+		let localScreens = LocalHost.shared.screens
+		let screenCount = localScreens.count
+		ActivityLogManager.shared.log(
+			level: .info,
+			category: .network,
+			title: "Unimacs started (\(peeredHosts.count) paired Mac\(peeredHosts.count == 1 ? "" : "s"), \(screenCount) display\(screenCount == 1 ? "" : "s"))",
+			detail: "Network interfaces: \(ifaceDesc)."
+		)
+
+		if !localScreens.isEmpty {
+			let resList = localScreens
+				.map { "\(Int($0.frame.width.rounded()))×\(Int($0.frame.height.rounded()))" }
+				.joined(separator: ", ")
+			ActivityLogManager.shared.log(
+				level: .info,
+				category: .display,
+				title: "Local display layout detected: \(screenCount) screen\(screenCount == 1 ? "" : "s") (\(resList))",
+				detail: "Active local displays on \(LocalHost.shared.computerName): \(resList)."
+			)
+		}
+
+		if !AccessibilityManager.isTrusted {
+			ActivityLogManager.shared.log(
+				level: .warning,
+				category: .control,
+				title: "Accessibility permission is required for keyboard & mouse control",
+				detail: "Unimacs cannot capture or post input events until Accessibility access is enabled.",
+				howToFix: "Click 'Grant Accessibility' and enable Unimacs in System Settings > Privacy & Security > Accessibility.",
+				actions: [.openAccessibilitySettings]
+			)
+		}
     }
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -292,6 +328,12 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     
     @objc func computerWillSleep(_ notification: Notification) {
         invalidateTimer()
+        ActivityLogManager.shared.log(
+            level: .info,
+            category: .network,
+            title: "This Mac is going to sleep — pausing connections",
+            detail: "Active sessions will automatically resume when the Mac wakes up."
+        )
         
         let message = Message.create(with: .controlDeviceSleep)
         
@@ -312,6 +354,12 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     }
     
     @objc func computerDidWake(_ notification: Notification) {
+        ActivityLogManager.shared.log(
+            level: .info,
+            category: .network,
+            title: "Mac woke from sleep — reconnecting paired devices",
+            detail: "Restarting Bonjour discovery and re-establishing links to paired Macs."
+        )
         HostDevicesManager.shared.notifyChanges()
         ClientController.shared.updateTriggersAndShowVisualHint(true)
 
@@ -336,11 +384,24 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
             
             if let activeInterface = activeInterface, !NetworkUtils.isInterfaceUp(activeInterface) {
                 debugLog("Active connection interface \(activeInterface) went DOWN, resetting immediately", module: .control)
+                ActivityLogManager.shared.log(
+                    level: .warning,
+                    category: .network,
+                    title: "Active interface \(activeInterface) went down — resetting connections",
+                    detail: "The network interface used by the current control session is down. Resetting connections to switch to an available interface.",
+                    actions: [.resetAllConnections, .openNetworkSettings]
+                )
                 BezelController.default().showText("Network disconnected, attempting to reconnect...", withDuration: 3.0)
                 hasPendingNetworkReset = false
                 resetAllConnections()
             } else if persistentInterfaceDown {
                 debugLog("Persistent connection interface went DOWN while idle, resetting immediately", module: .control)
+                ActivityLogManager.shared.log(
+                    level: .warning,
+                    category: .network,
+                    title: "Connection network interface went down — rebinding",
+                    detail: "A network interface carrying a persistent device connection went down. Restarting listeners and reconnecting."
+                )
                 hasPendingNetworkReset = false
                 resetAllConnections()
             } else if DeviceConnectionManager.shared.isConnected {
@@ -581,7 +642,21 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     @objc private func accessibilityStatusDidChange() {
         if !AccessibilityManager.isTrusted {
             EventTapListener.shared.stop()
+            ActivityLogManager.shared.log(
+                level: .warning,
+                category: .control,
+                title: "Accessibility permission revoked",
+                detail: "Keyboard and mouse sharing cannot function without Accessibility access.",
+                howToFix: "Click 'Grant Accessibility' and enable Unimacs in System Settings > Privacy & Security > Accessibility.",
+                actions: [.openAccessibilitySettings]
+            )
         } else {
+            ActivityLogManager.shared.log(
+                level: .success,
+                category: .control,
+                title: "Accessibility permission granted",
+                detail: "Unimacs is ready to capture and forward keyboard & mouse events."
+            )
             if PreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey) {
                 _ = EventTapListener.shared.start()
             }

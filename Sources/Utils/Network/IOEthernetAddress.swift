@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 import Foundation
+import IOKit.network
 
 @objcMembers
 class IOEthernetAddress: NSObject, NSCoding {

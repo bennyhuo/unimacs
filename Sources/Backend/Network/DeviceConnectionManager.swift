@@ -75,17 +75,47 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     private var reconnectNextRetryAt: [String: Date] = [:]
     /// Outbound connect in flight (awaiting TCP handshake / identification)
     private var connectingHosts: Set<String> = []
+    /// Hosts where the user explicitly initiated a Connect / Retry action
+    private var userInitiatedConnectHosts: Set<String> = []
     /// Hosts that were manually disconnected locally (no auto-reconnect; reject inbound until local Connect)
     private var manuallyDisconnectedHosts: Set<String> = []
     /// Hosts whose peer sent a manual disconnect notification (no auto-reconnect; still accept inbound Connect)
     private var peerDisconnectedHosts: Set<String> = []
     /// Timers for passive probe checks
     private var passiveProbeTimers: [String: Timer] = [:]
+    /// Latest connection failure diagnosis for each host
+    private var lastFailureDiagnoses: [String: ConnectionFailureDiagnosis] = [:]
     
     /// Base delay for automatic reconnection (seconds); doubles each attempt.
     private let baseReconnectDelay: TimeInterval = 5.0
     /// Maximum automatic reconnection attempts before giving up until manual Connect.
     private let maxReconnectAttempts = 5
+
+    var maxReconnectAttemptsCount: Int { maxReconnectAttempts }
+
+    func reconnectAttemptCount(for host: RemoteHost) -> Int {
+        reconnectRetryCount[host.identifier] ?? 0
+    }
+
+    @nonobjc
+    func reconnectAttemptCount(for hostId: String) -> Int {
+        reconnectRetryCount[hostId] ?? 0
+    }
+
+    @nonobjc
+    func lastDiagnosis(for host: RemoteHost) -> ConnectionFailureDiagnosis? {
+        lastFailureDiagnoses[host.identifier]
+    }
+
+    @nonobjc
+    func lastDiagnosis(for hostId: String) -> ConnectionFailureDiagnosis? {
+        lastFailureDiagnoses[hostId]
+    }
+
+    @nonobjc
+    func clearLastDiagnosis(for hostId: String) {
+        lastFailureDiagnoses.removeValue(forKey: hostId)
+    }
     
     /// Whether the server is currently listening for incoming connections
     private(set) var isListening: Bool = false
@@ -198,7 +228,9 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
             return .disconnected
         }
         if connectingHosts.contains(hostId) {
-            return .connecting
+            if host.isInState(.peeredOnline) || userInitiatedConnectHosts.contains(hostId) {
+                return .connecting
+            }
         }
         if reconnectTimers[hostId] != nil || reconnectingHosts.contains(hostId) {
             return .reconnecting
@@ -294,6 +326,21 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         
         if let host = host {
             broadcastConnectionDisconnected(from: host)
+            ActivityLogManager.shared.log(
+                level: .warning,
+                category: .connection,
+                title: "Connection to \(host.computerName) lost unexpectedly",
+                detail: "The TCP link to \(host.computerName) (\(host.address ?? "unknown")) closed. Starting automatic reconnection.",
+                hostId: host.identifier,
+                hostName: host.computerName,
+                actions: [
+                    .retryConnection(hostId: host.identifier, hostName: host.computerName),
+                    .pingHost(hostId: host.identifier, hostName: host.computerName, address: host.address ?? "")
+                ].filter {
+                    if case .pingHost(_, _, let addr) = $0 { return !addr.isEmpty }
+                    return true
+                }
+            )
         }
         
         NotificationCenter.default.post(
@@ -366,8 +413,23 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         if success {
             isListening = true
             NSLog("DeviceConnectionManager: Started listening on port \(port)")
+            let boundIP = NetworkConfigurationWatcher.shared.selectedLocalIpAddress
+            ActivityLogManager.shared.log(
+                level: .info,
+                category: .network,
+                title: "Listening for incoming connections on port \(port)",
+                detail: "Server socket ready on \(boundIP == NetworkUtils.anyIPv4Address ? "all local interfaces (0.0.0.0)" : boundIP):\(port)."
+            )
         } else {
             errorLog("DeviceConnectionManager: Failed to start listening on port \(port)", module: .network)
+            let boundIP = NetworkConfigurationWatcher.shared.selectedLocalIpAddress
+            ActivityLogManager.shared.log(
+                level: .error,
+                category: .network,
+                title: "Failed to listen on port \(port)",
+                detail: "Could not bind server socket on \(boundIP):\(port). Another app may be using this port or the selected IP (\(boundIP)) is unavailable.",
+                actions: [.openNetworkSettings, .resetAllConnections]
+            )
         }
         return success
     }
@@ -493,8 +555,12 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         guard !isConnected(to: host) else { return true }
         guard isConnectable(host) else { return false }
         guard ignoreIdRule || shouldInitiateOutboundConnection(to: host) else {
-            debugLog("Skipping outbound connect to \(host.computerName) because local identifier (\(LocalHost.shared.identifier)) >= remote identifier (\(host.identifier)) (waiting for remote to dial us). Scheduling passive probe.", module: .network)
-            self.schedulePassiveProbe(for: host)
+            if host.isInState(.peeredOnline) {
+                debugLog("Skipping outbound connect to \(host.computerName) because local identifier (\(LocalHost.shared.identifier)) >= remote identifier (\(host.identifier)) (waiting for remote to dial us). Scheduling passive probe.", module: .network)
+                self.schedulePassiveProbe(for: host)
+            } else {
+                debugLog("Skipping outbound connect and passive probe to offline host \(host.computerName).", module: .network)
+            }
             return false
         }
 
@@ -511,7 +577,9 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         }
 
         if resetRetryBudget {
+            userInitiatedConnectHosts.insert(hostId)
             reconnectRetryCount.removeValue(forKey: hostId)
+            lastFailureDiagnoses.removeValue(forKey: hostId)
         }
 
         beginOutboundConnect(to: host)
@@ -553,6 +621,15 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
                     object: host
                 )
                 NSLog("DeviceConnectionManager: Disconnected from \(host.computerName)")
+                ActivityLogManager.shared.log(
+                    level: .info,
+                    category: .connection,
+                    title: "Disconnected from \(host.computerName)",
+                    detail: "Manually disconnected from \(host.computerName). Auto-reconnect is paused until you click Connect.",
+                    hostId: host.identifier,
+                    hostName: host.computerName,
+                    actions: [.retryConnection(hostId: host.identifier, hostName: host.computerName)]
+                )
                 self?.notifyReachabilityChanged(for: host)
             }
         }
@@ -574,6 +651,15 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         )
 
         NSLog("DeviceConnectionManager: Peer manually disconnected from \(host.computerName)")
+        ActivityLogManager.shared.log(
+            level: .info,
+            category: .connection,
+            title: "\(host.computerName) disconnected from this Mac",
+            detail: "The remote user manually disconnected the session. Click Connect to reconnect.",
+            hostId: host.identifier,
+            hostName: host.computerName,
+            actions: [.retryConnection(hostId: host.identifier, hostName: host.computerName)]
+        )
         notifyReachabilityChanged(for: host)
     }
 
@@ -611,6 +697,15 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         )
         HostDevicesManager.shared.notifyChangesNow()
         NSLog("DeviceConnectionManager: Peer unpaired from \(host.computerName)")
+        ActivityLogManager.shared.log(
+            level: .warning,
+            category: .connection,
+            title: "\(host.computerName) unpaired from this Mac",
+            detail: "The remote Mac removed the pairing relationship. Pair again from Nearby Devices if you wish to reconnect.",
+            hostId: host.identifier,
+            hostName: host.computerName,
+            actions: [.repairDevice(hostId: host.identifier, hostName: host.computerName)]
+        )
     }
     
     /// Disconnect all connections and stop listening
@@ -694,6 +789,17 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         guard shouldInitiateOutboundConnection(to: host) else {
             let currentRetry = reconnectRetryCount[hostId] ?? 0
             debugLog("Skipping reconnect schedule for \(host.computerName) because we wait for remote to dial us", module: .network)
+            if host.isInState(.peeredOnline), let diagnosis = lastFailureDiagnoses[hostId] {
+                ActivityLogManager.shared.log(
+                    level: .warning,
+                    category: .connection,
+                    title: "Probe connection to \(host.computerName) failed: \(diagnosis.shortReason)",
+                    detail: diagnosis.combinedDetail,
+                    hostId: hostId,
+                    hostName: host.computerName,
+                    actions: diagnosis.actions
+                )
+            }
             cleanupReconnectState(for: hostId)
             if currentRetry == 0, host.isInState(.peeredOnline) {
                 reconnectRetryCount[hostId] = 1
@@ -725,6 +831,21 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         
         reconnectingHosts.insert(hostId)
         reconnectRetryCount[hostId] = currentRetry + 1
+
+        let diagnosis = lastFailureDiagnoses[hostId]
+        let reasonText = diagnosis.map { " (\($0.shortReason))" } ?? ""
+        ActivityLogManager.shared.log(
+            level: .warning,
+            category: .connection,
+            title: "Reconnect to \(host.computerName) failed\(reasonText) — retrying in \(Int(delay))s (Attempt \(currentRetry + 1)/\(maxReconnectAttempts))",
+            detail: diagnosis?.combinedDetail ?? "Next automatic connection attempt to \(host.address ?? host.computerName):\(host.port) scheduled in \(Int(delay)) seconds.",
+            hostId: hostId,
+            hostName: host.computerName,
+            actions: diagnosis?.actions ?? [
+                .retryConnection(hostId: hostId, hostName: host.computerName),
+                .resetAllConnections
+            ]
+        )
         
         // Cancel existing timer if any
         reconnectTimers[hostId]?.invalidate()
@@ -773,6 +894,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     private func schedulePassiveProbe(for host: RemoteHost) {
         let hostId = host.identifier
         guard hostId != LocalHost.shared.identifier else { return }
+        guard host.isInState(.peeredOnline) else { return }
         
         // Don't schedule if manually disconnected
         guard !manuallyDisconnectedHosts.contains(hostId) else { return }
@@ -782,6 +904,15 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         guard passiveProbeTimers[hostId] == nil else { return }
         
         NSLog("DeviceConnectionManager: Scheduling passive probe for \(host.computerName) in 10.0s")
+        ActivityLogManager.shared.log(
+            level: .info,
+            category: .connection,
+            title: "Waiting for \(host.computerName) to initiate connection (passive probe in 10s)",
+            detail: "By device ordering rules, \"\(host.computerName)\" dials first. If no incoming connection arrives within 10s, Unimacs will actively dial \(host.address ?? host.computerName):\(host.port).",
+            hostId: hostId,
+            hostName: host.computerName,
+            actions: [.retryConnection(hostId: hostId, hostName: host.computerName)]
+        )
         
         let timer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
             Task { @MainActor in
@@ -796,10 +927,19 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         
         guard !manuallyDisconnectedHosts.contains(hostId) else { return }
         guard let host = HostDevicesManager.shared.host(withIdentifier: hostId) else { return }
+        guard host.isInState(.peeredOnline) else { return }
         guard !isConnected(to: host) else { return }
         guard isConnectable(host) else { return }
         
         NSLog("DeviceConnectionManager: Passive probe timer fired for \(host.computerName). Bypassing ID rule to probe connection.")
+        ActivityLogManager.shared.log(
+            level: .info,
+            category: .connection,
+            title: "Probing connection to \(host.computerName) (\(host.address ?? ""):\(host.port))…",
+            detail: "No incoming connection arrived from \"\(host.computerName)\" within 10s; initiating active outbound probe.",
+            hostId: hostId,
+            hostName: host.computerName
+        )
         _ = connect(to: host, resetRetryBudget: false, ignoreIdRule: true)
     }
     
@@ -827,6 +967,25 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         reconnectNextRetryAt.removeValue(forKey: hostId)
         connectingHosts.remove(hostId)
         reconnectRetryCount[hostId] = maxReconnectAttempts
+
+        let diagnosis = lastFailureDiagnoses[hostId]
+        let shortReason = diagnosis?.shortReason ?? host.lastError ?? "Connection failed"
+        host.lastError = "Reconnect failed (\(maxReconnectAttempts)/\(maxReconnectAttempts)): \(shortReason)"
+
+        ActivityLogManager.shared.log(
+            level: .error,
+            category: .connection,
+            title: "Stopped reconnecting to \(host.computerName) after \(maxReconnectAttempts) failed attempts (\(shortReason))",
+            detail: diagnosis?.combinedDetail ?? "All \(maxReconnectAttempts) automatic reconnection attempts to \(host.address ?? host.computerName):\(host.port) failed. Verify the remote Mac is awake and reachable, then click Retry Now or Reset Network.",
+            hostId: hostId,
+            hostName: host.computerName,
+            actions: diagnosis?.actions ?? [
+                .retryConnection(hostId: hostId, hostName: host.computerName),
+                .resetAllConnections,
+                .openNetworkSettings
+            ]
+        )
+
         notifyReachabilityChanged(for: host)
     }
 
@@ -957,10 +1116,43 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         
         // Reset reconnection state on successful connection
         resetReconnectState(for: host.identifier)
+        userInitiatedConnectHosts.remove(host.identifier)
+        lastFailureDiagnoses.removeValue(forKey: host.identifier)
+        host.lastError = nil
+        HostDevicesManager.shared.host(withIdentifier: host.identifier)?.lastError = nil
         
         // Clear manual / peer disconnect state since we are now connected!
         manuallyDisconnectedHosts.remove(host.identifier)
         peerDisconnectedHosts.remove(host.identifier)
+        
+        let directionText = connection.origin == .accepted ? "Inbound connection accepted from" : "Connected to"
+        let endpointInfo = [
+            host.address.map { "\($0):\(host.port)" },
+            connection.networkInterfaceName.map { "via \($0)" }
+        ].compactMap { $0 }.joined(separator: " ")
+        ActivityLogManager.shared.log(
+            level: .success,
+            category: .connection,
+            title: "\(directionText) \(host.computerName)",
+            detail: endpointInfo.isEmpty ? nil : "Endpoint: \(endpointInfo) (\(host.screens.count) screen\(host.screens.count == 1 ? "" : "s")).",
+            hostId: host.identifier,
+            hostName: host.computerName
+        )
+
+        if !host.screens.isEmpty {
+            let resList = host.screens
+                .map { "\(Int($0.frame.width.rounded()))×\(Int($0.frame.height.rounded()))" }
+                .joined(separator: ", ")
+            let origin = host.desktopOrigin
+            ActivityLogManager.shared.log(
+                level: .info,
+                category: .display,
+                title: "Remote display layout active for \(host.computerName): \(host.screens.count) screen\(host.screens.count == 1 ? "" : "s") (\(resList))",
+                detail: "Relative desktop origin: (\(Int(origin.x.rounded())), \(Int(origin.y.rounded()))).",
+                hostId: host.identifier,
+                hostName: host.computerName
+            )
+        }
         
         // Start keep-alive
         startKeepAlive(for: host.identifier)
@@ -996,6 +1188,21 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         
         if let host = host {
             broadcastConnectionDisconnected(from: host)
+            ActivityLogManager.shared.log(
+                level: .warning,
+                category: .connection,
+                title: "Connection to \(host.computerName) lost unexpectedly",
+                detail: "The TCP link to \(host.computerName) (\(host.address ?? "unknown")) closed. Starting automatic reconnection.",
+                hostId: host.identifier,
+                hostName: host.computerName,
+                actions: [
+                    .retryConnection(hostId: host.identifier, hostName: host.computerName),
+                    .pingHost(hostId: host.identifier, hostName: host.computerName, address: host.address ?? "")
+                ].filter {
+                    if case .pingHost(_, _, let addr) = $0 { return !addr.isEmpty }
+                    return true
+                }
+            )
         }
         
         NotificationCenter.default.post(
@@ -1058,13 +1265,55 @@ extension DeviceConnectionManager: ClientConnectionsDelegate {
             connectedHosts.remove(host.identifier)
             connectingHosts.remove(host.identifier)
             
-            NSLog("DeviceConnectionManager: Connection failed to \(host.computerName)")
+            let canonicalHost = HostDevicesManager.shared.host(withIdentifier: host.identifier) ?? host
+            let wasUserInitiated = userInitiatedConnectHosts.remove(canonicalHost.identifier) != nil
+            userInitiatedConnectHosts.remove(host.identifier)
+            let isBonjourOnline = canonicalHost.isInState(.peeredOnline)
+
+            // If this paired device was NOT discovered via Bonjour (.peeredOnline) — for example, a Mac at home
+            // while the user is away — do not highlight it with error badges or troubleshooting cards.
+            guard isBonjourOnline else {
+                lastFailureDiagnoses.removeValue(forKey: canonicalHost.identifier)
+                canonicalHost.lastError = nil
+                host.lastError = nil
+                if wasUserInitiated {
+                    let cachedEndpoint = canonicalHost.address.map { "\($0):\(canonicalHost.port)" } ?? "cached endpoint"
+                    ActivityLogManager.shared.log(
+                        level: .info,
+                        category: .connection,
+                        title: "Could not connect to \(canonicalHost.computerName) — device is not nearby",
+                        detail: "\"\(canonicalHost.computerName)\" is not currently broadcasting via Bonjour on the local network and did not respond at \(cachedEndpoint).",
+                        hostId: canonicalHost.identifier,
+                        hostName: canonicalHost.computerName
+                    )
+                }
+                broadcastConnectionFailed(to: canonicalHost)
+                cleanupReconnectState(for: canonicalHost.identifier)
+                return
+            }
+
+            let rawReason = (infoDict?["failureReason"] as? String) ?? canonicalHost.lastError ?? host.lastError
+            let diagnosis = ConnectionFailureDiagnoser.diagnose(
+                rawReason: rawReason,
+                hostId: canonicalHost.identifier,
+                hostName: canonicalHost.computerName,
+                targetAddress: canonicalHost.address,
+                targetPort: canonicalHost.port,
+                localInterfaces: NetworkUtils.activeIPv4Interfaces(onlySupported: true),
+                selectedLocalIP: NetworkConfigurationWatcher.shared.selectedLocalIpAddress,
+                isBonjourOnline: isBonjourOnline
+            )
+            lastFailureDiagnoses[canonicalHost.identifier] = diagnosis
+            canonicalHost.lastError = diagnosis.shortReason
+            host.lastError = diagnosis.shortReason
+            
+            NSLog("DeviceConnectionManager: Connection failed to \(host.computerName) (\(diagnosis.shortReason))")
             
             // Notify delegates
-            broadcastConnectionFailed(to: host)
+            broadcastConnectionFailed(to: canonicalHost)
             
             // Schedule reconnection attempt
-            scheduleReconnect(for: host.identifier)
+            scheduleReconnect(for: canonicalHost.identifier)
         }
     }
 }

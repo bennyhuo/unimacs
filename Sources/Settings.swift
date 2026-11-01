@@ -57,6 +57,7 @@ class Settings {
     static let visibleBordersKey: String = "visibleBorders"
     static let hotBorderStyleKey: String = "hotBorderStyle"
     static let alwaysObserveEventsKey: String = "alwaysObserveEvents"
+    static let layoutShowConnectedOnlyKey: String = "layoutShowConnectedOnly"
     
     // MARK: - Keep Awake & Sync Settings
     static let enableKeepAwakeKey: String = "enableKeepAwake"

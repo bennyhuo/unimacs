@@ -28,6 +28,7 @@ protocol MessageChannel: AnyObject {
     var state: TPSocketState { get }
     var localAddress: String? { get }
     var remoteAddress: String? { get }
+    var lastFailureReason: String? { get }
     var peerCertificate: SecCertificate? { get }
     var enableEncryption: Bool { get set }
     func setNoDelay(_ value: Bool)
@@ -104,6 +105,7 @@ final class LegacySocketChannel: NSObject, MessageChannel, UMTCPSocketDelegate {
     var state: TPSocketState { tcpSocket.socketState }
     var localAddress: String? { tcpSocket.localAddress }
     var remoteAddress: String? { tcpSocket.remoteAddress }
+    var lastFailureReason: String? { tcpSocket.lastErrorReason }
     var peerCertificate: SecCertificate? { nil }
 
     func setNoDelay(_ value: Bool) {

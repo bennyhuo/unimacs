@@ -49,6 +49,7 @@ class HostDevicesManager: NSObject {
                         break
                     case .peeredOffline, .peeredOnline, .controlled:
                         newHost.hostState = .peeredOffline
+                        newHost.lastError = nil
 						if newHost.port == 0 {
 							newHost.port = Int(PreferencesManager.shared().port(forPref: COMMAND_PORT))
 						}
@@ -92,13 +93,41 @@ class HostDevicesManager: NSObject {
                 shouldNotify = false
             case .shared, .incompatible:
                 knownHost.hostState = []
+                ActivityLogManager.shared.log(
+                    level: .info,
+                    category: .discovery,
+                    title: "Nearby device \(knownHost.computerName) left the network",
+                    detail: "Bonjour service for \(knownHost.computerName) is no longer advertised.",
+                    hostId: knownHost.identifier,
+                    hostName: knownHost.computerName
+                )
             case .peeredOffline:
                 shouldNotify = false
             case .peeredOnline:
                 knownHost.hostState = .peeredOffline
+                knownHost.lastError = nil
+                DeviceConnectionManager.shared.clearLastDiagnosis(for: knownHost.identifier)
+                ActivityLogManager.shared.log(
+                    level: .info,
+                    category: .discovery,
+                    title: "\(knownHost.computerName) went offline",
+                    detail: "Bonjour broadcast from \(knownHost.computerName) (\(knownHost.address ?? "unknown")) disappeared.",
+                    hostId: knownHost.identifier,
+                    hostName: knownHost.computerName
+                )
             case .controlled:
                 knownHost.hostState = .peeredOffline
+                knownHost.lastError = nil
+                DeviceConnectionManager.shared.clearLastDiagnosis(for: knownHost.identifier)
                 ClientController.shared.stopControl()
+                ActivityLogManager.shared.log(
+                    level: .warning,
+                    category: .discovery,
+                    title: "\(knownHost.computerName) went offline while being controlled",
+                    detail: "Stopped active remote control session because \(knownHost.computerName) is no longer reachable.",
+                    hostId: knownHost.identifier,
+                    hostName: knownHost.computerName
+                )
             default:
                 break
             }
@@ -134,6 +163,9 @@ class HostDevicesManager: NSObject {
 
             if let ipAddress = ipAddress {
                 let state = knownHost.hostState
+                let oldAddress = knownHost.address
+                let oldPort = knownHost.port
+                let oldScreenRects = knownHost.screens.map { $0.frame }
 
                 // Refresh cached reachability from Bonjour; live TCP is not torn down on address change.
                 knownHost.address = ipAddress.address
@@ -145,16 +177,80 @@ class HostDevicesManager: NSObject {
                 let parsedScreens = Screen.screens(from: record.screens)
                 if !parsedScreens.isEmpty {
                     knownHost.screens = parsedScreens
+                    let newScreenRects = parsedScreens.map { $0.frame }
+                    if !oldScreenRects.isEmpty && oldScreenRects != newScreenRects {
+                        let screenSummary = DisplayChangeFormatter.describeRemoteScreenChange(
+                            hostName: knownHost.computerName,
+                            previous: oldScreenRects,
+                            current: newScreenRects
+                        )
+                        Task { @MainActor in
+                            ActivityLogManager.shared.log(
+                                level: .info,
+                                category: .display,
+                                title: screenSummary.title,
+                                detail: screenSummary.detail,
+                                hostId: knownHost.identifier,
+                                hostName: knownHost.computerName
+                            )
+                        }
+                    }
+                }
+
+                if let oldAddress = oldAddress, !oldAddress.isEmpty,
+                   (oldAddress != ipAddress.address || (oldPort > 0 && oldPort != ipAddress.port)) {
+                    let hostId = knownHost.identifier
+                    let hostName = knownHost.computerName
+                    let newAddr = ipAddress.address
+                    let newPort = ipAddress.port
+                    Task { @MainActor in
+                        ActivityLogManager.shared.log(
+                            level: .info,
+                            category: .network,
+                            title: "\(hostName) IP updated to \(newAddr):\(newPort)",
+                            detail: "Previous endpoint was \(oldAddress):\(oldPort).",
+                            hostId: hostId,
+                            hostName: hostName
+                        )
+                    }
                 }
 
                 switch state {
                 case []:
                     knownHost.hostState = .shared
+                    let hostId = knownHost.identifier
+                    let hostName = knownHost.computerName
+                    let addr = ipAddress.address
+                    let port = ipAddress.port
+                    Task { @MainActor in
+                        ActivityLogManager.shared.log(
+                            level: .info,
+                            category: .discovery,
+                            title: "Discovered \(hostName) on local network",
+                            detail: "Endpoint: \(addr):\(port).",
+                            hostId: hostId,
+                            hostName: hostName
+                        )
+                    }
                 case .shared:
                     shouldNotify = false
                 case .peeredOffline:
                     knownHost.hostState = .peeredOnline
                     shouldAutoConnect = true  // Auto-connect when paired device comes online
+                    let hostId = knownHost.identifier
+                    let hostName = knownHost.computerName
+                    let addr = ipAddress.address
+                    let port = ipAddress.port
+                    Task { @MainActor in
+                        ActivityLogManager.shared.log(
+                            level: .info,
+                            category: .discovery,
+                            title: "Paired Mac \(hostName) came online",
+                            detail: "Discovered via Bonjour at \(addr):\(port). Initiating automatic connection.",
+                            hostId: hostId,
+                            hostName: hostName
+                        )
+                    }
                 case .peeredOnline:
                     break
                 case .controlled:
@@ -164,6 +260,18 @@ class HostDevicesManager: NSObject {
                 }
             } else {
                 knownHost.hostState = .incompatible
+                let hostId = knownHost.identifier
+                let hostName = knownHost.computerName
+                Task { @MainActor in
+                    ActivityLogManager.shared.log(
+                        level: .warning,
+                        category: .discovery,
+                        title: "\(hostName) has an incompatible protocol version",
+                        detail: "Update Unimacs on both Macs to the same version.",
+                        hostId: hostId,
+                        hostName: hostName
+                    )
+                }
             }
 
             if shouldNotify {
@@ -189,6 +297,24 @@ class HostDevicesManager: NSObject {
             newHost.hostState = compatible ? .shared : .incompatible
             _hosts[newHost.identifier] = newHost
             self.notifyChanges()
+            let hostId = newHost.identifier
+            let hostName = newHost.computerName
+            let addrText = ipAddress.map { "\($0.address):\($0.port)" } ?? "unknown address"
+            let screenCount = newHost.screens.count
+            Task { @MainActor in
+                ActivityLogManager.shared.log(
+                    level: compatible ? .info : .warning,
+                    category: .discovery,
+                    title: compatible
+                        ? "Discovered Mac: \(hostName)"
+                        : "Discovered incompatible Mac: \(hostName)",
+                    detail: compatible
+                        ? "Broadcast received from \(addrText) (\(screenCount) screen\(screenCount == 1 ? "" : "s"))."
+                        : "Broadcast received from \(addrText), but its protocol version is incompatible with this Mac.",
+                    hostId: hostId,
+                    hostName: hostName
+                )
+            }
             return newHost
         }
     }
@@ -198,6 +324,7 @@ class HostDevicesManager: NSObject {
         let knownHost = self.host(withIdentifier: host.identifier)
 
         if let knownHost = knownHost {
+            let oldScreenRects = knownHost.screens.map { $0.frame }
             knownHost.computerName = host.computerName
             knownHost.capabilities = host.capabilities
 			knownHost.macAddresses = host.macAddresses
@@ -210,6 +337,26 @@ class HostDevicesManager: NSObject {
 			}
 			if !host.screens.isEmpty {
 				knownHost.screens = host.screens
+                let newScreenRects = host.screens.map { $0.frame }
+                if !oldScreenRects.isEmpty && oldScreenRects != newScreenRects {
+                    let summary = DisplayChangeFormatter.describeRemoteScreenChange(
+                        hostName: knownHost.computerName,
+                        previous: oldScreenRects,
+                        current: newScreenRects
+                    )
+                    let hostId = knownHost.identifier
+                    let hostName = knownHost.computerName
+                    Task { @MainActor in
+                        ActivityLogManager.shared.log(
+                            level: .info,
+                            category: .display,
+                            title: summary.title,
+                            detail: summary.detail,
+                            hostId: hostId,
+                            hostName: hostName
+                        )
+                    }
+                }
 			}
 			knownHost.notifyChange()
 
@@ -344,6 +491,7 @@ class HostDevicesManager: NSObject {
             localMainOrigin = localMainScreen.frame.origin
         }
         
+        var updatedHostNames: [String] = []
         for screen in desktop.screens {
             guard screen.ownerHostId != localId else { continue }
             guard let host = self.host(withIdentifier: screen.ownerHostId) else { continue }
@@ -361,9 +509,21 @@ class HostDevicesManager: NSObject {
                 
                 if host.desktopOrigin != computedOrigin {
                     host.desktopOrigin = computedOrigin
+                    if !updatedHostNames.contains(host.computerName) {
+                        updatedHostNames.append(host.computerName)
+                    }
                     warningLog("[LayoutSync] Updated remote host \(host.computerName) position to \(computedOrigin) from layout update", module: .control)
                 }
             }
+        }
+        
+        if !updatedHostNames.isEmpty {
+            ActivityLogManager.shared.log(
+                level: .info,
+                category: .display,
+                title: "Display arrangement synced (v\(desktop.version))",
+                detail: "Updated relative screen positions for: \(updatedHostNames.joined(separator: ", "))."
+            )
         }
         
         saveHosts()

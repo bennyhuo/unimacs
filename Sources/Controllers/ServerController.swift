@@ -150,6 +150,14 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
 		let host = self.currentConnection!.connectedHost!
         
 		StatusItemController.default.update(with: .controlled, host: host)
+		ActivityLogManager.shared.log(
+			level: .info,
+			category: .control,
+			title: "Being controlled by \(host.computerName)",
+			detail: "Receiving cursor and keyboard input from \(host.computerName).",
+			hostId: host.identifier,
+			hostName: host.computerName
+		)
         
 		ClientController.shared.updateTriggersAndShowVisualHint(false)
         

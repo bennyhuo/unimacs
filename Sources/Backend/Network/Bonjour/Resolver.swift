@@ -34,6 +34,18 @@ class Resolver: NSObject, @preconcurrency NetServiceDelegate {
 
     func netService(_ sender: NetService, didNotResolve errorDict: [String: NSNumber]) {
         warningLog("Resolve failed: \(sender.name), \(errorDict)", module: .network)
+        let serviceName = sender.name
+        let errorCode = errorDict[NetService.errorCode]?.intValue ?? 0
+        Task { @MainActor in
+            ActivityLogManager.shared.log(
+                level: .warning,
+                category: .discovery,
+                title: "Failed to resolve Bonjour service for \(serviceName)",
+                detail: "mDNS address resolution timed out or failed (code \(errorCode)).",
+                howToFix: "Ensure both Macs are on the same network and multicast/Bonjour traffic is not blocked by a VPN or guest Wi-Fi.",
+                actions: [.resetAllConnections]
+            )
+        }
     }
 
     func netServiceDidStop(_ sender: NetService) {

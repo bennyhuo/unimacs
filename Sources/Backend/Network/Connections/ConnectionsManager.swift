@@ -15,9 +15,11 @@ private class SocketConnection: NSObject, MessageChannelDelegate {
     private(set) var host: RemoteHost
     private(set) var infoDict: [String: Any]?
     private(set) weak var delegate: ClientConnectionsDelegate?
+    private(set) var failureReason: String?
     private var connection: NetworkConnection?
+    private var didConnectTCP: Bool = false
     
-    init?(connectionToHost remoteHost: RemoteHost, delegate: ClientConnectionsDelegate?, infoDict: [String: Any]?) {
+    init?(connectionToHost remoteHost: RemoteHost, delegate: ClientConnectionsDelegate?, infoDict: [String: Any]?, immediateFailureReason: inout String?) {
         self.host = remoteHost
         self.infoDict = infoDict
         self.delegate = delegate
@@ -31,8 +33,14 @@ private class SocketConnection: NSObject, MessageChannelDelegate {
         channel.delegate = self
         channel.setNoDelay(true)
         
-        guard let address = remoteHost.address,
-              channel.connect(toHost: address, port: Int32(remoteHost.port)) else {
+        guard let address = remoteHost.address, !address.isEmpty else {
+            immediateFailureReason = "No IP address known for device"
+            channel.close()
+            return nil
+        }
+
+        guard channel.connect(toHost: address, port: Int32(remoteHost.port)) else {
+            immediateFailureReason = channel.lastFailureReason ?? "TCP connection failed"
             channel.close()
             return nil
         }
@@ -46,6 +54,7 @@ private class SocketConnection: NSObject, MessageChannelDelegate {
     
     func channelDidConnect(_ channel: MessageChannel) {
         debugLog("SocketConnection channelDidConnect", module: .network)
+        didConnectTCP = true
         
         let networkConnection = NetworkConnection(channel: channel, origin: .dialed)
         self.connection = networkConnection
@@ -58,11 +67,17 @@ private class SocketConnection: NSObject, MessageChannelDelegate {
     
     func channelDidFailToConnect(_ channel: MessageChannel) {
         debugLog("SocketConnection channelDidFailToConnect", module: .network)
+        if failureReason == nil {
+            failureReason = channel.lastFailureReason ?? "Connection timed out"
+        }
         ConnectionsManager.shared.socketConnectionFailed(self)
     }
     
     func channelDidDisconnect(_ channel: MessageChannel) {
         debugLog("SocketConnection channelDidDisconnect", module: .network)
+        if failureReason == nil {
+            failureReason = channel.lastFailureReason ?? (didConnectTCP ? "Closed by peer during identification handshake" : "Connection closed")
+        }
         ConnectionsManager.shared.socketConnectionFailed(self)
     }
     
@@ -77,6 +92,7 @@ extension SocketConnection: NetworkConnectionDelegate {
         
         if message.msgType == .identification {
             guard let infoDict = message.infoDict as? [String: Any] else {
+                failureReason = "Invalid identification response from peer"
                 ConnectionsManager.shared.socketConnectionFailed(self)
                 return
             }
@@ -88,6 +104,7 @@ extension SocketConnection: NetworkConnectionDelegate {
                     connection.connectedHost = remoteHost
                     ConnectionsManager.shared.socketConnection(self, succeededWithNetworkConnection: connection)
                 } else {
+                    failureReason = "Missing host data in identification handshake"
                     ConnectionsManager.shared.socketConnectionFailed(self)
                 }
             } else {
@@ -99,9 +116,11 @@ extension SocketConnection: NetworkConnectionDelegate {
                     remoteHost = connection.connectedHost
                 }
                 
+                let errMsg = String(format: NSLocalizedString("Incompatible protocol version: Peer uses v%d, you use v%d.", comment: ""), protocolVersion, PROTOCOL_VERSION)
+                failureReason = errMsg
                 if let host = remoteHost {
                     Task { @MainActor in
-                        host.lastError = String(format: NSLocalizedString("Incompatible protocol version: Peer uses v%d, you use v%d.", comment: ""), protocolVersion, PROTOCOL_VERSION)
+                        host.lastError = errMsg
                     }
                 }
                 
@@ -110,19 +129,26 @@ extension SocketConnection: NetworkConnectionDelegate {
         } else if message.msgType == .authenticationFailure {
             if let reason = message.infoDict["reason"] as? String, reason == "unpaired_by_peer",
                let remoteHost = connection.connectedHost {
+                failureReason = "Unpaired on remote Mac"
                 warningLog("[Handshake] Received unpaired_by_peer failure from server. Silently unpairing.", module: .network)
                 Task { @MainActor in
                     DeviceConnectionManager.shared.handlePeerLifecycleMessage(message, on: connection)
                 }
+            } else {
+                failureReason = (message.infoDict["reason"] as? String) ?? "Authentication failed during handshake"
             }
             ConnectionsManager.shared.socketConnectionFailed(self)
         } else {
+            failureReason = "Unexpected handshake message (\(message.msgType.rawValue))"
             errorLog("received invalid msg type: \(message.msgType) (expected identification - \(MsgType.identification.rawValue))", module: .network)
             ConnectionsManager.shared.socketConnectionFailed(self)
         }
     }
     
     func connectionDisconnected(_ connection: NetworkConnection) {
+        if failureReason == nil {
+            failureReason = didConnectTCP ? "Closed by peer during identification handshake" : "Connection closed"
+        }
         ConnectionsManager.shared.socketConnectionFailed(self)
     }
 }
@@ -178,14 +204,19 @@ extension SocketConnection: NetworkConnectionDelegate {
                 return
             }
 
-            if let connection = SocketConnection(connectionToHost: host, delegate: delegate, infoDict: infoDict) {
+            var immediateFailure: String?
+            if let connection = SocketConnection(connectionToHost: host, delegate: delegate, infoDict: infoDict, immediateFailureReason: &immediateFailure) {
                 self.pendingConnections[host.identifier] = connection
                 debugLog("connectToHost: \(host.identifier), add to pendingConnections", module: .network)
             } else {
-                debugLog("connectToHost: \(host.identifier), failed immediately", module: .network)
+                debugLog("connectToHost: \(host.identifier), failed immediately (\(immediateFailure ?? "unknown"))", module: .network)
+                var mergedInfo = infoDict ?? [:]
+                if let immediateFailure {
+                    mergedInfo["failureReason"] = immediateFailure
+                }
                 // Delegates may touch UI / main-actor state, so always report on main.
                 DispatchQueue.main.async {
-                    delegate?.connectionToServerFailed(host, infoDict: infoDict)
+                    delegate?.connectionToServerFailed(host, infoDict: mergedInfo)
                 }
             }
         }
@@ -242,7 +273,11 @@ extension SocketConnection: NetworkConnectionDelegate {
             let identifier = host.identifier
 
             if self.pendingConnections[identifier] === socketConnection {
-                socketConnection.delegate?.connectionToServerFailed(host, infoDict: socketConnection.infoDict)
+                var mergedInfo = socketConnection.infoDict ?? [:]
+                if let reason = socketConnection.failureReason ?? socketConnection.channel?.lastFailureReason {
+                    mergedInfo["failureReason"] = reason
+                }
+                socketConnection.delegate?.connectionToServerFailed(host, infoDict: mergedInfo)
                 self.pendingConnections.removeValue(forKey: identifier)
             }
         }
@@ -367,6 +402,17 @@ extension ConnectionsManager: NetworkConnectionDelegate {
                         let isPeered = knownHost?.isInState(.peered) ?? false
                         let isTrusted = AuthenticationManager.default.isHostTrusted(remoteHost)
                         warningLog("[Handshake] Peer \(remoteHost.computerName) believes paired but is not paired/trusted locally (isPeered=\(isPeered), isTrusted=\(isTrusted)). Rejecting.", module: .network)
+                        Task { @MainActor in
+                            ActivityLogManager.shared.log(
+                                level: .warning,
+                                category: .connection,
+                                title: "Rejected incoming connection from unpaired device \(remoteHost.computerName)",
+                                detail: "\"\(remoteHost.computerName)\" tried to connect as a paired device, but it is not paired on this Mac. Click Re-pair to re-establish trust.",
+                                hostId: remoteHost.identifier,
+                                hostName: remoteHost.computerName,
+                                actions: [.repairDevice(hostId: remoteHost.identifier, hostName: remoteHost.computerName)]
+                            )
+                        }
                         let failureMsg = Message.create(with: .authenticationFailure, andInfoDict: ["reason": "unpaired_by_peer"])
                         connection.sendAsync(failureMsg)
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

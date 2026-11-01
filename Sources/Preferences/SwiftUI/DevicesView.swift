@@ -228,6 +228,14 @@ struct PairedDeviceRow: View {
                             .font(.caption)
                     }
                     .foregroundColor(.red)
+                } else if device.linkPhase == .reconnecting, (device.lastError != nil || device.failureDiagnosis != nil) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                        Text(device.statusText)
+                            .font(.caption)
+                    }
+                    .foregroundColor(.orange)
                 } else {
                     Text(device.statusText)
                         .font(.caption)
@@ -239,6 +247,26 @@ struct PairedDeviceRow: View {
             
             // Action buttons
             HStack(spacing: 12) {
+                if !device.isConnected && (device.lastError != nil || device.failureDiagnosis != nil || device.linkPhase == .reconnecting) {
+                    Button {
+                        ActivityLogManager.shared.revealLogs(forHostId: device.id)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "wrench.and.screwdriver.fill")
+                                .font(.caption2)
+                            Text("Why? / Fix")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.orange.opacity(0.15)))
+                        .foregroundColor(.orange)
+                    }
+                    .buttonStyle(.plain)
+                    .help("View why connection failed and how to fix it")
+                }
+
                 if device.showsDisconnectAction {
                     Button {
                         onDisconnect()
@@ -359,6 +387,9 @@ struct PairedDeviceRow: View {
                 }
             }
             Divider()
+            Button("View Activity & Diagnostics") {
+                ActivityLogManager.shared.revealLogs(forHostId: device.id)
+            }
             Button("Show Details") { onShowDetail() }
             Divider()
             Button("Unpair", role: .destructive) { onUnpair() }

@@ -20,6 +20,9 @@ struct DeviceInfo: Identifiable, Equatable {
     let isBeingControlled: Bool
     let linkPhase: DeviceLinkPhase
     let reconnectSecondsRemaining: Int?
+    let reconnectAttempt: Int
+    let maxReconnectAttempts: Int
+    let failureDiagnosis: ConnectionFailureDiagnosis?
     let macAddresses: [String]
     let isPortable: Bool
     let lastError: String?
@@ -42,15 +45,19 @@ struct DeviceInfo: Identifiable, Equatable {
         self.osVersion = host.osVersion
         self.remoteHost = host
         self.macAddresses = host.macAddresses.map { $0.description }
-        self.lastError = host.lastError
         self.shareOutput = host.shareOutput
         self.shareInput = host.shareInput
         self.hasSpeakerHardware = host.hasSpeakerHardware
         self.hasMicHardware = host.hasMicHardware
-        
+
         let manager = DeviceConnectionManager.shared
+        let isBonjourOnline = host.isInState(.peeredOnline)
         self.linkPhase = manager.linkPhase(for: host)
         self.reconnectSecondsRemaining = manager.reconnectSecondsRemaining(for: host)
+        self.reconnectAttempt = manager.reconnectAttemptCount(for: host)
+        self.maxReconnectAttempts = manager.maxReconnectAttemptsCount
+        self.lastError = isBonjourOnline ? host.lastError : nil
+        self.failureDiagnosis = isBonjourOnline ? manager.lastDiagnosis(for: host) : nil
         
         let state = host.hostState
         self.isPaired = host.isInState(.peered) || state.contains(.peering)
@@ -85,10 +92,12 @@ struct DeviceInfo: Identifiable, Equatable {
         case .connecting:
             return "Connecting…"
         case .reconnecting:
+            let attemptSuffix = reconnectAttempt > 0 ? " (\(reconnectAttempt)/\(maxReconnectAttempts))" : ""
+            let reasonSuffix = (lastError ?? failureDiagnosis?.shortReason).map { " — \($0)" } ?? ""
             if let seconds = reconnectSecondsRemaining, seconds > 0 {
-                return "Reconnecting in \(seconds)s…"
+                return "Reconnecting in \(seconds)s\(attemptSuffix)\(reasonSuffix)"
             }
-            return "Connecting…"
+            return "Reconnecting\(attemptSuffix)\(reasonSuffix)"
         case .disconnected:
             return "Disconnected"
         case .unavailable:
@@ -126,6 +135,8 @@ struct DeviceInfo: Identifiable, Equatable {
         lhs.id == rhs.id &&
         lhs.linkPhase == rhs.linkPhase &&
         lhs.reconnectSecondsRemaining == rhs.reconnectSecondsRemaining &&
+        lhs.reconnectAttempt == rhs.reconnectAttempt &&
+        lhs.failureDiagnosis == rhs.failureDiagnosis &&
         lhs.isConnected == rhs.isConnected &&
         lhs.isControlling == rhs.isControlling &&
         lhs.isPortable == rhs.isPortable &&
@@ -372,6 +383,7 @@ final class DevicesViewModel: ObservableObject {
     func clearError(for device: DeviceInfo) {
         guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
         host.lastError = nil
+        DeviceConnectionManager.shared.clearLastDiagnosis(for: host.identifier)
         loadDevices()
     }
     

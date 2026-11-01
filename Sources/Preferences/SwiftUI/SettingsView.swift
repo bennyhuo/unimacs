@@ -7,6 +7,7 @@ import AppKit
 @available(macOS 13.0, *)
 struct SettingsView: View {
     @StateObject private var viewModel = SettingsViewModel()
+    @ObservedObject private var activityLog = ActivityLogManager.shared
     @State private var selectedTab: SettingsTab = .devices
     @State private var showingTrustedHosts = false
     
@@ -38,24 +39,39 @@ struct SettingsView: View {
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
             .removeSidebarToggleIfNeeded()
         } detail: {
-            Group {
-                switch selectedTab {
-                case .devices:
-                    DevicesView()
-                case .layout:
-                    ModernLayoutView()
-                case .settings:
-                    SettingsTabView(viewModel: viewModel, showingTrustedHosts: $showingTrustedHosts)
-                case .about:
-                    AboutTabView()
+            GeometryReader { detailGeo in
+                let fullPageHeight = max(0, detailGeo.size.height - ActivityLogDrawerView.collapsedHeight)
+
+                VStack(spacing: 0) {
+                    Group {
+                        switch selectedTab {
+                        case .devices:
+                            DevicesView()
+                        case .layout:
+                            ModernLayoutView(viewportHeight: fullPageHeight)
+                        case .settings:
+                            SettingsTabView(viewModel: viewModel, showingTrustedHosts: $showingTrustedHosts)
+                        case .about:
+                            AboutTabView(viewportHeight: fullPageHeight)
+                        }
+                    }
+                    .id(selectedTab)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    ActivityLogDrawerView(availableDetailHeight: detailGeo.size.height)
                 }
+                .frame(width: detailGeo.size.width, height: detailGeo.size.height)
             }
-            .id(selectedTab)
             .frame(minWidth: 550)
         }
-        .frame(minWidth: 750, minHeight: 500)
+        .frame(minWidth: 750, minHeight: 540)
         .sheet(isPresented: $showingTrustedHosts) {
             TrustedHostsView()
+        }
+        .onAppear {
+            ActivityLogManager.shared.onNavigateToSettingsTab = {
+                selectedTab = .settings
+            }
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -68,6 +84,21 @@ struct SettingsView: View {
             }
             
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    activityLog.toggleDrawer()
+                } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: activityLog.isDrawerExpanded ? "list.bullet.below.rectangle" : "list.bullet.rectangle")
+                        if activityLog.unreadIssueCount > 0 && !activityLog.isDrawerExpanded {
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 7, height: 7)
+                                .offset(x: 3, y: -2)
+                        }
+                    }
+                }
+                .help(activityLog.isDrawerExpanded ? "Hide Activity Log" : "Show Activity & Diagnostic Log")
+
                 Button {
                     viewModel.resetConnections()
                 } label: {
@@ -710,6 +741,7 @@ struct SettingsTabView: View {
             }
             .padding(24)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             viewModel.startPeriodicRefresh()
@@ -1037,98 +1069,134 @@ struct TrustedHostRow: View {
     }
 }
 
+// MARK: - Viewport Fill Container
+
+/// Proposes at least `viewportHeight` vertically to a single child inside a `ScrollView`
+/// while still allowing the child to grow taller than `viewportHeight` when its natural
+/// content exceeds the available space. Keeping `viewportHeight` anchored to the full
+/// detail height (with the log drawer collapsed) prevents the `Layout` and `About` tabs
+/// from compressing or shifting upward when `ActivityLogDrawerView` expands, while allowing
+/// vertical scrolling through the entire page—matching `DevicesView` and `SettingsTabView`.
+@available(macOS 13.0, *)
+struct ViewportFillContainer: Layout {
+    var viewportHeight: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let subview = subviews.first else { return .zero }
+        let naturalSize = subview.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        let targetHeight = max(naturalSize.height, viewportHeight)
+        let fitted = subview.sizeThatFits(ProposedViewSize(width: proposal.width, height: targetHeight))
+        return CGSize(width: proposal.width ?? fitted.width, height: fitted.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let subview = subviews.first else { return }
+        subview.place(
+            at: bounds.origin,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height)
+        )
+    }
+}
+
 // MARK: - About View
 
 @available(macOS 13.0, *)
 struct AboutTabView: View {
+    var viewportHeight: CGFloat = 0
     @State private var versionIndex = 0
-    
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            VStack(alignment: .leading, spacing: 4) {
-                Text("About")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                
-                Text("Information about this application")
-                    .font(.callout)
-                    .foregroundColor(.secondary)
+        ScrollView(showsIndicators: false) {
+            ViewportFillContainer(viewportHeight: viewportHeight) {
+                VStack(spacing: 0) {
+                    // Header
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("About")
+                            .font(.title2)
+                            .fontWeight(.semibold)
+
+                        Text("Information about this application")
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 20)
+                    .padding(.bottom, 16)
+
+                    // Content
+                    VStack(spacing: 20) {
+                        Spacer(minLength: 8)
+
+                        // App icon
+                        if let icon = NSApp.applicationIconImage {
+                            Image(nsImage: icon)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 128, height: 128)
+                                .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
+                        }
+
+                        // App name
+                        Text(SystemInfo.appName)
+                            .font(.system(size: 28, weight: .semibold, design: .rounded))
+
+                        // Version (clickable to cycle)
+                        let versionStrings = SystemInfo.appVersionStrings
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                versionIndex = (versionIndex + 1) % versionStrings.count
+                            }
+                        } label: {
+                            Text(versionStrings[versionIndex])
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                                .contentTransition(.numericText())
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer(minLength: 12)
+
+                        // Links
+                        HStack(spacing: 24) {
+                            Link(destination: SystemInfo.githubRepositoryURL) {
+                                Label("GitHub", systemImage: "link")
+                                    .font(.callout)
+                            }
+
+                            Link(destination: SystemInfo.githubIssuesURL) {
+                                Label("Report Issue", systemImage: "exclamationmark.bubble")
+                                    .font(.callout)
+                            }
+
+                            Link(destination: SystemInfo.licenseURL) {
+                                Label("GPL-2.0 License", systemImage: "doc.text")
+                                    .font(.callout)
+                            }
+                        }
+
+                        // Credits & Copyright
+                        VStack(spacing: 6) {
+                            Text("Forked from [johndbritton/teleport](https://github.com/johndbritton/teleport) and originally created as [Teleport](https://github.com/abyssoft/teleport) by Julien Robert (Abyssoft). Virtual microphone routing powered by [BlackHole](https://existential.audio/blackhole/) (Existential Audio, GPLv3).")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: 460)
+
+                            Text(SystemInfo.appCopyright)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 24)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
-            .padding(.bottom, 16)
-            
-            // Content
-            VStack(spacing: 20) {
-                Spacer()
-                
-                // App icon
-                if let icon = NSApp.applicationIconImage {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 128, height: 128)
-                        .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
-                }
-                
-                // App name
-                Text(SystemInfo.appName)
-                    .font(.system(size: 28, weight: .semibold, design: .rounded))
-                
-                // Version (clickable to cycle)
-                let versionStrings = SystemInfo.appVersionStrings
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        versionIndex = (versionIndex + 1) % versionStrings.count
-                    }
-                } label: {
-                    Text(versionStrings[versionIndex])
-                        .font(.callout)
-                        .foregroundColor(.secondary)
-                        .contentTransition(.numericText())
-                }
-                .buttonStyle(.plain)
-                
-                Spacer()
-                
-                // Links
-                HStack(spacing: 24) {
-                    Link(destination: SystemInfo.githubRepositoryURL) {
-                        Label("GitHub", systemImage: "link")
-                            .font(.callout)
-                    }
-                    
-                    Link(destination: SystemInfo.githubIssuesURL) {
-                        Label("Report Issue", systemImage: "exclamationmark.bubble")
-                            .font(.callout)
-                    }
-                    
-                    Link(destination: SystemInfo.licenseURL) {
-                        Label("GPL-2.0 License", systemImage: "doc.text")
-                            .font(.callout)
-                    }
-                }
-                
-                // Credits & Copyright
-                VStack(spacing: 6) {
-                    Text("Forked from [johndbritton/teleport](https://github.com/johndbritton/teleport) and originally created as [Teleport](https://github.com/abyssoft/teleport) by Julien Robert (Abyssoft). Virtual microphone routing powered by [BlackHole](https://existential.audio/blackhole/) (Existential Audio, GPLv3).")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 460)
-                    
-                    Text(SystemInfo.appCopyright)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 24)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 }

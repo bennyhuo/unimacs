@@ -31,6 +31,7 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 - (void)_connectionAcceptedWithNativeSocket:(int)nativeSocket peerAddress:(CFDataRef)peerAddress;
 - (void)_connectionAcceptedWithChildSocket:(UMTCPSocket*)childSocket;
 - (void)_connectionFailed;
+- (void)_connectionFailedWithErrorCode:(SInt32)errorCode;
 - (void)_connectionSucceeded;
 - (void)_connectionClosed;
 
@@ -40,6 +41,7 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 {
 	CFDataRef _peerAddressData;
 	BOOL _runLoopDeferred;
+	NSString *_lastErrorReason;
 }
 
 - (instancetype) initWithDelegate:(id<UMTCPSocketDelegate>)delegate
@@ -253,8 +255,10 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 - (BOOL)connectToHost:(NSString*)host onPort:(int)port
 {
 	DebugLog(@"connect to %@ on port %d", host, port);
+	_lastErrorReason = nil;
 	
 	if(host == nil) {
+		_lastErrorReason = @"No target address specified";
 		ErrorLog(@"trying to connect to nil host");
 		return NO;
 	}
@@ -274,8 +278,10 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 							  &socketContext
 							  );
 	
-	if(![self _setupSocket])
+	if(![self _setupSocket]) {
+		_lastErrorReason = @"Failed to initialize local TCP socket";
 		return NO;
+	}
 	
 	/* Auto re-enable callbacks */
 	CFOptionFlags socketFlags = CFSocketGetSocketFlags(_cfSocket);
@@ -296,6 +302,7 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 		struct hostent * hp = gethostbyname([host cStringUsingEncoding:NSUTF8StringEncoding]);
 #endif
 		if(hp == 0) {
+			_lastErrorReason = [NSString stringWithFormat:@"Could not resolve host %@", host];
 			ErrorLog(@"could not resolve host %@", host);
 			[self _close:NO];
 			return NO;
@@ -309,9 +316,13 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 	if (socketError != kCFSocketSuccess) {
 		if(socketError == kCFSocketError) {
 			int err = errno;
+			_lastErrorReason = [NSString stringWithFormat:@"%s (errno=%d)", strerror(err), err];
 			DebugLog(@"Connection failed with errno: %d (%s)", err, strerror(err));
 		} else if (socketError == kCFSocketTimeout) {
+			_lastErrorReason = @"Connection timed out (5s)";
 			DebugLog(@"Connection timeout.");
+		} else {
+			_lastErrorReason = @"Connection failed";
 		}
 		
 		if(addr != NULL) {
@@ -491,6 +502,11 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 	}
 	
 	return nil;
+}
+
+- (NSString*)lastErrorReason
+{
+	return _lastErrorReason;
 }
 
 - (CFSocketNativeHandle)nativeHandle
@@ -738,15 +754,25 @@ static void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType in
 
 - (void)_connectionFailed
 {
+	if (_lastErrorReason == nil) {
+		_lastErrorReason = @"Connection failed";
+	}
 	[self _close:NO];
 	
 	if([_delegate respondsToSelector:@selector(tcpSocketConnectionFailed:)])
 		[_delegate tcpSocketConnectionFailed:self];
 }
 
+- (void)_connectionFailedWithErrorCode:(SInt32)errorCode
+{
+	_lastErrorReason = [NSString stringWithFormat:@"%s (errno=%d)", strerror(errorCode), (int)errorCode];
+	[self _connectionFailed];
+}
+
 - (void)_connectionSucceeded
 {
 	PRINT_ME;
+	_lastErrorReason = nil;
 	_socketState = TPSocketConnectedState;
 	
 	if([_delegate respondsToSelector:@selector(tcpSocketConnectionSucceeded:)])
@@ -805,7 +831,7 @@ void _cfsocketCallback(CFSocketRef inCFSocketRef, CFSocketCallBackType inType, C
 			} else {
 				SInt32 errorCode = *((SInt32*)inData);
 				NetworkErrorLog(@"[Socket] CFSocketConnectCallBack: connection failed, errorCode=%d (%s)", errorCode, strerror(errorCode));
-				[tcpSocket _connectionFailed];
+				[tcpSocket _connectionFailedWithErrorCode:errorCode];
 			}
 			break;
 		}

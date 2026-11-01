@@ -25,6 +25,8 @@ protocol NetworkConfigurationWatcherDelegate: AnyObject {
     
     @objc var localIpAddresses: [String] = []
     @objc var selectedLocalIpAddress: String = LOCAL_IP_ANY_ADDR
+    private var lastKnownInterfaces: [NetworkInterfaceInfo] = []
+    private var hasInitializedInterfaces = false
 
     /// Active local IPv4 addresses excluding the wildcard `"0.0.0.0"` entry.
     var nonWildcardLocalIpAddresses: [String] {
@@ -44,8 +46,17 @@ protocol NetworkConfigurationWatcherDelegate: AnyObject {
         }
         
         if !localIpAddresses.contains(selectedLocalIpAddress) {
-            debugLog("Previously selected ip address \(selectedLocalIpAddress) is invalid.")
+            let invalidIP = selectedLocalIpAddress
+            debugLog("Previously selected ip address \(invalidIP) is invalid.")
             selectedLocalIpAddress = LOCAL_IP_ANY_ADDR
+            Task { @MainActor in
+                ActivityLogManager.shared.log(
+                    level: .warning,
+                    category: .network,
+                    title: "Bound local IP \(invalidIP) is no longer active — switched to All Interfaces",
+                    detail: "The previously selected network interface IP (\(invalidIP)) is not available on this Mac. Unimacs is now binding to all active interfaces (0.0.0.0)."
+                )
+            }
         }
     }
     
@@ -121,12 +132,36 @@ protocol NetworkConfigurationWatcherDelegate: AnyObject {
     }
     
     @objc func updateLocalIpAddresses() {
+        let currentInterfaces = NetworkUtils.activeIPv4Interfaces(onlySupported: true)
+        let previousInterfaces = lastKnownInterfaces
+        let wasInitialized = hasInitializedInterfaces
+        lastKnownInterfaces = currentInterfaces
+        hasInitializedInterfaces = true
+
         localIpAddresses.removeAll()
         localIpAddresses.append(LOCAL_IP_ANY_ADDR)
         
-        for interface in NetworkUtils.activeIPv4Interfaces(onlySupported: true) {
+        for interface in currentInterfaces {
             localIpAddresses.append(interface.ipAddress)
             networkDebugLog("\(interface.name) : \(interface.ipAddress)")
+        }
+
+        if wasInitialized,
+           let change = NetworkChangeFormatter.describeChange(previous: previousInterfaces, current: currentInterfaces) {
+            Task { @MainActor in
+                var actions: [ActivityFixAction] = []
+                if change.level == .error || change.level == .warning {
+                    actions.append(.openNetworkSettings)
+                    actions.append(.resetAllConnections)
+                }
+                ActivityLogManager.shared.log(
+                    level: change.level,
+                    category: .network,
+                    title: change.title,
+                    detail: change.detail,
+                    actions: actions
+                )
+            }
         }
     }
     
@@ -134,8 +169,17 @@ protocol NetworkConfigurationWatcherDelegate: AnyObject {
     @objc func selectLocalIpAddress(_ value: String) {
         guard selectedLocalIpAddress != value else { return }
         
+        let oldValue = selectedLocalIpAddress
         selectedLocalIpAddress = value
         PreferencesManager.sharedPreferencesManager().setValue(value, forKey: LOCAL_IP_KEY)
+        let displayNew = value == LOCAL_IP_ANY_ADDR ? "All Interfaces (0.0.0.0)" : value
+        let displayOld = oldValue == LOCAL_IP_ANY_ADDR ? "All Interfaces (0.0.0.0)" : oldValue
+        ActivityLogManager.shared.log(
+            level: .info,
+            category: .network,
+            title: "Bound local IP changed to \(displayNew)",
+            detail: "Previous bind address: \(displayOld). Resetting listeners and Bonjour broadcast."
+        )
         networkChanged()
     }
     

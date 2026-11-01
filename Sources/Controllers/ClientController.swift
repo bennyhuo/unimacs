@@ -384,6 +384,14 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		DisplaySleepAssertion.activate(reason: "startControl")
 		
 		_state = .controllingState
+		ActivityLogManager.shared.log(
+			level: .info,
+			category: .control,
+			title: "Controlling \(controlledHost.computerName)",
+			detail: "Cursor and keyboard input are now directed to \(controlledHost.computerName).",
+			hostId: controlledHost.identifier,
+			hostName: controlledHost.computerName
+		)
 	}
 	
 	private func _clientOptions(for remoteHost: RemoteHost) -> [String: Any] {
@@ -636,9 +644,20 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
         case .controlFailure:
             guard shouldHandleControlMessage(from: host, on: connection) else { return false }
             _state = .idleState
+            let reason = message.infoDict["reason"] as? String ?? "The remote Mac rejected the control request."
             if let controlledHost = connection.connectedHost {
                 controlledHost.hostState = .shared
                 controlledHost.lastError = NSLocalizedString("Control rejected: The host may have removed this Mac from its trusted list.", comment: "")
+                ActivityLogManager.shared.log(
+                    level: .error,
+                    category: .control,
+                    title: "Control request rejected by \(controlledHost.computerName)",
+                    detail: "\(reason) \(controlledHost.computerName) may have unpaired this Mac or disabled screen control.",
+                    howToFix: "Click 'Re-pair Device' to re-establish trust with \(controlledHost.computerName), and verify 'Allow this Mac to be controlled' is enabled on \(controlledHost.computerName).",
+                    hostId: controlledHost.identifier,
+                    hostName: controlledHost.computerName,
+                    actions: [.repairDevice(hostId: controlledHost.identifier, hostName: controlledHost.computerName)]
+                )
             }
             return true
         case .controlStop:

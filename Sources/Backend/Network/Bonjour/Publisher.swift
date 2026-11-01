@@ -57,10 +57,35 @@ class Publisher: NSObject, NetServiceDelegate {
 
 	func netServiceDidPublish(_ sender: NetService) {
 		debugLog("Service published: \(sender.name):\(sender.port)", module: .network)
+		let serviceName = sender.name
+		let servicePort = sender.port
+		Task { @MainActor in
+			let ipSummary = NetworkUtils.activeIPv4Interfaces(onlySupported: true)
+				.map { "\($0.name): \($0.ipAddress)" }
+				.joined(separator: ", ")
+			ActivityLogManager.shared.log(
+				level: .info,
+				category: .discovery,
+				title: "Broadcasting this Mac via Bonjour (\(serviceName))",
+				detail: "Advertising _unimacs._tcp on port \(servicePort)\(ipSummary.isEmpty ? "" : " (\(ipSummary))")."
+			)
+		}
 	}
 	
 	func netService(_ sender: NetService, didNotPublish errorDict: [String : NSNumber]) {
 		errorLog("Service publish failed: \(sender.name), \(errorDict)", module: .network)
+		let serviceName = sender.name
+		let errorCode = errorDict[NetService.errorCode]?.intValue ?? 0
+		Task { @MainActor in
+			ActivityLogManager.shared.log(
+				level: .error,
+				category: .discovery,
+				title: "Bonjour broadcast failed for \(serviceName)",
+				detail: "mDNS failed to publish service (error code \(errorCode)). Other Macs may not automatically discover this Mac.",
+				howToFix: "Click 'Reset All Connections' to restart the Bonjour publisher, or check your network and firewall settings.",
+				actions: [.resetAllConnections, .openNetworkSettings]
+			)
+		}
 	}
 	
 	func netServiceDidStop(_ sender: NetService) {

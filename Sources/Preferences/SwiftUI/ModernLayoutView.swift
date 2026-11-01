@@ -17,137 +17,160 @@ private enum LayoutConstants {
 
 @available(macOS 13.0, *)
 struct ModernLayoutView: View {
+    var viewportHeight: CGFloat = 0
     @StateObject private var viewModel = LayoutViewModel()
     @State private var selectedHostId: String?
     @State private var isDragging: Bool = false
     @State private var frozenLayoutInfo: LayoutInfo?
-    
-    var body: some View {
-        VStack(spacing: 16) {
-            // Header
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Arrange Displays")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                
-                Text("Drag connected devices to arrange their position. Devices on the edges will be accessible from that direction.")
-                    .font(.callout)
-                    .foregroundColor(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
-            
-            if !viewModel.isAccessibilityTrusted {
-                HStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                        .imageScale(.large)
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Accessibility Permission Required")
-                            .font(.headline)
-                        Text("Unimacs requires Accessibility permission to control mouse and keyboard. Please authorize it in System Settings.")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Spacer()
-                    
-                    Button("Authorize...") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                .padding()
-                .background(Color(nsColor: .controlBackgroundColor))
-                .cornerRadius(8)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.orange.opacity(0.5), lineWidth: 1)
-                )
-                .padding(.horizontal, 24)
-            }
-            
-            // Layout Canvas
-            GeometryReader { geometry in
-                let currentLayoutInfo = viewModel.calculateLayoutInfo(for: geometry.size)
-                // Use frozen layout during drag, otherwise calculate fresh
-                let layoutInfo = isDragging ? (frozenLayoutInfo ?? currentLayoutInfo) : currentLayoutInfo
-                
-                ZStack {
-                    // Background
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(nsColor: .controlBackgroundColor))
-                    
-                    // All screens (local + remote) positioned in global coordinates
-                    ForEach(viewModel.allScreens) { screenInfo in
-                        SystemStyleScreenView(
-                            hostName: screenInfo.hostName,
-                            isLocal: screenInfo.isLocal,
-                            isMainScreen: screenInfo.isMainScreen,
-                            scale: layoutInfo.scale,
-                            isAccessibilityTrusted: viewModel.isAccessibilityTrusted
-                        )
-                        .frame(
-                            width: screenInfo.globalFrame.width * layoutInfo.scale,
-                            height: screenInfo.globalFrame.height * layoutInfo.scale
-                        )
-                        .shadow(
-                            color: (!screenInfo.isLocal && selectedHostId == screenInfo.hostId) ? Color.accentColor.opacity(0.3) : Color.clear,
-                            radius: 8
-                        )
-                        .position(
-                            x: layoutInfo.offsetX + screenInfo.globalFrame.midX * layoutInfo.scale,
-                            y: layoutInfo.offsetY - screenInfo.globalFrame.midY * layoutInfo.scale
-                        )
-                        .gesture(
-                            screenInfo.isLocal ? nil : DragGesture()
-                                .onChanged { value in
-                                    // Freeze layout on first drag
-                                    if !isDragging {
-                                        isDragging = true
-                                        frozenLayoutInfo = currentLayoutInfo
-                                    }
-                                    selectedHostId = screenInfo.hostId
-                                    let activeLayoutInfo = frozenLayoutInfo ?? currentLayoutInfo
-                                    viewModel.updateHostPosition(
-                                        hostId: screenInfo.hostId,
-                                        delta: CGSize(
-                                            width: value.translation.width / activeLayoutInfo.scale,
-                                            height: -value.translation.height / activeLayoutInfo.scale
-                                        )
-                                    )
-                                }
-                                .onEnded { _ in
-                                    // Snap and commit position first to avoid a transient rescale flicker before snapping
-                                    viewModel.snapHostToEdge(hostId: screenInfo.hostId)
-                                    viewModel.commitDrag(hostId: screenInfo.hostId)
 
-                                    // Unfreeze after snapping to trigger adaptive canvas scaling
-                                    isDragging = false
-                                    frozenLayoutInfo = nil
+    var body: some View {
+        ScrollView(showsIndicators: false) {
+            ViewportFillContainer(viewportHeight: viewportHeight) {
+                VStack(spacing: 16) {
+                    // Header
+                    HStack(alignment: .center, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Arrange Displays")
+                                .font(.title2)
+                                .fontWeight(.semibold)
+
+                            Text("Drag connected devices to arrange their position. Devices on the edges will be accessible from that direction.")
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Spacer(minLength: 12)
+
+                        HStack(spacing: 8) {
+                            Text("Connected Only")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            Toggle("", isOn: $viewModel.showConnectedOnly)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                        }
+                        .fixedSize()
+                        .help("Only show actively connected devices on the layout canvas")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 20)
+
+                    if !viewModel.isAccessibilityTrusted {
+                        HStack(spacing: 12) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                                .imageScale(.large)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                        Text("Accessibility Permission Required")
+                                    .font(.headline)
+                                Text("Unimacs requires Accessibility permission to control mouse and keyboard. Please authorize it in System Settings.")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            Spacer()
+
+                            Button("Authorize...") {
+                                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                                    NSWorkspace.shared.open(url)
                                 }
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                        .padding()
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .cornerRadius(8)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.orange.opacity(0.5), lineWidth: 1)
                         )
-                        .onTapGesture {
-                            if !screenInfo.isLocal {
-                                selectedHostId = screenInfo.hostId
+                        .padding(.horizontal, 24)
+                    }
+
+                    // Layout Canvas
+                    GeometryReader { geometry in
+                        let currentLayoutInfo = viewModel.calculateLayoutInfo(for: geometry.size)
+                        // Use frozen layout during drag, otherwise calculate fresh
+                        let layoutInfo = isDragging ? (frozenLayoutInfo ?? currentLayoutInfo) : currentLayoutInfo
+
+                        ZStack {
+                            // Background
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(nsColor: .controlBackgroundColor))
+
+                            // All screens (local + remote) positioned in global coordinates
+                            ForEach(viewModel.allScreens) { screenInfo in
+                                SystemStyleScreenView(
+                                    hostName: screenInfo.hostName,
+                                    isLocal: screenInfo.isLocal,
+                                    isMainScreen: screenInfo.isMainScreen,
+                                    isConnected: screenInfo.isConnected,
+                                    statusLabel: screenInfo.statusLabel,
+                                    scale: layoutInfo.scale,
+                                    isAccessibilityTrusted: viewModel.isAccessibilityTrusted
+                                )
+                                .frame(
+                                    width: screenInfo.globalFrame.width * layoutInfo.scale,
+                                    height: screenInfo.globalFrame.height * layoutInfo.scale
+                                )
+                                .shadow(
+                                    color: (!screenInfo.isLocal && screenInfo.isConnected && selectedHostId == screenInfo.hostId) ? Color.accentColor.opacity(0.3) : Color.clear,
+                                    radius: 8
+                                )
+                                .position(
+                                    x: layoutInfo.offsetX + screenInfo.globalFrame.midX * layoutInfo.scale,
+                                    y: layoutInfo.offsetY - screenInfo.globalFrame.midY * layoutInfo.scale
+                                )
+                                .gesture(
+                                    (screenInfo.isLocal || !screenInfo.isConnected) ? nil : DragGesture()
+                                        .onChanged { value in
+                                            // Freeze layout on first drag
+                                            if !isDragging {
+                                                isDragging = true
+                                                frozenLayoutInfo = currentLayoutInfo
+                                            }
+                                            selectedHostId = screenInfo.hostId
+                                            let activeLayoutInfo = frozenLayoutInfo ?? currentLayoutInfo
+                                            viewModel.updateHostPosition(
+                                                hostId: screenInfo.hostId,
+                                                delta: CGSize(
+                                                    width: value.translation.width / activeLayoutInfo.scale,
+                                                    height: -value.translation.height / activeLayoutInfo.scale
+                                                )
+                                            )
+                                        }
+                                        .onEnded { _ in
+                                            // Snap and commit position first to avoid a transient rescale flicker before snapping
+                                            viewModel.snapHostToEdge(hostId: screenInfo.hostId)
+                                            viewModel.commitDrag(hostId: screenInfo.hostId)
+
+                                            // Unfreeze after snapping to trigger adaptive canvas scaling
+                                            isDragging = false
+                                            frozenLayoutInfo = nil
+                                        }
+                                )
+                                .onTapGesture {
+                                    if !screenInfo.isLocal && screenInfo.isConnected {
+                                        selectedHostId = screenInfo.hostId
+                                    }
+                                }
                             }
                         }
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
+                        )
                     }
-                    
-
+                    .frame(minHeight: 280)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
                 }
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
-                )
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 24)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             viewModel.startObserving()
@@ -165,27 +188,58 @@ struct SystemStyleScreenView: View {
     let hostName: String
     let isLocal: Bool
     let isMainScreen: Bool
+    var isConnected: Bool = true
+    var statusLabel: String? = nil
     let scale: CGFloat
     var isAccessibilityTrusted: Bool = true
     
+    private var fillStyle: Color {
+        if isLocal {
+            return isAccessibilityTrusted ? Color.blue.opacity(0.15) : Color.orange.opacity(0.15)
+        }
+        return isConnected ? Color.purple.opacity(0.15) : Color.secondary.opacity(0.08)
+    }
+
+    private var strokeColor: Color {
+        if isLocal {
+            return isAccessibilityTrusted ? Color.blue : Color.orange
+        }
+        return isConnected ? Color.purple : Color.secondary.opacity(0.45)
+    }
+
+    private var titleColor: Color {
+        if isLocal {
+            return isAccessibilityTrusted ? .blue : .orange
+        }
+        return isConnected ? .purple : .secondary
+    }
+
     var body: some View {
         ZStack {
             // Screen background - solid color like system settings
             RoundedRectangle(cornerRadius: LayoutConstants.screenCornerRadius)
-                .fill(isLocal ? (isAccessibilityTrusted ? Color.blue.opacity(0.15) : Color.orange.opacity(0.15)) : Color.purple.opacity(0.15))
+                .fill(fillStyle)
             
-            // Screen border
-            RoundedRectangle(cornerRadius: LayoutConstants.screenCornerRadius)
-                .strokeBorder(
-                    isLocal ? (isAccessibilityTrusted ? Color.blue : Color.orange) : Color.purple,
-                    lineWidth: isMainScreen ? 3 : 2
-                )
+            // Screen border (dashed when remote device is disconnected)
+            if !isLocal && !isConnected {
+                RoundedRectangle(cornerRadius: LayoutConstants.screenCornerRadius)
+                    .strokeBorder(
+                        strokeColor,
+                        style: StrokeStyle(lineWidth: isMainScreen ? 2 : 1.5, dash: [6, 4])
+                    )
+            } else {
+                RoundedRectangle(cornerRadius: LayoutConstants.screenCornerRadius)
+                    .strokeBorder(
+                        strokeColor,
+                        lineWidth: isMainScreen ? 3 : 2
+                    )
+            }
             
             // Menu bar for main screen
             if isMainScreen {
                 VStack(spacing: 0) {
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(Color.white.opacity(0.5))
+                        .fill(Color.white.opacity((!isLocal && !isConnected) ? 0.22 : 0.5))
                         .frame(height: 5)
                         .padding(.horizontal, 6)
                         .padding(.top, 5)
@@ -199,7 +253,7 @@ struct SystemStyleScreenView: View {
                     Text(hostName)
                         .font(.system(size: max(9, 11 * scale * 12)))
                         .fontWeight(.medium)
-                        .foregroundColor(isLocal ? (isAccessibilityTrusted ? .blue : .orange) : .purple)
+                        .foregroundColor(titleColor)
                         .lineLimit(1)
                         .minimumScaleFactor(0.5)
                     
@@ -211,6 +265,14 @@ struct SystemStyleScreenView: View {
                                 .font(.system(size: max(8, 9 * scale * 12)))
                         }
                         .foregroundColor(.orange)
+                    } else if !isLocal && !isConnected {
+                        HStack(spacing: 3) {
+                            Image(systemName: "bolt.horizontal.circle")
+                                .font(.system(size: max(8, 9 * scale * 12)))
+                            Text(statusLabel ?? "Disconnected")
+                                .font(.system(size: max(8, 9 * scale * 12)))
+                        }
+                        .foregroundColor(.secondary)
                     }
                 }
             }
@@ -226,6 +288,8 @@ struct ScreenInfo: Identifiable {
     let hostName: String
     let isLocal: Bool
     let isMainScreen: Bool
+    let isConnected: Bool
+    let statusLabel: String?
     var globalFrame: CGRect  // Frame in global coordinate space
 }
 
@@ -246,8 +310,15 @@ final class LayoutViewModel: ObservableObject {
     @Published var connectedHostLayouts: [HostLayout] = []
     @Published var allScreens: [ScreenInfo] = []
     @Published var isAccessibilityTrusted: Bool = AccessibilityManager.isTrusted
+    @Published var showConnectedOnly: Bool = PreferencesManager.shared().bool(forPref: Settings.layoutShowConnectedOnlyKey) {
+        didSet {
+            PreferencesManager.shared().setValue(showConnectedOnly, forKey: Settings.layoutShowConnectedOnlyKey)
+            loadLayouts()
+        }
+    }
     
     private var hostObserver: NSObjectProtocol?
+    private var configObserver: NSObjectProtocol?
     private var connectionObserver: NSObjectProtocol?
     private var accessibilityObserver: NSObjectProtocol?
     private var dragStartPositions: [String: CGPoint] = [:]
@@ -266,7 +337,19 @@ final class LayoutViewModel: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             warningLog("[LayoutSyncUI] Received HostDeviceDidUpdateNotification", module: .control)
-            self?.loadLayouts()
+            Task { @MainActor in
+                self?.loadLayouts()
+            }
+        }
+
+        configObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name(HostDevicesManager.HostDevicesConfigurationDidChangeNotification),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.loadLayouts()
+            }
         }
         
         connectionObserver = NotificationCenter.default.addObserver(
@@ -275,7 +358,9 @@ final class LayoutViewModel: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             warningLog("[LayoutSyncUI] Received TPConnectionStateDidChangeNotification", module: .control)
-            self?.loadLayouts()
+            Task { @MainActor in
+                self?.loadLayouts()
+            }
         }
         
         accessibilityObserver = NotificationCenter.default.addObserver(
@@ -284,7 +369,9 @@ final class LayoutViewModel: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             warningLog("[LayoutSyncUI] Received TPAccessibilityStatusDidChange", module: .control)
-            self?.isAccessibilityTrusted = AccessibilityManager.isTrusted
+            Task { @MainActor in
+                self?.isAccessibilityTrusted = AccessibilityManager.isTrusted
+            }
         }
         
         loadLayouts()
@@ -294,6 +381,10 @@ final class LayoutViewModel: ObservableObject {
         if let observer = hostObserver {
             NotificationCenter.default.removeObserver(observer)
             hostObserver = nil
+        }
+        if let observer = configObserver {
+            NotificationCenter.default.removeObserver(observer)
+            configObserver = nil
         }
         if let observer = connectionObserver {
             NotificationCenter.default.removeObserver(observer)
@@ -314,24 +405,38 @@ final class LayoutViewModel: ObservableObject {
         let localHost = LocalHost.shared
         localHostLayout = HostLayout(from: localHost)
         
-        // Load connected remote hosts
-        let connectedHosts = getConnectedHosts()
+        // Load remote hosts (connected + disconnected paired devices)
+        let remoteHosts = getConnectedHosts()
         
         // Preserve drag positions during drag
         let existingPositions = Dictionary(uniqueKeysWithValues: connectedHostLayouts.map { ($0.id, $0.position) })
         
-        connectedHostLayouts = connectedHosts.map { host in
+        var loadedLayouts: [HostLayout] = remoteHosts.map { host in
             var layout = HostLayout(from: host)
-            warningLog("[LayoutSyncUI] Loaded host \(host.computerName) position: \(layout.position)", module: .control)
+            warningLog("[LayoutSyncUI] Loaded host \(host.computerName) position: \(layout.position) connected: \(layout.isConnected)", module: .control)
             
             // Preserve position if currently dragging this host
             if let existingPos = existingPositions[layout.id], dragStartPositions[layout.id] != nil {
                 layout.position = existingPos
             }
-            // Note: adjustedHostDesktopRect already handles initial positioning/snapping
-            
             return layout
         }
+
+        // Filter out disconnected layouts whose desktop frame would overlap an active connected remote display
+        let activeRects = loadedLayouts
+            .filter { $0.isConnected }
+            .map { CGRect(origin: $0.position, size: $0.bounds.size) }
+        loadedLayouts = loadedLayouts.filter { layout in
+            let candidateRect = CGRect(origin: layout.position, size: layout.bounds.size)
+            return LayoutDisplayAvailabilityPolicy.shouldDisplayRemoteLayout(
+                candidateRect: candidateRect,
+                isConnected: layout.isConnected,
+                showConnectedOnly: showConnectedOnly,
+                activeConnectedRects: activeRects
+            )
+        }
+
+        connectedHostLayouts = loadedLayouts
         
         // Build all screens list for rendering
         rebuildAllScreens()
@@ -340,22 +445,15 @@ final class LayoutViewModel: ObservableObject {
     private func rebuildAllScreens() {
         var screens: [ScreenInfo] = []
         
-        // Add local host screens
-        if let local = localHostLayout {
-            for (index, screen) in local.screens.enumerated() {
-                screens.append(ScreenInfo(
-                    id: "\(local.id)_\(index)",
-                    hostId: local.id,
-                    hostName: "This Mac",
-                    isLocal: true,
-                    isMainScreen: screen.isMain,
-                    globalFrame: screen.frame  // Local screens are already in global coords
-                ))
+        // Render disconnected remote screens first so connected and local screens always sit above them
+        let orderedHostLayouts = connectedHostLayouts.sorted { lhs, rhs in
+            if lhs.isConnected != rhs.isConnected {
+                return !lhs.isConnected && rhs.isConnected
             }
+            return false
         }
-        
-        // Add remote host screens
-        for hostLayout in connectedHostLayouts {
+
+        for hostLayout in orderedHostLayouts {
             for (index, screen) in hostLayout.screens.enumerated() {
                 // Remote screen global frame = screen frame offset by host position
                 let globalFrame = CGRect(
@@ -371,7 +469,25 @@ final class LayoutViewModel: ObservableObject {
                     hostName: hostLayout.name,
                     isLocal: false,
                     isMainScreen: screen.isMain,
+                    isConnected: hostLayout.isConnected,
+                    statusLabel: hostLayout.statusLabel,
                     globalFrame: globalFrame
+                ))
+            }
+        }
+
+        // Add local host screens on top
+        if let local = localHostLayout {
+            for (index, screen) in local.screens.enumerated() {
+                screens.append(ScreenInfo(
+                    id: "\(local.id)_\(index)",
+                    hostId: local.id,
+                    hostName: "This Mac",
+                    isLocal: true,
+                    isMainScreen: screen.isMain,
+                    isConnected: true,
+                    statusLabel: nil,
+                    globalFrame: screen.frame  // Local screens are already in global coords
                 ))
             }
         }
@@ -383,24 +499,29 @@ final class LayoutViewModel: ObservableObject {
         // Get all hosts that are in controlled state (being actively controlled)
         let controlledHosts = HostDevicesManager.shared.hosts(with: .controlled) as? [RemoteHost] ?? []
         
-        // Also get all paired online hosts - they should be shown in layout
-        // because they are available for control
+        // Also get all paired online hosts and paired hosts with saved screen geometry
         let peeredOnlineHosts = HostDevicesManager.shared.hosts(with: .peeredOnline) as? [RemoteHost] ?? []
+        let peeredHosts = HostDevicesManager.shared.hosts(with: .peered) as? [RemoteHost] ?? []
         
         var result: [RemoteHost] = []
         var seenIds: Set<String> = []
         
-        // Add controlled hosts first (higher priority)
         for host in controlledHosts {
-            if !seenIds.contains(host.identifier) {
+            if !seenIds.contains(host.identifier), !host.computerName.isEmpty {
                 result.append(host)
                 seenIds.insert(host.identifier)
             }
         }
         
-        // Add paired online hosts (they should appear in layout for arrangement)
         for host in peeredOnlineHosts {
-            if !seenIds.contains(host.identifier) {
+            if !seenIds.contains(host.identifier), !host.computerName.isEmpty {
+                result.append(host)
+                seenIds.insert(host.identifier)
+            }
+        }
+
+        for host in peeredHosts {
+            if !seenIds.contains(host.identifier), !host.computerName.isEmpty, !host.screens.isEmpty {
                 result.append(host)
                 seenIds.insert(host.identifier)
             }
@@ -506,6 +627,14 @@ final class LayoutViewModel: ObservableObject {
         if let desktop = HostDevicesManager.shared.currentUnifiedDesktop(version: newVersion) {
             HostDevicesManager.shared.broadcastUnifiedDesktop(desktop)
         }
+        ActivityLogManager.shared.log(
+            level: .info,
+            category: .display,
+            title: "Updated display placement for \(host.computerName) (layout v\(newVersion))",
+            detail: "New relative desktop origin: (\(Int(layout.position.x.rounded())), \(Int(layout.position.y.rounded()))).",
+            hostId: host.identifier,
+            hostName: host.computerName
+        )
     }
 }
 
@@ -518,7 +647,23 @@ struct HostLayout: Identifiable {
     let screens: [ScreenLayout]
     let bounds: CGRect  // Bounding rect of all screens in host's local coordinate space
     var position: CGPoint  // Position of bounds.origin in global coordinates
+    let isConnected: Bool
+    let statusLabel: String?
+
+    static func resolveRemoteHostStatus(
+        linkPhase: DeviceLinkPhase,
+        isControlled: Bool
+    ) -> (isConnected: Bool, statusLabel: String?) {
+        LayoutDisplayAvailabilityPolicy.resolveRemoteStatus(
+            isConnectedLink: linkPhase == .connected,
+            isConnecting: linkPhase == .connecting,
+            isReconnecting: linkPhase == .reconnecting,
+            isBonjourOnline: linkPhase == .disconnected,
+            isControlled: isControlled
+        )
+    }
     
+    @MainActor
     init(from host: HostDevice) {
         self.id = host.identifier
         self.name = host.computerName
@@ -535,8 +680,16 @@ struct HostLayout: Identifiable {
         let unionRect = host.desktopFrame
         self.bounds = unionRect.isNull ? CGRect(x: 0, y: 0, width: 1920, height: 1080) : unionRect
         
-        // Get position from remote host
+        // Get position and connection state from remote host
         if let remoteHost = host as? RemoteHost {
+            let phase = DeviceConnectionManager.shared.linkPhase(for: remoteHost)
+            let resolved = Self.resolveRemoteHostStatus(
+                linkPhase: phase,
+                isControlled: remoteHost.isInState(.controlled)
+            )
+            self.isConnected = resolved.isConnected
+            self.statusLabel = resolved.statusLabel
+
             // Use adjustedHostDesktopRect which handles gluing/snapping to local desktop
             let adjustedRect = remoteHost.adjustedHostDesktopRect
             if adjustedRect != .zero {
@@ -548,6 +701,8 @@ struct HostLayout: Identifiable {
                 self.position = CGPoint(x: origin.x, y: origin.y)
             }
         } else {
+            self.isConnected = true
+            self.statusLabel = nil
             // Local host position is always at its bounds origin (screens are in global coords)
             self.position = .zero
         }

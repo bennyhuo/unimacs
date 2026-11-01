@@ -102,6 +102,7 @@ final class NWMessageChannel: MessageChannel {
     private var _state: TPSocketState = .disconnectedState
     private var _noDelay = false
     private var _peerCertificate: SecCertificate?
+    private var _lastFailureReason: String?
 
     private func locked<T>(_ body: () -> T) -> T {
         stateLock.lock()
@@ -151,6 +152,7 @@ final class NWMessageChannel: MessageChannel {
         }
         return NWTLSConfigurator.ipString(from: connection?.endpoint)
     }
+    var lastFailureReason: String? { locked { _lastFailureReason } }
     var peerCertificate: SecCertificate? { locked { _peerCertificate } }
 
     func setNoDelay(_ value: Bool) {
@@ -282,6 +284,11 @@ final class NWMessageChannel: MessageChannel {
 
     private func handleWaiting(error: NWError) {
         warningLog("[NW] connection waiting: \(error)", module: .network)
+        locked {
+            if _lastFailureReason == nil {
+                _lastFailureReason = "\(error)"
+            }
+        }
         // Give the path a short window to recover; if it does not, fail fast like the legacy
         // stack so we don't leave a zombie connection stuck in `connectedState`. A subsequent
         // `.ready` cancels this; repeated `.waiting` updates do not extend the window.
@@ -297,6 +304,11 @@ final class NWMessageChannel: MessageChannel {
             self.waitingWorkItem = nil
             guard self.locked({ self._state }) != .disconnectedState else { return }
             warningLog("[NW] still waiting after \(Self.waitingGracePeriod)s; terminating connection", module: .network)
+            self.locked {
+                if self._lastFailureReason == nil {
+                    self._lastFailureReason = "Connection timed out while waiting for network path (\(Int(Self.waitingGracePeriod))s)"
+                }
+            }
             let conn = self.connection
             self.handleTermination(error: nil)
             conn?.cancel()
@@ -317,7 +329,12 @@ final class NWMessageChannel: MessageChannel {
         didReportTermination = true
 
         let wasReady = hasBecomeReady
-        locked { _state = .disconnectedState }
+        locked {
+            _state = .disconnectedState
+            if let error {
+                _lastFailureReason = "\(error)"
+            }
+        }
 
         if let error {
             warningLog("[NW] connection terminated: \(error)", module: .network)
@@ -371,6 +388,11 @@ final class NWMessageChannel: MessageChannel {
             guard let self else { return }
             if !self.hasBecomeReady {
                 warningLog("[NW] connect timeout", module: .network)
+                self.locked {
+                    if self._lastFailureReason == nil {
+                        self._lastFailureReason = "Connection timed out (\(Int(Self.connectionTimeout))s)"
+                    }
+                }
                 self.handleTermination(error: nil)
                 self.connection?.cancel()
             }
