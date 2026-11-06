@@ -90,7 +90,7 @@ final class TPHotBorder: NSObject {
 	func activate() {
 		// If the cursor is still sitting inside the border, defer activation so we
 		// don't immediately re-fire after a warp; retry once it has left.
-		if frame.contains(NSEvent.mouseLocation) {
+		if frameContainsInclusive(NSEvent.mouseLocation) {
 			DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
 				self?.activate()
 			}

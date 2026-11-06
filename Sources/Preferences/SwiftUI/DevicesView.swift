@@ -27,6 +27,38 @@ struct DevicesView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 
+                if !viewModel.isAccessibilityTrusted {
+                    HStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                            .imageScale(.large)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(AccessibilityManager.shared.statusBannerTitle)
+                                .font(.headline)
+                            Text(AccessibilityManager.shared.statusBannerSubtitle)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        Button("Authorize...") {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .padding()
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.orange.opacity(0.5), lineWidth: 1)
+                    )
+                }
+                
                 // This Device Section
                 DevicesSection(title: "This Device", icon: viewModel.localSystemIconName) {
                     ThisDeviceRow(viewModel: viewModel, onShowDetail: {
@@ -220,12 +252,13 @@ struct PairedDeviceRow: View {
                     .font(.body)
                     .fontWeight(.medium)
                 
-                if let error = device.lastError, device.linkPhase == .disconnected || device.linkPhase == .unavailable {
+                if let error = device.lastError, device.linkPhase != .reconnecting {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.caption)
                         Text(error)
                             .font(.caption)
+                            .lineLimit(2)
                     }
                     .foregroundColor(.red)
                 } else if device.linkPhase == .reconnecting, (device.lastError != nil || device.failureDiagnosis != nil) {
@@ -247,7 +280,7 @@ struct PairedDeviceRow: View {
             
             // Action buttons
             HStack(spacing: 12) {
-                if !device.isConnected && (device.lastError != nil || device.failureDiagnosis != nil || device.linkPhase == .reconnecting) {
+                if device.lastError != nil || (!device.isConnected && (device.failureDiagnosis != nil || device.linkPhase == .reconnecting)) {
                     Button {
                         ActivityLogManager.shared.revealLogs(forHostId: device.id)
                     } label: {
@@ -605,7 +638,7 @@ struct ThisDeviceRow: View {
     // Status text and colors
     private var statusText: String {
         if !viewModel.isAccessibilityTrusted {
-            return "Accessibility Permission Required"
+            return AccessibilityManager.shared.statusBannerTitle
         }
         if viewModel.isClientControlling {
             if let hostName = viewModel.clientControlledHostName {

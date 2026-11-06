@@ -252,7 +252,31 @@ enum ConnectionFailureDiagnoser {
             )
         }
 
-        // 3. Control / Trust rejected
+        // 3. Code signature expired / revoked or app updated on disk
+        if normalized.contains("code signature invalid") || normalized.contains("signing certificate") || normalized.contains("signature changed") || normalized.contains("certificate") || normalized.contains("revoked") || normalized.contains("updated on disk") || normalized.contains("app updated") {
+            return ConnectionFailureDiagnosis(
+                shortReason: "Code signature invalid",
+                whyFailed: rawReason ?? "macOS blocked input control because the application signing certificate is expired or revoked.",
+                howToFix: "Rebuild and redeploy Unimacs with a valid certificate (e.g. ./Scripts/rebuild-and-deploy.sh), or re-authorize Unimacs in System Settings > Privacy & Security > Accessibility.",
+                actions: [
+                    .openAccessibilitySettings
+                ]
+            )
+        }
+
+        // 4. Accessibility permission / EventTap creation failure
+        if normalized.contains("accessibility") || normalized.contains("eventtap") || normalized.contains("input capture") || normalized.contains("event controller") {
+            return ConnectionFailureDiagnosis(
+                shortReason: "Accessibility / EventTap blocked",
+                whyFailed: rawReason ?? "macOS blocked global input capture or injection due to missing Accessibility permission.",
+                howToFix: "Open System Settings > Privacy & Security > Accessibility and ensure Unimacs is enabled on both Macs.",
+                actions: [
+                    .openAccessibilitySettings
+                ]
+            )
+        }
+
+        // 5. Control / Trust rejected
         if normalized.contains("rejected") || normalized.contains("not trusted") {
             return ConnectionFailureDiagnosis(
                 shortReason: "Trust or control rejected",

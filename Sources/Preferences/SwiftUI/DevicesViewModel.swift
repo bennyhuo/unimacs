@@ -52,12 +52,34 @@ struct DeviceInfo: Identifiable, Equatable {
 
         let manager = DeviceConnectionManager.shared
         let isBonjourOnline = host.isInState(.peeredOnline)
-        self.linkPhase = manager.linkPhase(for: host)
+        let phase = manager.linkPhase(for: host)
+        let isReachableOrActive = isBonjourOnline || phase == .connected || phase == .reconnecting
+        self.linkPhase = phase
         self.reconnectSecondsRemaining = manager.reconnectSecondsRemaining(for: host)
         self.reconnectAttempt = manager.reconnectAttemptCount(for: host)
         self.maxReconnectAttempts = manager.maxReconnectAttemptsCount
-        self.lastError = isBonjourOnline ? host.lastError : nil
-        self.failureDiagnosis = isBonjourOnline ? manager.lastDiagnosis(for: host) : nil
+        let rawError = isReachableOrActive ? host.lastError : nil
+        self.lastError = (rawError?.isEmpty == false) ? rawError : nil
+        if isReachableOrActive {
+            if let diag = manager.lastDiagnosis(for: host) {
+                self.failureDiagnosis = diag
+            } else if let lastErr = self.lastError {
+                self.failureDiagnosis = ConnectionFailureDiagnoser.diagnose(
+                    rawReason: lastErr,
+                    hostId: host.identifier,
+                    hostName: host.computerName,
+                    targetAddress: host.address,
+                    targetPort: host.port,
+                    localInterfaces: NetworkUtils.activeIPv4Interfaces(onlySupported: true),
+                    selectedLocalIP: NetworkConfigurationWatcher.shared.selectedLocalIpAddress,
+                    isBonjourOnline: isBonjourOnline
+                )
+            } else {
+                self.failureDiagnosis = nil
+            }
+        } else {
+            self.failureDiagnosis = nil
+        }
         
         let state = host.hostState
         self.isPaired = host.isInState(.peered) || state.contains(.peering)
@@ -176,6 +198,7 @@ final class DevicesViewModel: ObservableObject {
     @Published var isServerControlled: Bool = false
     @Published var serverControlledHostName: String? = nil
     @Published var isAccessibilityTrusted: Bool = AccessibilityManager.isTrusted
+    @Published var accessibilityIssueKind: AccessibilityIssueKind = AccessibilityManager.shared.issueKind
     
     private var cancellables = Set<AnyCancellable>()
     private var countdownTimer: AnyCancellable?
@@ -228,6 +251,7 @@ final class DevicesViewModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 self.isAccessibilityTrusted = AccessibilityManager.shared.isTrustedState
+                self.accessibilityIssueKind = AccessibilityManager.shared.issueKind
                 self.loadDevices()
             }
             .store(in: &cancellables)
@@ -259,6 +283,7 @@ final class DevicesViewModel: ObservableObject {
     
     func loadDevices() {
         isAccessibilityTrusted = AccessibilityManager.isTrusted
+        accessibilityIssueKind = AccessibilityManager.shared.issueKind
         let hostsManager = HostDevicesManager.shared
         
         let peeredHosts = hostsManager.hosts(with: .peered) as? [RemoteHost] ?? []

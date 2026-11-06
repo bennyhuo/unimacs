@@ -54,7 +54,6 @@ class ConnectionController: NSObject, TPHotBorderDelegate {
     override init() {
         super.init()
         _currentConnection = nil
-		LocalHost.shared.observe(observer: self, selector: #selector(_localHostDidChange(_:)))
     }
     
     func updateEventsController() {
@@ -98,39 +97,25 @@ class ConnectionController: NSObject, TPHotBorderDelegate {
         return remoteHost?.options.value(forKey: key)
     }
 
-    @objc private func _localHostDidChange(_ notification: Notification) {
-        let currentCaps = _currentConnection?.localHostCapabilities
-        let newCaps = LocalHost.shared.capabilities
-        let hasConnection = _currentConnection != nil
-        let capsChanged = currentCaps != newCaps
-        
-        debugLog("localHostDidChange: hasConnection=\(hasConnection), capsChanged=\(capsChanged), currentCaps=\(String(describing: currentCaps)), newCaps=\(newCaps)", module: .control)
-        
-        if hasConnection && capsChanged {
-            warningLog("localHostDidChange: capabilities changed, stopping control", module: .control)
-            stopControl()
-        }
-    }
-
-	func connection(_ connection: NetworkConnection, receivedMessage message: Message) {
-		let type = message.msgType
+    func connection(_ connection: NetworkConnection, receivedMessage message: Message) {
+        let type = message.msgType
         
         switch type {
-		case .transferRequest:
-			TransfersManager.shared.receiveTransferRequest(withInfoDict: message.infoDict, on: connection, isClient: self is ClientController)
-		case .transferSuccess:
-			if let startInfo = TransferStartInfo(infoDict: message.infoDict) {
-				TransfersManager.shared.startTransfer(withUID: startInfo.uid, using: connection, onPort: startInfo.port)
-			}
-		case .transferFailure:
-			TransfersManager.shared.abortTransfer(withUID: message.string)
+        case .transferRequest:
+            TransfersManager.shared.receiveTransferRequest(withInfoDict: message.infoDict, on: connection, isClient: self is ClientController)
+        case .transferSuccess:
+            if let startInfo = TransferStartInfo(infoDict: message.infoDict) {
+                TransfersManager.shared.startTransfer(withUID: startInfo.uid, using: connection, onPort: startInfo.port)
+            }
+        case .transferFailure:
+            TransfersManager.shared.abortTransfer(withUID: message.string)
         default:
             break
         }
     }
 
-	func connectionDisconnected(_ connection: NetworkConnection) {
-		warningLog("connectionDisconnected: connId=\(connection.connectionId), host=\(connection.connectedHost?.computerName ?? "nil")", module: .control)
-		stopControl()
+    func connectionDisconnected(_ connection: NetworkConnection) {
+        warningLog("connectionDisconnected: connId=\(connection.connectionId), host=\(connection.connectedHost?.computerName ?? "nil")", module: .control)
+        stopControl()
     }
 }

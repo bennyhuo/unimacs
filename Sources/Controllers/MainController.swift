@@ -21,6 +21,9 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     private var previousFrontApp: NSRunningApplication?
     private var wakeTimer: Timer?
     private var hasPendingNetworkReset = false
+    private(set) var isSystemSleeping = false
+    private(set) var areScreensSleeping = false
+    private var lastRemoteLockOrSleepTime: TimeInterval = Date.distantPast.timeIntervalSinceReferenceDate
     
     // MARK: - Singleton
     
@@ -144,8 +147,8 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
         _ = ServerController.shared
         _ = StatusItemController.default
         
-        if PreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey) {
-            _ = EventTapListener.shared.start()
+        if PreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey) && AccessibilityManager.isTrusted {
+            _ = EventTapListener.shared.start(mode: .passiveKeyboardOnly)
         }
         
         // Data loading
@@ -220,9 +223,9 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
 			ActivityLogManager.shared.log(
 				level: .warning,
 				category: .control,
-				title: "Accessibility permission is required for keyboard & mouse control",
-				detail: "Unimacs cannot capture or post input events until Accessibility access is enabled.",
-				howToFix: "Click 'Grant Accessibility' and enable Unimacs in System Settings > Privacy & Security > Accessibility.",
+				title: AccessibilityManager.shared.activityLogTitle,
+				detail: AccessibilityManager.shared.activityLogDetail,
+				howToFix: AccessibilityManager.shared.activityLogHowToFix,
 				actions: [.openAccessibilitySettings]
 			)
 		}
@@ -267,11 +270,6 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     }
     
     @objc func screenDidLock(_ notification: Notification) {
-        let clientController = ClientController.shared
-        if clientController.isControlling {
-            clientController.stopControl()
-        }
-        
         debugLog("locking screens", module: .control)
         let message = Message.create(with: .controlLock)
         
@@ -279,13 +277,19 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
             sendMessageToControlledPeers(message)
         }
 
-        if ServerController.shared.allowControl {
+        let clientController = ClientController.shared
+        if clientController.isControlling {
+            clientController.stopControl()
+        }
+
+        if !isSystemSleeping && ServerController.shared.allowControl {
             ServerController.shared.startSharing()
         }
     }
     
     @objc func screensDidSleep(_ notification: Notification) {
         debugLog("sleeping screens", module: .control)
+        areScreensSleeping = true
         invalidateTimer()
         let message = Message.create(with: .controlScreenSleep)
         
@@ -293,13 +297,18 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
             sendMessageToControlledPeers(message)
         }
 
-        if ServerController.shared.allowControl {
+        if !isSystemSleeping && ServerController.shared.allowControl {
             ServerController.shared.startSharing()
         }
     }
     
     @objc func screensDidWake(_ notification: Notification) {
         debugLog("waking screens", module: .control)
+        areScreensSleeping = false
+        isSystemSleeping = false
+        if ServerController.shared.allowControl {
+            ServerController.shared.startSharing()
+        }
         setupTimer()
         sendWakeEvent()
     }
@@ -341,6 +350,8 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
             sendMessageToControlledPeers(message)
         }
         
+        isSystemSleeping = true
+        
         if ClientController.shared.isControlling {
             ClientController.shared.stopControl()
         }
@@ -354,6 +365,7 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     }
     
     @objc func computerDidWake(_ notification: Notification) {
+        isSystemSleeping = false
         ActivityLogManager.shared.log(
             level: .info,
             category: .network,
@@ -513,8 +525,8 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     private func sendWakeEvent() {
         guard PreferencesManager.shared().bool(forPref: Settings.enableKeepAwakeKey) else { return }
         
-        guard !SystemStatusObserver.shared.isLocked else {
-            debugLog("Skipping wake event propagation because this machine is locked", module: .control)
+        guard !SystemStatusObserver.shared.isLocked && !isSystemSleeping && !areScreensSleeping else {
+            debugLog("Skipping wake event propagation because this machine is locked or sleeping", module: .control)
             return
         }
         
@@ -526,9 +538,36 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
         sendMessageToControlledPeers(Message.create(with: .controlWake))
     }
     
+    func noteRemoteLockOrSleepReceived() {
+        lastRemoteLockOrSleepTime = Date.timeIntervalSinceReferenceDate
+    }
+    
     private func shouldPropagateLockSleep(messageType: MsgType) -> Bool {
         guard PreferencesManager.shared().bool(forPref: Settings.syncLockSleepKey) else {
             debugLog("Suppressing propagation of \(messageType.displayName) because lock/sleep synchronization is disabled", module: .control)
+            return false
+        }
+        
+        if isSystemSleeping {
+            debugLog("Suppressing propagation of \(messageType.displayName) because system sleep is already in progress", module: .control)
+            return false
+        }
+        
+        if ServerController.shared.isControlled {
+            debugLog("Suppressing propagation of \(messageType.displayName) because this Mac is being controlled by a remote peer", module: .control)
+            return false
+        }
+        
+        let now = Date.timeIntervalSinceReferenceDate
+        let sinceControlledEnd = now - ServerController.shared.lastControlledEndTime
+        if !ClientController.shared.isControlling && sinceControlledEnd < 5.0 {
+            debugLog("Suppressing propagation of \(messageType.displayName) because this Mac just stopped being controlled (\(String(format: "%.2f", sinceControlledEnd))s ago)", module: .control)
+            return false
+        }
+        
+        let sinceRemoteCommand = now - lastRemoteLockOrSleepTime
+        if sinceRemoteCommand < 5.0 {
+            debugLog("Suppressing propagation of \(messageType.displayName) because it was triggered by a remote command (\(String(format: "%.2f", sinceRemoteCommand))s ago)", module: .control)
             return false
         }
         
@@ -590,10 +629,12 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
             IdentityManager.reloadIdentity()
         } else if prefKey == Settings.alwaysObserveEventsKey {
             let alwaysObserve = PreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey)
-            if alwaysObserve {
-                _ = EventTapListener.shared.start()
-            } else if !ClientController.shared.isControlling {
-                EventTapListener.shared.stop()
+            if !ClientController.shared.isControlling {
+                if alwaysObserve && AccessibilityManager.isTrusted {
+                    _ = EventTapListener.shared.start(mode: .passiveKeyboardOnly)
+                } else {
+                    EventTapListener.shared.stop()
+                }
             }
         } else if prefKey == Settings.enableKeepAwakeKey || prefKey == Settings.keepAwakeIntervalKey {
             invalidateTimer()
@@ -641,13 +682,32 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     
     @objc private func accessibilityStatusDidChange() {
         if !AccessibilityManager.isTrusted {
+            let wasControlling = ClientController.shared.isControlling
+            let wasControlled = ServerController.shared.isControlled
+            
+            if wasControlling {
+                ClientController.shared.stopControl()
+            }
+            if wasControlled {
+                let remoteReason = AccessibilityManager.shared.remoteStopReason(for: LocalHost.shared.computerName)
+                ServerController.shared.stopControl(withReason: remoteReason)
+            }
+            
             EventTapListener.shared.stop()
+            
+            BezelController.default().setMode(.notification(
+                title: AccessibilityManager.shared.localBezelTitle,
+                subtitle: AccessibilityManager.shared.localBezelSubtitle,
+                icon: .warning,
+                duration: 4.0
+            ))
+            
             ActivityLogManager.shared.log(
                 level: .warning,
                 category: .control,
-                title: "Accessibility permission revoked",
-                detail: "Keyboard and mouse sharing cannot function without Accessibility access.",
-                howToFix: "Click 'Grant Accessibility' and enable Unimacs in System Settings > Privacy & Security > Accessibility.",
+                title: AccessibilityManager.shared.activityLogTitle,
+                detail: AccessibilityManager.shared.activityLogDetail,
+                howToFix: AccessibilityManager.shared.activityLogHowToFix,
                 actions: [.openAccessibilitySettings]
             )
         } else {
@@ -657,8 +717,8 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
                 title: "Accessibility permission granted",
                 detail: "Unimacs is ready to capture and forward keyboard & mouse events."
             )
-            if PreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey) {
-                _ = EventTapListener.shared.start()
+            if PreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey) && !ClientController.shared.isControlling {
+                _ = EventTapListener.shared.start(mode: .passiveKeyboardOnly)
             }
         }
     }

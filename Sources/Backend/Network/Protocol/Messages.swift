@@ -10,6 +10,9 @@ let TPMousePositionKey = "TPMousePosition"
 let TPHotBorderRelativePointKey = "TPHotBorderRelativePoint"
 let TPSwitchOptionsKey = "TPSwitchOptions"
 let TPSwitchControlKey = "TPSwitchControl"
+let TPStopControlReasonKey = "TPStopControlReason"
+let TPControlFailureReasonKey = "reason"
+let TPControlFailureIsPermissionIssueKey = "TPControlFailureIsPermissionIssue"
 
 class ControlRequestBody {
 

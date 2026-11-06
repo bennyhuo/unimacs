@@ -76,7 +76,13 @@ struct ActivityLogDrawerView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TPConnectionStateDidChangeNotification"))) { _ in
             refreshActiveDiagnoses()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("HostDeviceDidUpdateNotification"))) { _ in
+            refreshActiveDiagnoses()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name(HostDevicesManager.HostDevicesConfigurationDidChangeNotification))) { _ in
+            refreshActiveDiagnoses()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .TPAccessibilityStatusDidChange)) { _ in
             refreshActiveDiagnoses()
         }
         .onReceive(logManager.$entries) { _ in
@@ -181,10 +187,13 @@ struct ActivityLogDrawerView: View {
     private var filteredActiveDiagnoses: [ActiveHostDiagnostic] {
         _ = refreshTrigger
         return activeDiagnoses.filter { item in
-            if let selectedHost = logManager.selectedHostId, item.id != selectedHost {
+            if let selectedHost = logManager.selectedHostId,
+               item.id != selectedHost,
+               item.id != LocalHost.shared.identifier {
                 return false
             }
-            if let category = logManager.selectedCategory, category != .connection {
+            if let category = logManager.selectedCategory,
+               category != .connection && category != .control {
                 return false
             }
             return true
@@ -197,14 +206,34 @@ struct ActivityLogDrawerView: View {
         let manager = DeviceConnectionManager.shared
         var items: [ActiveHostDiagnostic] = []
 
+        if !AccessibilityManager.isTrusted {
+            let localDiag = ConnectionFailureDiagnosis(
+                shortReason: AccessibilityManager.shared.statusBannerTitle,
+                whyFailed: AccessibilityManager.shared.activityLogDetail,
+                howToFix: AccessibilityManager.shared.activityLogHowToFix,
+                actions: [.openAccessibilitySettings]
+            )
+            items.append(
+                ActiveHostDiagnostic(
+                    id: LocalHost.shared.identifier,
+                    hostName: "\(LocalHost.shared.computerName) (This Mac)",
+                    linkPhase: .connected,
+                    attemptCount: 0,
+                    maxAttempts: 0,
+                    secondsRemaining: nil,
+                    diagnosis: localDiag
+                )
+            )
+        }
+
         for host in hosts {
             let phase = manager.linkPhase(for: host)
-            guard phase != .connected else { continue }
-            // Only highlight troubleshooting cards for devices discovered via Bonjour (.peeredOnline)
-            // or actively in the reconnect loop. Paired devices that are simply away/offline
-            // (e.g., a computer at home) should remain un-highlighted.
-            guard host.isInState(.peeredOnline) || phase == .reconnecting else { continue }
-            if let diagnosis = manager.lastDiagnosis(for: host.identifier) {
+            let hasActiveError = (host.lastError?.isEmpty == false)
+            guard phase != .connected || hasActiveError else { continue }
+            // Only highlight troubleshooting cards for devices discovered via Bonjour (.peeredOnline),
+            // actively in the reconnect loop, or connected with an active control error.
+            guard host.isInState(.peeredOnline) || phase == .reconnecting || (phase == .connected && hasActiveError) else { continue }
+            if phase != .connected, let diagnosis = manager.lastDiagnosis(for: host.identifier) {
                 items.append(
                     ActiveHostDiagnostic(
                         id: host.identifier,
@@ -853,7 +882,7 @@ private struct ActiveDiagnosticBannerView: View {
             }
             return item.diagnosis.shortReason
         case .connected:
-            return "Connected"
+            return item.diagnosis.shortReason
         }
     }
 }

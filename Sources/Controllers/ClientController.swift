@@ -82,7 +82,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		let canControl = MainController.shared().canControlHost(withIdentifier: host.identifier)
 		let isOnlineOrControlled = host.isInState(.controlled)
 			|| DeviceConnectionManager.shared.isReachableForControl(host)
-		let shouldEnableTriggers = canControl && isOnlineOrControlled && AccessibilityManager.isTrusted
+		let shouldEnableTriggers = canControl && isOnlineOrControlled
 		let shouldActivateHotBorder = !host.isInState(.controlled)
 		let identifier = host.identifier
 		
@@ -133,7 +133,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 			}
 		}
 		
-		if showVisualHint && shouldEnableTriggers && shouldActivateHotBorder && DeviceConnectionManager.shared.isReachableForControl(host) && host.previousHostState != .controlled {
+		if showVisualHint && shouldEnableTriggers && AccessibilityManager.isTrusted && shouldActivateHotBorder && DeviceConnectionManager.shared.isReachableForControl(host) && host.previousHostState != .controlled {
 			EdgeAppearanceAnimator.shared.showAppearanceAnimation(for: host)
 		}
 	}
@@ -230,9 +230,44 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 	}
 	
 	@MainActor
+	private func recordHostControlError(_ error: String?, for host: RemoteHost) {
+		host.lastError = error
+		if let canonical = HostDevicesManager.shared.host(withIdentifier: host.identifier), canonical !== host {
+			canonical.lastError = error
+			NotificationCenter.default.post(name: NSNotification.Name("HostDeviceDidUpdateNotification"), object: canonical)
+		} else {
+			NotificationCenter.default.post(name: NSNotification.Name("HostDeviceDidUpdateNotification"), object: host)
+		}
+	}
+	
+	@MainActor
 	func requestStartControl(on remoteHost: RemoteHost?, at location: NSPoint, hotBorderRelativePoint: NSPoint?) -> Bool {
 		guard let remoteHost else {
 			warningLog("requestStartControl blocked: nil host", module: .control)
+			return false
+		}
+		AccessibilityManager.shared.refreshNow()
+		guard AccessibilityManager.isTrusted else {
+			warningLog("requestStartControl blocked: local accessibility or signature not trusted", module: .control)
+			let title = AccessibilityManager.shared.localBezelTitle
+			let subtitle = AccessibilityManager.shared.localBezelSubtitle
+			recordHostControlError("\(title)：\(subtitle)", for: remoteHost)
+			BezelController.default().setMode(.notification(
+				title: title,
+				subtitle: subtitle,
+				icon: .warning,
+				duration: 4.0
+			))
+			ActivityLogManager.shared.log(
+				level: .error,
+				category: .control,
+				title: "Cannot control \(remoteHost.computerName) — \(AccessibilityManager.shared.activityLogTitle)",
+				detail: AccessibilityManager.shared.activityLogDetail,
+				howToFix: AccessibilityManager.shared.activityLogHowToFix,
+				hostId: remoteHost.identifier,
+				hostName: remoteHost.computerName,
+				actions: [.openAccessibilitySettings]
+			)
 			return false
 		}
 		guard DeviceConnectionManager.shared.isReachableForControl(remoteHost) else {
@@ -366,14 +401,56 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		if let ec = self.eventsController {
 			if !ec.startGettingEvents(for: self) {
 				warningLog("startGettingEvents failed, stopping control", module: .control)
-				self.stopControl()
+				AccessibilityManager.shared.refreshOnEventTapFailure()
+				let title = AccessibilityManager.isTrusted ? "Cannot Start Input Capture" : AccessibilityManager.shared.localBezelTitle
+				let subtitle = AccessibilityManager.isTrusted ? "Failed to create system EventTap. Check Accessibility permission or app signature." : AccessibilityManager.shared.localBezelSubtitle
+				self.abortFailedControlStart(on: currentConnection, host: controlledHost)
+				recordHostControlError("\(title): \(subtitle)", for: controlledHost)
+				BezelController.default().setMode(.notification(
+					title: title,
+					subtitle: subtitle,
+					icon: .warning,
+					duration: 4.0
+				))
+				ActivityLogManager.shared.log(
+					level: .error,
+					category: .control,
+					title: "Cannot control \(controlledHost.computerName) — \(AccessibilityManager.shared.activityLogTitle)",
+					detail: AccessibilityManager.shared.activityLogDetail,
+					howToFix: AccessibilityManager.shared.activityLogHowToFix,
+					hostId: controlledHost.identifier,
+					hostName: controlledHost.computerName,
+					actions: [.openAccessibilitySettings]
+				)
 				return
 			}
 		} else {
 			warningLog("No events controller available, stopping control", module: .control)
-			self.stopControl()
+			AccessibilityManager.shared.refreshOnEventTapFailure()
+			let title = AccessibilityManager.isTrusted ? "Cannot Control \(controlledHost.computerName)" : AccessibilityManager.shared.localBezelTitle
+			let subtitle = AccessibilityManager.isTrusted ? "Failed to initialize event controller. Check Accessibility permissions on both Macs." : AccessibilityManager.shared.localBezelSubtitle
+			self.abortFailedControlStart(on: currentConnection, host: controlledHost)
+			recordHostControlError("\(title): \(subtitle)", for: controlledHost)
+			BezelController.default().setMode(.notification(
+				title: title,
+				subtitle: subtitle,
+				icon: .warning,
+				duration: 4.0
+			))
+			ActivityLogManager.shared.log(
+				level: .error,
+				category: .control,
+				title: "Cannot control \(controlledHost.computerName) — \(AccessibilityManager.shared.activityLogTitle)",
+				detail: AccessibilityManager.shared.activityLogDetail,
+				howToFix: AccessibilityManager.shared.activityLogHowToFix,
+				hostId: controlledHost.identifier,
+				hostName: controlledHost.computerName,
+				actions: [.openAccessibilitySettings]
+			)
 			return
 		}
+		
+		recordHostControlError(nil, for: controlledHost)
 		
 		if !PreferencesManager.shared().bool(forPref: HIDE_CONTROL_BEZEL) {
 			BezelController.default().setMode(.controlling(host: controlledHost, emergencyHint: "⌃⌥⇧⎋ to release"))
@@ -382,6 +459,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		TPClipboardTransferCoordinator.shared.clientDidStartControl(using: currentConnection, remoteHost: controlledHost)
 		
 		DisplaySleepAssertion.activate(reason: "startControl")
+		ServerController.shared.clearLastControlledEndTime()
 		
 		_state = .controllingState
 		ActivityLogManager.shared.log(
@@ -431,8 +509,26 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		// Fire and forget - control stop doesn't need to block
 		currentConnection.sendAsync(Message.create(with: .controlStop))
 		
+		let stopReason = infoDict[TPStopControlReasonKey] as? String
 		let eventsController = self.eventsController
-		self.stopControl(withDisconnect: DISCONNECT_WHEN_STOP_CONTROL)
+		self.stopControl(withDisconnect: DISCONNECT_WHEN_STOP_CONTROL, notifyPeer: false)
+		
+		if let stopReason = stopReason, !stopReason.isEmpty {
+			BezelController.default().setMode(.notification(
+				title: "Stopped Controlling \(controlledHost.computerName)",
+				subtitle: stopReason,
+				icon: .warning,
+				duration: 4.0
+			))
+			ActivityLogManager.shared.log(
+				level: .warning,
+				category: .control,
+				title: "Control of \(controlledHost.computerName) stopped",
+				detail: stopReason,
+				hostId: controlledHost.identifier,
+				hostName: controlledHost.computerName
+			)
+		}
 		
 		if let relativeValue = infoDict[TPHotBorderRelativePointKey] as? NSData,
 			let hotBorder = _hotBorders[controlledHost.identifier] {
@@ -474,14 +570,33 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 	}
 	
 	override func stopControl() {
-		super.stopControl()
-		self.eventsController?.cleanupGettingEvents()
+		self.stopControl(withDisconnect: true, notifyPeer: true)
 	}
 	
 	@MainActor
 	override func stopControl(withDisconnect disconnect: Bool) {
+		self.stopControl(withDisconnect: disconnect, notifyPeer: disconnect)
+	}
+	
+	@MainActor
+	private func abortFailedControlStart(on connection: NetworkConnection, host: RemoteHost) {
+		connection.sendAsync(Message.create(with: .controlStop))
+		StatusItemController.default.update(with: .idle, host: nil)
+		host.hostState = .peeredOnline
+		cancelPendingControlRequest()
+		_state = .idleState
+		self.updateTriggersAndShowVisualHint(false)
+		self.eventsController?.cleanupGettingEvents()
+		super.stopControl(withDisconnect: DISCONNECT_WHEN_STOP_CONTROL)
+	}
+
+	@MainActor
+	func stopControl(withDisconnect disconnect: Bool, notifyPeer: Bool) {
 		let wasControlling = _state == .controllingState
 		if wasControlling {
+			if notifyPeer, let connection = self.currentConnection {
+				connection.sendAsync(Message.create(with: .controlStop))
+			}
 			TPClipboardTransferCoordinator.shared.clientDidStopControl()
 			MainController.shared().leaveFrontmost()
 			BezelController.default().setMode(.hidden)
@@ -494,9 +609,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		cancelPendingControlRequest()
 		_state = .idleState
 		self.updateTriggersAndShowVisualHint(false)
-		if wasControlling {
-			self.eventsController?.cleanupGettingEvents()
-		}
+		self.eventsController?.cleanupGettingEvents()
 		super.stopControl(withDisconnect: disconnect)
 	}
 	
@@ -519,9 +632,6 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 	
 	@MainActor
 	func gotEmergencyStopEvent() {
-		if let currentConnection = self.currentConnection {
-			currentConnection.sendAsync(Message.create(with: .controlStop))
-		}
 		self.stopControl()
 	}
 	
@@ -644,20 +754,42 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
         case .controlFailure:
             guard shouldHandleControlMessage(from: host, on: connection) else { return false }
             _state = .idleState
-            let reason = message.infoDict["reason"] as? String ?? "The remote Mac rejected the control request."
+            let reason = message.infoDict[TPControlFailureReasonKey] as? String ?? "The remote Mac rejected the control request."
+            let isPermissionIssue = (message.infoDict[TPControlFailureIsPermissionIssueKey] as? Bool) ?? false
+            let hostName = connection.connectedHost?.computerName ?? host.computerName
+            BezelController.default().setMode(.notification(
+                title: "Cannot Control \(hostName)",
+                subtitle: reason,
+                icon: .warning,
+                duration: 4.0
+            ))
             if let controlledHost = connection.connectedHost {
-                controlledHost.hostState = .shared
-                controlledHost.lastError = NSLocalizedString("Control rejected: The host may have removed this Mac from its trusted list.", comment: "")
-                ActivityLogManager.shared.log(
-                    level: .error,
-                    category: .control,
-                    title: "Control request rejected by \(controlledHost.computerName)",
-                    detail: "\(reason) \(controlledHost.computerName) may have unpaired this Mac or disabled screen control.",
-                    howToFix: "Click 'Re-pair Device' to re-establish trust with \(controlledHost.computerName), and verify 'Allow this Mac to be controlled' is enabled on \(controlledHost.computerName).",
-                    hostId: controlledHost.identifier,
-                    hostName: controlledHost.computerName,
-                    actions: [.repairDevice(hostId: controlledHost.identifier, hostName: controlledHost.computerName)]
-                )
+                controlledHost.hostState = .peeredOnline
+                if isPermissionIssue {
+                    recordHostControlError(reason, for: controlledHost)
+                    ActivityLogManager.shared.log(
+                        level: .error,
+                        category: .control,
+                        title: "Cannot control \(controlledHost.computerName) — remote permission or signature issue",
+                        detail: reason,
+                        howToFix: "Check Accessibility permission and app signature on \(controlledHost.computerName).",
+                        hostId: controlledHost.identifier,
+                        hostName: controlledHost.computerName
+                    )
+                } else {
+                    let errText = NSLocalizedString("Control rejected: The host may have removed this Mac from its trusted list.", comment: "")
+                    recordHostControlError(errText, for: controlledHost)
+                    ActivityLogManager.shared.log(
+                        level: .error,
+                        category: .control,
+                        title: "Control request rejected by \(controlledHost.computerName)",
+                        detail: "\(reason) \(controlledHost.computerName) may have unpaired this Mac or disabled screen control.",
+                        howToFix: "Click 'Re-pair Device' to re-establish trust with \(controlledHost.computerName), and verify 'Allow this Mac to be controlled' is enabled on \(controlledHost.computerName).",
+                        hostId: controlledHost.identifier,
+                        hostName: controlledHost.computerName,
+                        actions: [.repairDevice(hostId: controlledHost.identifier, hostName: controlledHost.computerName)]
+                    )
+                }
             }
             return true
         case .controlStop:

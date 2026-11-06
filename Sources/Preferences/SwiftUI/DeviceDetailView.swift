@@ -54,7 +54,7 @@ struct DeviceDetailView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     // Troubleshooting / Diagnostics Section when there is a failure
-                    if !displayDevice.isConnected,
+                    if (!displayDevice.isConnected || displayDevice.lastError != nil),
                        let diagnosis = displayDevice.failureDiagnosis {
                         DetailSection(title: "Diagnostics & How to Fix") {
                             VStack(alignment: .leading, spacing: 8) {
@@ -109,8 +109,8 @@ struct DeviceDetailView: View {
 
                     // Connection Info
                     DetailSection(title: "Connection") {
-                        if let error = displayDevice.lastError, displayDevice.linkPhase == .disconnected || displayDevice.linkPhase == .unavailable {
-                            DetailRow(label: "Status", value: "Error")
+                        if let error = displayDevice.lastError {
+                            DetailRow(label: "Status", value: displayDevice.isConnected ? "Connected (Control Issue)" : "Error")
                             HStack(alignment: .top) {
                                 Text("Last Error")
                                     .foregroundColor(.secondary)

@@ -3,6 +3,7 @@
 
 import Foundation
 import CoreGraphics
+import Security
 
 // MARK: - Lightweight Assertion Helpers
 
@@ -727,6 +728,154 @@ struct ActivityLogTestRunner {
                     isConnected: false,
                     activeConnectedRects: []
                 )
+            )
+        }
+
+        runTest("testConnectionDiagnoserSignatureAndAccessibility") {
+            let localIfaces = [
+                NetworkInterfaceInfo(name: "en0", ipAddress: "192.168.1.10", subnetMask: "255.255.255.0")
+            ]
+
+            let sigDiag = ConnectionFailureDiagnoser.diagnose(
+                rawReason: "Code Signature Invalid: Signing certificate expired or revoked. Please rebuild and redeploy Unimacs.",
+                hostId: "mini-1",
+                hostName: "MAC-MINI",
+                targetAddress: "192.168.1.20",
+                targetPort: 54251,
+                localInterfaces: localIfaces
+            )
+            assertEqual(sigDiag.shortReason, "Code signature invalid")
+            assertTrue(sigDiag.whyFailed.contains("Code Signature Invalid"))
+            assertEqual(sigDiag.actions, [.openAccessibilitySettings])
+
+            let axDiag = ConnectionFailureDiagnoser.diagnose(
+                rawReason: "Cannot Start Input Capture: Failed to create system EventTap. Check Accessibility permission or app signature.",
+                hostId: "mini-1",
+                hostName: "MAC-MINI",
+                targetAddress: "192.168.1.20",
+                targetPort: 54251,
+                localInterfaces: localIfaces
+            )
+            assertEqual(axDiag.shortReason, "Accessibility / EventTap blocked")
+            assertTrue(axDiag.whyFailed.contains("EventTap"))
+            assertEqual(axDiag.actions, [.openAccessibilitySettings])
+        }
+
+        runTest("testAccessibilitySignatureClassification") {
+            let hashA = Data([0x01, 0x02, 0x03, 0x04])
+            let hashB = Data([0x05, 0x06, 0x07, 0x08])
+
+            // 1.Status helper checks
+            assertTrue(AccessibilityManager.isCertificateRevokedOrExpiredStatus(-2147409652)) // CSSMERR_TP_CERT_REVOKED
+            assertTrue(AccessibilityManager.isCertificateRevokedOrExpiredStatus(-2147409654)) // CSSMERR_TP_CERT_EXPIRED
+            assertTrue(AccessibilityManager.isCertificateRevokedOrExpiredStatus(errSecCertificateRevoked))
+            assertTrue(AccessibilityManager.isCertificateRevokedOrExpiredStatus(errSecCertificateExpired))
+            assertFalse(AccessibilityManager.isCertificateRevokedOrExpiredStatus(errSecSuccess))
+
+            // 2. Direct copyStatus revocation error
+            assertEqual(
+                AccessibilityManager.classifySignatureInfo(
+                    copyStatus: -2147409652,
+                    signingInfo: nil,
+                    launchCDHash: hashA,
+                    validityStatus: errSecSuccess,
+                    trustEvaluatedValid: nil
+                ),
+                .signatureRevokedOrExpired
+            )
+
+            // 3. On-disk binary replaced (CDHash mismatch)
+            assertEqual(
+                AccessibilityManager.classifySignatureInfo(
+                    copyStatus: errSecSuccess,
+                    signingInfo: [kSecCodeInfoUnique as String: hashB],
+                    launchCDHash: hashA,
+                    validityStatus: errSecSuccess,
+                    trustEvaluatedValid: true
+                ),
+                .signatureChangedOnDisk
+            )
+
+            // 4. Ad-hoc signed build (no certificates, adhoc flag set) -> .none
+            assertEqual(
+                AccessibilityManager.classifySignatureInfo(
+                    copyStatus: errSecSuccess,
+                    signingInfo: [
+                        kSecCodeInfoUnique as String: hashA,
+                        kSecCodeInfoFlags as String: SecCodeSignatureFlags.adhoc.rawValue
+                    ],
+                    launchCDHash: hashA,
+                    validityStatus: errSecSuccess,
+                    trustEvaluatedValid: nil
+                ),
+                .none
+            )
+
+            // 5. Revoked certificate where SecCodeCopySigningInformation returns 0 and strips
+            // kSecCodeInfoCertificates (trustEvaluatedValid == nil), while SecStaticCodeCheckValidity
+            // returns CSSMERR_TP_CERT_REVOKED (-2147409652)
+            assertEqual(
+                AccessibilityManager.classifySignatureInfo(
+                    copyStatus: errSecSuccess,
+                    signingInfo: [
+                        kSecCodeInfoUnique as String: hashA,
+                        kSecCodeInfoFlags as String: UInt32(0),
+                        kSecCodeInfoTeamIdentifier as String: "TEAM123456"
+                    ],
+                    launchCDHash: hashA,
+                    validityStatus: -2147409652,
+                    trustEvaluatedValid: nil
+                ),
+                .signatureRevokedOrExpired
+            )
+
+            // 6. Revoked certificate where kSecCodeInfoCertificates was stripped on a team-signed
+            // non-adhoc build even if validityStatus was 0
+            assertEqual(
+                AccessibilityManager.classifySignatureInfo(
+                    copyStatus: errSecSuccess,
+                    signingInfo: [
+                        kSecCodeInfoUnique as String: hashA,
+                        kSecCodeInfoFlags as String: UInt32(0),
+                        kSecCodeInfoTeamIdentifier as String: "TEAM123456"
+                    ],
+                    launchCDHash: hashA,
+                    validityStatus: errSecSuccess,
+                    trustEvaluatedValid: nil
+                ),
+                .signatureRevokedOrExpired
+            )
+
+            // 7. Certificate present, OCSP SecTrustEvaluateWithError failed (trustEvaluatedValid == false)
+            assertEqual(
+                AccessibilityManager.classifySignatureInfo(
+                    copyStatus: errSecSuccess,
+                    signingInfo: [
+                        kSecCodeInfoUnique as String: hashA,
+                        kSecCodeInfoFlags as String: UInt32(0),
+                        kSecCodeInfoTeamIdentifier as String: "TEAM123456"
+                    ],
+                    launchCDHash: hashA,
+                    validityStatus: errSecSuccess,
+                    trustEvaluatedValid: false
+                ),
+                .signatureRevokedOrExpired
+            )
+
+            // 8. Valid certificate-signed build (trustEvaluatedValid == true)
+            assertEqual(
+                AccessibilityManager.classifySignatureInfo(
+                    copyStatus: errSecSuccess,
+                    signingInfo: [
+                        kSecCodeInfoUnique as String: hashA,
+                        kSecCodeInfoFlags as String: UInt32(0),
+                        kSecCodeInfoTeamIdentifier as String: "TEAM123456"
+                    ],
+                    launchCDHash: hashA,
+                    validityStatus: errSecSuccess,
+                    trustEvaluatedValid: true
+                ),
+                .none
             )
         }
 

@@ -32,6 +32,8 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
     private var pendingSwitchToHost: RemoteHost?
     private var pendingSwitchLocation: NSPoint?
     private var pendingSwitchRelativePoint: NSPoint?
+    private var stopControlFallbackWorkItem: DispatchWorkItem?
+    private(set) var lastControlledEndTime: TimeInterval = Date.distantPast.timeIntervalSinceReferenceDate
     
 	static let shared = ServerController()
     
@@ -129,6 +131,35 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
             if connectionIsCurrent {
 				self.currentConnection = nil
             }
+            return
+        }
+        
+        AccessibilityManager.shared.refreshNow()
+        if !AccessibilityManager.isTrusted {
+            let reason = AccessibilityManager.shared.remoteStopReason(for: LocalHost.shared.computerName)
+            connection.sendAsync(Message.create(with: .controlFailure, andInfoDict: [
+                TPControlFailureReasonKey: reason,
+                TPControlFailureIsPermissionIssueKey: true
+            ]))
+            if connectionIsCurrent {
+                self.currentConnection = nil
+            }
+            BezelController.default().setMode(.notification(
+                title: AccessibilityManager.shared.localBezelTitle,
+                subtitle: AccessibilityManager.shared.localBezelSubtitle,
+                icon: .warning,
+                duration: 4.0
+            ))
+            ActivityLogManager.shared.log(
+                level: .error,
+                category: .control,
+                title: "Rejected control from \(host.computerName) — \(AccessibilityManager.shared.activityLogTitle)",
+                detail: AccessibilityManager.shared.activityLogDetail,
+                howToFix: AccessibilityManager.shared.activityLogHowToFix,
+                hostId: host.identifier,
+                hostName: host.computerName,
+                actions: [.openAccessibilitySettings]
+            )
             return
         }
         
@@ -289,11 +320,46 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
 		// Fire and forget - control stop should not block
 		self.currentConnection?.sendAsync(message)
 		
+		stopControlFallbackWorkItem?.cancel()
+		let workItem = DispatchWorkItem { [weak self] in
+			MainActor.assumeIsolated {
+				guard let self = self, self.state == .controlled else { return }
+				warningLog("Timed out waiting for controlStop acknowledgment from client; forcing local stopControl", module: .control)
+				self.stopControl(withDisconnect: DISCONNECT_WHEN_STOP_CONTROL, notifyPeer: false, reason: nil)
+			}
+		}
+		stopControlFallbackWorkItem = workItem
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: workItem)
 	}
     
+    @MainActor
+    func stopControl(withReason reason: String?) {
+        stopControl(withDisconnect: true, notifyPeer: true, reason: reason)
+    }
+    
     override func stopControl(withDisconnect disconnect: Bool) {
+        stopControl(withDisconnect: disconnect, notifyPeer: disconnect, reason: nil)
+    }
+    
+    @MainActor
+    func stopControl(withDisconnect disconnect: Bool, notifyPeer: Bool, reason: String? = nil) {
+		stopControlFallbackWorkItem?.cancel()
+		stopControlFallbackWorkItem = nil
+		if state == .controlled {
+			lastControlledEndTime = Date.timeIntervalSinceReferenceDate
+		}
 		if state == .controlled, let connection = self.currentConnection {
 			TPClipboardTransferCoordinator.shared.serverWillStopBeingControlled(using: connection)
+            if notifyPeer {
+                var infoDict: [AnyHashable: Any] = [:]
+                if let reason = reason, !reason.isEmpty {
+                    infoDict[TPStopControlReasonKey] = reason
+                }
+                let msg = infoDict.isEmpty
+                    ? Message.create(with: .controlStop)
+                    : Message.create(with: .controlStop, andInfoDict: infoDict)
+                connection.sendAsync(msg)
+            }
 		}
 
         super.stopControl(withDisconnect: disconnect)
@@ -369,26 +435,50 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
         
         switch type {
         case .controlDeviceSleep:
+            guard !ClientController.shared.isControlling else {
+                debugLog("Ignoring controlDeviceSleep because this machine is controlling a remote peer", module: .control)
+                return true
+            }
+            MainController.shared().noteRemoteLockOrSleepReceived()
             SystemPowerManager.sleepTheSystem()
             return true
         case .controlScreenSleep:
+            guard !ClientController.shared.isControlling else {
+                debugLog("Ignoring controlScreenSleep because this machine is controlling a remote peer", module: .control)
+                return true
+            }
+            MainController.shared().noteRemoteLockOrSleepReceived()
             SystemPowerManager.sleepScreen()
             return true
         case .controlWake:
-            guard !SystemStatusObserver.shared.isLocked else {
-                debugLog("Ignoring controlWake because this machine is locked", module: .control)
+            guard !SystemStatusObserver.shared.isLocked,
+                  !MainController.shared().isSystemSleeping else {
+                debugLog("Ignoring controlWake because this machine is locked or sleeping", module: .control)
                 return true
             }
             SystemPowerManager.wakeUpScreen()
             return true
         case .controlLock:
+            guard !ClientController.shared.isControlling else {
+                debugLog("Ignoring controlLock because this machine is controlling a remote peer", module: .control)
+                return true
+            }
+            MainController.shared().noteRemoteLockOrSleepReceived()
             SystemPowerManager.lockScreen()
             return true
         case .controlRequest:
             self.requestedStartControl(by: host, on: connection, with: message.controlRequestBody)
             return true
         case .controlStop:
-            self.stopControl(withDisconnect: DISCONNECT_WHEN_STOP_CONTROL)
+            if state != .controlled,
+               (message.infoDict[TPSwitchControlKey] != nil ||
+                message.infoDict[TPMousePositionKey] != nil ||
+                message.infoDict[TPHotBorderRelativePointKey] != nil) {
+                warningLog("Received server-initiated controlStop from \(host.computerName) while local ClientController is idle; replying with controlStop to release peer", module: .control)
+                connection.sendAsync(Message.create(with: .controlStop))
+                return true
+            }
+            self.stopControl(withDisconnect: DISCONNECT_WHEN_STOP_CONTROL, notifyPeer: false, reason: nil)
             return true
         case .authenticationRequest:
             AuthenticationManager.default.authenticationRequested(from: host, on: connection)
@@ -491,5 +581,9 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
         get {
             return state == .controlled
         }
+    }
+    
+    func clearLastControlledEndTime() {
+        lastControlledEndTime = Date.distantPast.timeIntervalSinceReferenceDate
     }
 }

@@ -210,7 +210,9 @@ public protocol EventsListener: NSObjectProtocol {
         listener.removeDelegate(self)
         
         let alwaysObserve = PreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey)
-        if !alwaysObserve {
+        if alwaysObserve && AccessibilityManager.isTrusted {
+            _ = listener.start(mode: .passiveKeyboardOnly)
+        } else {
             listener.stop()
         }
         
@@ -242,7 +244,7 @@ public protocol EventsListener: NSObjectProtocol {
 
         let listener = EventTapListener.shared
         listener.addDelegate(self)
-        return listener.start()
+        return listener.start(mode: .activeControl)
     }
     
     @objc public func _sendEvent(toListener event: Any) {
@@ -266,7 +268,9 @@ public protocol EventsListener: NSObjectProtocol {
         let listener = EventTapListener.shared
         listener.removeDelegate(self)
         let alwaysObserve = PreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey)
-        if !alwaysObserve {
+        if alwaysObserve && AccessibilityManager.isTrusted {
+            _ = listener.start(mode: .passiveKeyboardOnly)
+        } else {
             listener.stop()
         }
         

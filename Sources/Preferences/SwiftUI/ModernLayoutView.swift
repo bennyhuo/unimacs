@@ -64,9 +64,9 @@ struct ModernLayoutView: View {
                                 .imageScale(.large)
 
                             VStack(alignment: .leading, spacing: 2) {
-                        Text("Accessibility Permission Required")
+                        Text(AccessibilityManager.shared.statusBannerTitle)
                                     .font(.headline)
-                                Text("Unimacs requires Accessibility permission to control mouse and keyboard. Please authorize it in System Settings.")
+                        Text(AccessibilityManager.shared.statusBannerSubtitle)
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
                             }
