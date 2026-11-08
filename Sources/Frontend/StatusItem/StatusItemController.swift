@@ -6,13 +6,13 @@
 import Cocoa
 
 /// Status of the Unimacs connection
-@objc enum TPStatus: Int {
+enum ControlStatus: Int {
     case idle
     case controlling
     case controlled
 }
 
-private enum TPStatusBarIconState {
+private enum StatusBarIconState {
     case disconnected
     case connected
     /// Remote-control session in progress (controlling or being controlled).
@@ -44,7 +44,7 @@ class StatusItemController: NSObject, NSMenuDelegate {
     
     private var statusItem: NSStatusItem?
     private var statusItemMenu: NSMenu?
-    private var controlStatus: TPStatus = .idle
+    private var controlStatus: ControlStatus = .idle
     
     @objc var showStatusItem: Bool {
         get { statusItem != nil }
@@ -58,7 +58,7 @@ class StatusItemController: NSObject, NSMenuDelegate {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(connectionStateDidChange(_:)),
-            name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+            name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
             object: nil
         )
         showStatusItem = true
@@ -97,7 +97,7 @@ class StatusItemController: NSObject, NSMenuDelegate {
     
     // MARK: - Public Methods
     
-    @objc func update(with status: TPStatus, host: RemoteHost?) {
+    func update(with status: ControlStatus, host: RemoteHost?) {
         controlStatus = status
         refreshStatusIcon()
     }
@@ -119,7 +119,7 @@ class StatusItemController: NSObject, NSMenuDelegate {
     }
     
     @MainActor
-    private func resolvedIconState() -> TPStatusBarIconState {
+    private func resolvedIconState() -> StatusBarIconState {
         switch controlStatus {
         case .controlling, .controlled:
             return .active
@@ -131,7 +131,7 @@ class StatusItemController: NSObject, NSMenuDelegate {
         }
     }
     
-    private func applyIconState(_ iconState: TPStatusBarIconState, to statusItem: NSStatusItem) {
+    private func applyIconState(_ iconState: StatusBarIconState, to statusItem: NSStatusItem) {
         let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
         guard let image = NSImage(
             systemSymbolName: iconState.symbolName,

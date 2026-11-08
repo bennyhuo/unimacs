@@ -3,7 +3,7 @@
 // Migrated to Swift and modified from Teleport.
 // SPDX-License-Identifier: GPL-2.0-only
 
-import Foundation
+import Cocoa
 
 @objcMembers
 class BackgroundImageResolver : NSObject {

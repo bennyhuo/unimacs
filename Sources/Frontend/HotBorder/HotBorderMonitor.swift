@@ -9,8 +9,8 @@ final class HotBorderMonitor {
     static let shared = HotBorderMonitor()
 
     private final class WeakBorder {
-        weak var border: TPHotBorder?
-        init(_ border: TPHotBorder) { self.border = border }
+        weak var border: HotBorder?
+        init(_ border: HotBorder) { self.border = border }
     }
 
     private var borders: [WeakBorder] = []
@@ -21,14 +21,14 @@ final class HotBorderMonitor {
 
     // MARK: - Registration
 
-    func register(_ border: TPHotBorder) {
+    func register(_ border: HotBorder) {
         compact()
         guard !borders.contains(where: { $0.border === border }) else { return }
         borders.append(WeakBorder(border))
         startMonitoringIfNeeded()
     }
 
-    func unregister(_ border: TPHotBorder) {
+    func unregister(_ border: HotBorder) {
         borders.removeAll { $0.border === border || $0.border == nil }
         stopMonitoringIfIdle()
     }
@@ -99,7 +99,7 @@ final class HotBorderMonitor {
         fireFirst(containing: point, kind: .control, isRealCursor: false)
     }
 
-    private func fireFirst(containing point: NSPoint, kind: TPHotBorder.Kind, isRealCursor: Bool) {
+    private func fireFirst(containing point: NSPoint, kind: HotBorder.Kind, isRealCursor: Bool) {
         compact()
         for wrapper in borders {
             guard let border = wrapper.border, border.kind == kind else { continue }
@@ -109,7 +109,7 @@ final class HotBorderMonitor {
 
     /// Feed the cursor position to every border of `kind` so the overlay can
     /// fade in as the cursor approaches.
-    private func updateProximity(at point: NSPoint, kind: TPHotBorder.Kind) {
+    private func updateProximity(at point: NSPoint, kind: HotBorder.Kind) {
         compact()
         for wrapper in borders {
             guard let border = wrapper.border, border.kind == kind else { continue }
@@ -117,7 +117,7 @@ final class HotBorderMonitor {
         }
     }
 
-    private func clearProximity(kind: TPHotBorder.Kind) {
+    private func clearProximity(kind: HotBorder.Kind) {
         let faraway = NSPoint(x: -1_000_000, y: -1_000_000)
         updateProximity(at: faraway, kind: kind)
     }

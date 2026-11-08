@@ -5,17 +5,14 @@
 
 import Cocoa
 
-@objc(UMEventDelegate)
-protocol UMEventDelegate: NSObjectProtocol {
-	@objc(applicationWillSendEvent:)
-	optional func applicationWillSendEvent(_ event: NSEvent) -> Bool
+@objc protocol UMEventDelegate: NSObjectProtocol {
+	@objc optional func applicationWillSendEvent(_ event: NSEvent) -> Bool
 }
 
 @objc(UMApplication)
 final class UMApplication: NSApplication {
 	private weak var eventsDelegate: UMEventDelegate?
 
-	@objc(setEventDelegate:)
 	func setEventDelegate(_ eventDelegate: UMEventDelegate?) {
 		eventsDelegate = eventDelegate
 	}

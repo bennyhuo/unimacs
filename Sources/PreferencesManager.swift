@@ -29,10 +29,6 @@ let WRAP_ON_STOP_CONTROL = Settings.wrapOnStopControlKey
 let ENABLE_DEBUG_LOG = Settings.enableDebugLogKey
 let APPLICATIONS_DISABLING_UNIMACS = Settings.applicationsDisablingUnimacsKey
 let SYNC_MODIFIERS = Settings.syncModifiersKey
-/// When enabled, the control connection uses the Swift Network.framework stack
-/// (`NWConnection`/`NWListener`); when disabled it falls back to the legacy ObjC
-/// CFSocket/SecureTransport implementation (`UMTCPSecureSocket`).
-let USE_SWIFT_NETWORK_STACK = Settings.useSwiftNetworkStackKey
 /// When enabled, input events are streamed directly to the remote host for full
 /// gesture support. When disabled, the compatibility event-taps mode is used.
 let USE_DIRECT_EVENT_TAPS = Settings.useDirectEventTapsKey
@@ -68,26 +64,26 @@ let TRUST_REQUEST_ACCEPT: Int32 = 2
 // MARK: - Notifications
 
 #if DEBUG || PRERELEASE_BUILD
-let TPDefaultsWillChangeNotification = "TPDefaultsWillChangeDebugNotification"
-let TPDefaultsDidChangeNotification = "TPDefaultsDidChangeDebugNotification"
-let TPDefaultsChangeNotification = "TPDefaultsChangeDebugNotification"
-let TPPreferencesDidUpgradeNotification = "TPPreferencesDidUpgradeDebugNotification"
+let UMDefaultsWillChangeNotification = "UMDefaultsWillChangeDebugNotification"
+let UMDefaultsDidChangeNotification = "UMDefaultsDidChangeDebugNotification"
+let UMDefaultsChangeNotification = "UMDefaultsChangeDebugNotification"
+let UMPreferencesDidUpgradeNotification = "UMPreferencesDidUpgradeDebugNotification"
 #else
-let TPDefaultsWillChangeNotification = "TPDefaultsWillChangeNotification"
-let TPDefaultsDidChangeNotification = "TPDefaultsDidChangeNotification"
-let TPDefaultsChangeNotification = "TPDefaultsChangeNotification"
-let TPPreferencesDidUpgradeNotification = "TPPreferencesDidUpgradeNotification"
+let UMDefaultsWillChangeNotification = "UMDefaultsWillChangeNotification"
+let UMDefaultsDidChangeNotification = "UMDefaultsDidChangeNotification"
+let UMDefaultsChangeNotification = "UMDefaultsChangeNotification"
+let UMPreferencesDidUpgradeNotification = "UMPreferencesDidUpgradeNotification"
 #endif
 
-let TPPreferencesPreviousVersionKey = "TPPreferencesPreviousVersionKey"
+let UMPreferencesPreviousVersionKey = "UMPreferencesPreviousVersionKey"
 
 // MARK: - NSNotification.Name Extension
 
 extension NSNotification.Name {
-    static let TPDefaultsWillChange = NSNotification.Name(TPDefaultsWillChangeNotification)
-    static let TPDefaultsDidChange = NSNotification.Name(TPDefaultsDidChangeNotification)
-    static let TPDefaultsChange = NSNotification.Name(TPDefaultsChangeNotification)
-    static let TPPreferencesDidUpgrade = NSNotification.Name(TPPreferencesDidUpgradeNotification)
+    static let UMDefaultsWillChange = NSNotification.Name(UMDefaultsWillChangeNotification)
+    static let UMDefaultsDidChange = NSNotification.Name(UMDefaultsDidChangeNotification)
+    static let UMDefaultsChange = NSNotification.Name(UMDefaultsChangeNotification)
+    static let UMPreferencesDidUpgrade = NSNotification.Name(UMPreferencesDidUpgradeNotification)
 }
 
 // MARK: - NSObject Extension for Preferences Binding
@@ -100,7 +96,6 @@ extension NSNotification.Name {
 
 // MARK: - PreferencesManager
 
-@objc(UMPreferencesManager)
 @objcMembers
 class PreferencesManager: NSObject {
     
@@ -108,12 +103,7 @@ class PreferencesManager: NSObject {
     
     private static let _shared = PreferencesManager()
     
-    @objc static func shared() -> PreferencesManager {
-        return _shared
-    }
-    
-    // For ObjC compatibility
-    @objc class func sharedPreferencesManager() -> PreferencesManager {
+    static func shared() -> PreferencesManager {
         return _shared
     }
     
@@ -165,7 +155,6 @@ class PreferencesManager: NSObject {
             WRAP_ON_STOP_CONTROL: false,
             ENABLE_DEBUG_LOG: false,
             SYNC_MODIFIERS: true,
-            USE_SWIFT_NETWORK_STACK: false,
             USE_DIRECT_EVENT_TAPS: true,
             USE_CURSOR_SHIELD_WINDOW: true,
             ALWAYS_OBSERVE_EVENTS: true,
@@ -188,7 +177,7 @@ class PreferencesManager: NSObject {
 		DistributedNotificationCenter.default().addObserver(
 			self,
 			selector: #selector(changeDefault(_:)),
-			name: NSNotification.Name(TPDefaultsChangeNotification),
+			name: NSNotification.Name(UMDefaultsChangeNotification),
 			object: nil
 		)
     }
@@ -196,7 +185,7 @@ class PreferencesManager: NSObject {
     deinit {
 		DistributedNotificationCenter.default().removeObserver(
 			self,
-			name: NSNotification.Name(TPDefaultsChangeNotification),
+			name: NSNotification.Name(UMDefaultsChangeNotification),
 			object: nil
 		)
     }
@@ -210,7 +199,7 @@ class PreferencesManager: NSObject {
     override func setValue(_ value: Any?, forKey key: String) {
 		willChangeValue(forKey: key)
 		DistributedNotificationCenter.default().postNotificationName(
-			NSNotification.Name(TPDefaultsWillChangeNotification),
+			NSNotification.Name(UMDefaultsWillChangeNotification),
 			object: key,
 			userInfo: nil,
 			deliverImmediately: true
@@ -218,7 +207,7 @@ class PreferencesManager: NSObject {
 		defaultsController.setValue(value, forKeyPath: "values.\(key)")
 		defaultsController.defaults.synchronize()
 		DistributedNotificationCenter.default().postNotificationName(
-			NSNotification.Name(TPDefaultsDidChangeNotification),
+			NSNotification.Name(UMDefaultsDidChangeNotification),
 			object: key,
 			userInfo: nil,
 			deliverImmediately: true
@@ -228,8 +217,6 @@ class PreferencesManager: NSObject {
     
     // MARK: - Preference Getters
     
-    // Swift-style methods (primary)
-    @objc(boolForPref:)
     func bool(forPref pref: String) -> Bool {
         guard let value = value(forKey: pref) else { return false }
         if let boolValue = value as? Bool {
@@ -244,7 +231,6 @@ class PreferencesManager: NSObject {
         return false
     }
     
-    @objc(intForPref:)
     func int(forPref pref: String) -> Int32 {
         guard let value = value(forKey: pref) else { return 0 }
         if let intValue = value as? Int32 {
@@ -256,7 +242,6 @@ class PreferencesManager: NSObject {
         return 0
     }
     
-    @objc(floatForPref:)
     func float(forPref pref: String) -> Float {
         guard let value = value(forKey: pref) else { return 0.0 }
         if let floatValue = value as? Float {
@@ -268,12 +253,10 @@ class PreferencesManager: NSObject {
         return 0.0
     }
     
-    @objc(valueForPref:)
     func value(forPref pref: String) -> Any? {
         return value(forKey: pref)
     }
     
-    @objc(portForPref:)
     func port(forPref pref: String) -> Int32 {
         if pref == TRANSFER_PORT {
             return port(forPref: COMMAND_PORT) + 1

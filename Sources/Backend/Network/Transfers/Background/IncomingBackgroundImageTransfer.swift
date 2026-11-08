@@ -3,7 +3,9 @@
 // Migrated to Swift and modified from Teleport.
 // SPDX-License-Identifier: GPL-2.0-only
 
-class IncomingBackgroundImageTransfer: TPIncomingTransfer {
+import Cocoa
+
+class IncomingBackgroundImageTransfer: IncomingTransfer {
     
     override func _receiverDataTransferCompleted() {
         TransferDebugLog("_receiverDataTransferCompleted \(self) on thread \(Thread.current)")

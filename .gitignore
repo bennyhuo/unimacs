@@ -8,3 +8,6 @@ Unimacs.xcodeproj/project.xcworkspace/xcuserdata
 Unimacs.xcodeproj/project.xcworkspace/xcshareddata
 .idea
 *.log
+Local.xcconfig
+Scripts/devices.txt
+docs/

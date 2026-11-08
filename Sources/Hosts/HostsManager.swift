@@ -410,10 +410,10 @@ class HostDevicesManager: NSObject {
     
     // MARK: - Unified Desktop Layout Sync
 
-    private let TPLayoutVersionKey = "layoutVersion"
+    private let layoutVersionKey = "layoutVersion"
 
     func layoutVersion() -> UInt64 {
-        let val = PreferencesManager.shared().value(forPref: TPLayoutVersionKey)
+        let val = PreferencesManager.shared().value(forPref: layoutVersionKey)
         if let num = val as? NSNumber {
             return num.uint64Value
         }
@@ -422,7 +422,7 @@ class HostDevicesManager: NSObject {
 
     func incrementLayoutVersion() -> UInt64 {
         let nextVer = layoutVersion() + 1
-        PreferencesManager.shared().setValue(NSNumber(value: nextVer), forKey: TPLayoutVersionKey)
+        PreferencesManager.shared().setValue(NSNumber(value: nextVer), forKey: layoutVersionKey)
         return nextVer
     }
 
@@ -480,7 +480,7 @@ class HostDevicesManager: NSObject {
         }
         
         warningLog("[LayoutSync] Applying layout update: incoming version (\(desktop.version)) > local version (\(currentVer))", module: .control)
-        PreferencesManager.shared().setValue(NSNumber(value: desktop.version), forKey: TPLayoutVersionKey)
+        PreferencesManager.shared().setValue(NSNumber(value: desktop.version), forKey: layoutVersionKey)
         
         let localId = LocalHost.shared.identifier
         

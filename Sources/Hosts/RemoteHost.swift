@@ -291,7 +291,7 @@ final class RemoteHost: HostDevice, NSCopying {
 		let localRect = _localDesktopFrame
 		guard movingRect != .zero, !localRect.isNull else { return .zero }
 		
-		return TPGluedRect(localRect, movingRect, excluding: []).rect
+		return gluedRect(localRect, movingRect, excluding: []).rect
 	}
 	
 	/// Glue the full remote desktop rect against one local screen.
@@ -302,7 +302,7 @@ final class RemoteHost: HostDevice, NSCopying {
 			  let localRect = LocalHost.shared.screenAt(index: localScreenIndex)?.frame
 		else { return .zero }
 		
-		return TPGluedRect(localRect, movingRect, excluding: []).rect
+		return gluedRect(localRect, movingRect, excluding: []).rect
 	}
 	
 	/// Legacy alias: historically this glued only the "shared screen" rect.

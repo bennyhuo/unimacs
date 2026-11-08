@@ -100,13 +100,6 @@ final class SettingsViewModel: ObservableObject {
     @Published var disconnectOnNetworkChange: Bool {
         didSet { prefs.setValue(disconnectOnNetworkChange, forKey: Settings.disconnectOnNetworkConfigChangeKey) }
     }
-
-    /// Experimental: use the Swift Network.framework stack for the control
-    /// connection instead of the legacy ObjC socket. Takes effect on the next
-    /// (re)connect.
-    @Published var useSwiftNetworkStack: Bool {
-        didSet { prefs.setValue(useSwiftNetworkStack, forKey: Settings.useSwiftNetworkStackKey) }
-    }
     
     // MARK: - Notifications
     
@@ -144,7 +137,7 @@ final class SettingsViewModel: ObservableObject {
 
     @Published var audioUseCompression: Bool {
         didSet {
-            prefs.setValue(NSNumber(value: audioUseCompression), forKey: "TPAudioUseCompression")
+            prefs.setValue(NSNumber(value: audioUseCompression), forKey: "UMAudioUseCompression")
             AudioController.shared.streamManager.useCompression = audioUseCompression
         }
     }
@@ -377,7 +370,6 @@ final class SettingsViewModel: ObservableObject {
         syncLockSleep = prefs.bool(forPref: Settings.syncLockSleepKey)
         
         disconnectOnNetworkChange = prefs.bool(forPref: Settings.disconnectOnNetworkConfigChangeKey)
-        useSwiftNetworkStack = prefs.bool(forPref: Settings.useSwiftNetworkStackKey)
         
         hideControlBezel = prefs.bool(forPref: Settings.hideControlBezelKey)
         showSwitchAnimation = prefs.bool(forPref: Settings.showSwitchAnimationKey)
@@ -418,7 +410,7 @@ final class SettingsViewModel: ObservableObject {
         muteLocalSpeakers = AudioController.shared.muteLocalSpeakers
         enableAdaptiveSpeed = AudioController.shared.enableAdaptiveSpeed
         
-        if let compressPref = prefs.value(forKey: "TPAudioUseCompression") as? NSNumber {
+        if let compressPref = prefs.value(forKey: "UMAudioUseCompression") as? NSNumber {
             audioUseCompression = compressPref.boolValue
         } else {
             audioUseCompression = false

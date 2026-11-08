@@ -19,7 +19,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleSignature</key>
-	<string>tlpt</string>
+	<string>unmc</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>NSAppTransportSecurity</key>
@@ -33,7 +33,7 @@
 	<string>UMApplication</string>
 	<key>NSUIElement</key>
 	<string>1</string>
-	<key>TPRevision</key>
+	<key>UMRevision</key>
 	<string>DEFINED_BY_GIT</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Microphone access is required to stream local audio input to the remote Mac.</string>

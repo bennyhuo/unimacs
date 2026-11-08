@@ -1,6 +1,6 @@
 ---
 name: New issue for Bug Report
-about: "If you're sure it's reproducible and not just your machine: submit an issue so we can investigate."
+about: "Report a reproducible bug or unexpected behavior in Unimacs."
 labels: "bug-report"
 ---
 
@@ -26,14 +26,14 @@ labels: "bug-report"
 
 ## Environment information
 
-__Server (Mac with keyboard and pointing device)__
+__Controlling Mac (Mac with physical keyboard and pointing device)__
 
 * Device: <!-- replace me -->
 * macOS version: <!-- replace me -->
-* Teleport version: <!-- replace me -->
+* Unimacs version: <!-- replace me -->
 
-__Client (Mac being remotely controlled)__
+__Controlled Mac (Mac receiving remote input)__
 
 * Device: <!-- replace me -->
 * macOS version: <!-- replace me -->
-* Teleport version: <!-- replace me -->
+* Unimacs version: <!-- replace me -->

@@ -68,20 +68,18 @@ extension SettingsWindowController: NSWindowDelegate {
 	}
 }
 
-// MARK: - Objective-C Bridge
+// MARK: - Settings Launcher
 
-/// Objective-C compatible wrapper for showing the settings window.
-@objcMembers
-class ModernSettingsLauncher: NSObject {
+enum ModernSettingsLauncher {
 
-	@objc static var isAvailable: Bool {
+	static var isAvailable: Bool {
 		if #available(macOS 13.0, *) {
 			return true
 		}
 		return false
 	}
 
-	@objc static func showSettings() {
+	static func showSettings() {
 		if #available(macOS 13.0, *) {
 			SettingsWindowController.shared.showSettings()
 		}

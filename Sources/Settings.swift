@@ -3,6 +3,8 @@
 // Migrated to Swift and modified from Teleport.
 // SPDX-License-Identifier: GPL-2.0-only
 
+import Foundation
+
 class Settings {
     // MARK: - Versioning
     static let currentPrefsVersion: Int = 7
@@ -70,7 +72,6 @@ class Settings {
 
     static let commandPortKey: String = "commandPort"
     static let transferPortKey: String = "transferPort"
-    static let useSwiftNetworkStackKey: String = "useSwiftNetworkStack"
     
     // MARK: - Transfer Settings
     

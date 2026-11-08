@@ -344,7 +344,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         }
         
         NotificationCenter.default.post(
-            name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+            name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
             object: host
         )
         
@@ -617,7 +617,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
                 connection.disconnect()
                 self?.broadcastConnectionDisconnected(from: host)
                 NotificationCenter.default.post(
-                    name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+                    name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
                     object: host
                 )
                 NSLog("DeviceConnectionManager: Disconnected from \(host.computerName)")
@@ -646,7 +646,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         broadcastConnectionDisconnected(from: host)
 
         NotificationCenter.default.post(
-            name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+            name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
             object: host
         )
 
@@ -734,7 +734,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         
         // Notify
         NotificationCenter.default.post(
-            name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+            name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
             object: nil
         )
         
@@ -1019,7 +1019,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
     
     private func notifyReachabilityChanged(for host: RemoteHost?) {
         NotificationCenter.default.post(
-            name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+            name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
             object: host
         )
     }
@@ -1051,7 +1051,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
             stopKeepAlive(for: hostId)
             
             NotificationCenter.default.post(
-                name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+                name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
                 object: nil
             )
             return
@@ -1162,7 +1162,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         
         // Notify via notification center
         NotificationCenter.default.post(
-            name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+            name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
             object: host
         )
         
@@ -1206,7 +1206,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
         }
         
         NotificationCenter.default.post(
-            name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+            name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
             object: host
         )
         
@@ -1221,6 +1221,7 @@ final class DeviceConnectionManager: NSObject, ObservableObject {
 
 extension DeviceConnectionManager: ClientConnectionsDelegate {
     nonisolated func connectionToServerSucceeded(_ connection: NetworkConnection, infoDict: [String: Any]?) {
+        connection.delegate = self
         Task { @MainActor in
             guard let host = connection.connectedHost else { return }
             guard connection.isConnected else {
@@ -1255,7 +1256,7 @@ extension DeviceConnectionManager: ClientConnectionsDelegate {
                 connectingHosts.remove(host.identifier)
                 reconnectingHosts.remove(host.identifier)
                 NotificationCenter.default.post(
-                    name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+                    name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
                     object: host
                 )
                 return
@@ -1322,6 +1323,7 @@ extension DeviceConnectionManager: ClientConnectionsDelegate {
 
 extension DeviceConnectionManager: ServerConnectionsDelegate {
     nonisolated func connectionFromClientAccepted(_ connection: NetworkConnection) {
+        connection.delegate = self
         Task { @MainActor in
             guard let host = connection.connectedHost else { return }
 

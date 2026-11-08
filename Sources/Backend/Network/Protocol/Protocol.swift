@@ -64,11 +64,11 @@ public struct MouseDelta {
     }
 }
 
-typealias TPMouseButton = UInt8
-typealias TPScrollWheelDistance = Int64
-typealias TPPixelPos = Float
-typealias TPDataLength = UInt64
-typealias TPProtocolVersion = UInt16
+typealias MouseButton = UInt8
+typealias ScrollWheelDistance = Int64
+typealias PixelPos = Float
+typealias DataLength = UInt64
+typealias ProtocolVersion = UInt16
 
 struct Key {
     var keyCode: CGKeyCode

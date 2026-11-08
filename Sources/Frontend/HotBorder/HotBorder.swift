@@ -19,9 +19,8 @@ let BORDER_SIZE: CGFloat = 4.0
 /// at all and the border is invisible while still fully functional.
 @MainActor
 @objcMembers
-final class TPHotBorder: NSObject {
+final class HotBorder: NSObject {
 
-	@objc(TPHotBorderState)
 	enum State: Int {
 		case inactiveState
 		case activatingState
@@ -29,7 +28,6 @@ final class TPHotBorder: NSObject {
 	}
 
 	/// Which cursor feed is allowed to fire this border (see `HotBorderMonitor`).
-	@objc(TPHotBorderKind)
 	enum Kind: Int {
 		/// Fired by the local real cursor to start controlling a remote.
 		case trigger
@@ -38,8 +36,8 @@ final class TPHotBorder: NSObject {
 	}
 
 	private var _state: State = .inactiveState
-	private weak var _hotDelegate: TPHotBorderDelegate?
-	private var _side: TPSide = []
+	private weak var _hotDelegate: HotBorderDelegate?
+	private var _side: BorderSide = []
 
 	/// Optional cosmetic overlay; non-nil only when `visibleBorders` is enabled.
 	private var overlay: HotBorderOverlay?
@@ -51,8 +49,8 @@ final class TPHotBorder: NSObject {
 	let kind: Kind
 	var firedByRealCursor: Bool = false
 
-	static func createWith(hostId: String, contentRect: NSRect, in parentRect: NSRect, kind: Kind = .trigger) -> TPHotBorder {
-		return TPHotBorder(hostId: hostId, contentRect: contentRect, in: parentRect, kind: kind)
+	static func createWith(hostId: String, contentRect: NSRect, in parentRect: NSRect, kind: Kind = .trigger) -> HotBorder {
+		return HotBorder(hostId: hostId, contentRect: contentRect, in: parentRect, kind: kind)
 	}
 
 	static func hotRect(withRepresentingRect representedRect: NSRect, in parentRect: NSRect) -> NSRect {
@@ -80,8 +78,8 @@ final class TPHotBorder: NSObject {
 	}
 
 	func update(withRepresentingRect representedRect: NSRect, in parentRect: NSRect) {
-		let hotRect = TPHotBorder.hotRect(withRepresentingRect: representedRect, in: parentRect)
-		_side = TPGluedRect(parentRect, representedRect, excluding: []).side
+		let hotRect = HotBorder.hotRect(withRepresentingRect: representedRect, in: parentRect)
+		_side = gluedRect(parentRect, representedRect, excluding: []).side
 		frame = hotRect
 
 		syncOverlay()
@@ -107,7 +105,7 @@ final class TPHotBorder: NSObject {
 		return _state
 	}
 
-	func setHotDelegate(_ delegate: TPHotBorderDelegate?) {
+	func setHotDelegate(_ delegate: HotBorderDelegate?) {
 		_hotDelegate = delegate
 	}
 
@@ -115,7 +113,7 @@ final class TPHotBorder: NSObject {
 		return frame
 	}
 
-	var side: TPSide {
+	var side: BorderSide {
 		return _side
 	}
 
@@ -238,9 +236,9 @@ final class TPHotBorder: NSObject {
 }
 
 @MainActor
-@objc protocol TPHotBorderDelegate: NSObjectProtocol {
-	@objc func hotBorder(_ hotBorder: TPHotBorder, canFireWithEvent event: NSEvent?) -> Bool
-	@objc func hotBorder(_ hotBorder: TPHotBorder, firedAtLocation location: NSPoint) -> Bool
+protocol HotBorderDelegate: AnyObject {
+	func hotBorder(_ hotBorder: HotBorder, canFireWithEvent event: NSEvent?) -> Bool
+	func hotBorder(_ hotBorder: HotBorder, firedAtLocation location: NSPoint) -> Bool
 }
 
 // MARK: - Hot border visual style
@@ -282,14 +280,14 @@ enum HotBorderVisualStyle: Int32, CaseIterable, Identifiable {
 ///
 /// The window is sized to bloom *inward* from the screen edge so the glow has
 /// room to feather; detection geometry is unaffected (it lives entirely in
-/// `TPHotBorder` / `HotBorderMonitor`).
+/// `HotBorder` / `HotBorderMonitor`).
 @MainActor
 final class HotBorderOverlay {
 
 	private let window: NSWindow
 	private let effectView: HotBorderEffectView
 
-	init(frame: NSRect, side: TPSide) {
+	init(frame: NSRect, side: BorderSide) {
 		let visualFrame = HotBorderOverlay.visualFrame(for: frame, side: side)
 		effectView = HotBorderEffectView(frame: NSRect(origin: .zero, size: visualFrame.size))
 
@@ -307,7 +305,7 @@ final class HotBorderOverlay {
 		window.orderFront(nil)
 	}
 
-	func update(frame: NSRect, side: TPSide) {
+	func update(frame: NSRect, side: BorderSide) {
 		let visualFrame = HotBorderOverlay.visualFrame(for: frame, side: side)
 		window.setFrame(visualFrame, display: true)
 		effectView.configure(side: side)
@@ -332,7 +330,7 @@ final class HotBorderOverlay {
 
 	/// Expand the (thin) detection rect inward from the screen edge so the glow
 	/// has depth to fade across, anchored to the outermost edge.
-	static func visualFrame(for frame: NSRect, side: TPSide) -> NSRect {
+	static func visualFrame(for frame: NSRect, side: BorderSide) -> NSRect {
 		let depth = HotBorderEffectView.preferredDepth()
 		if side.contains(.right) && !side.contains(.left) {
 			let d = max(depth, frame.width)
@@ -359,7 +357,7 @@ final class HotBorderOverlay {
 @MainActor
 final class HotBorderEffectView: NSView {
 
-	private var side: TPSide = []
+	private var side: BorderSide = []
 	private var style: HotBorderVisualStyle = .glow
 
 	private let gradientLayer = CAGradientLayer()
@@ -412,7 +410,7 @@ final class HotBorderEffectView: NSView {
 		fatalError("init(coder:) has not been implemented")
 	}
 
-	func configure(side: TPSide) {
+	func configure(side: BorderSide) {
 		self.side = side
 		self.style = HotBorderVisualStyle.current
 		applyStyle()

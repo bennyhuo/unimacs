@@ -5,21 +5,20 @@
 
 import Cocoa
 
-@objc enum TPNotificationIconType: Int {
+enum NotificationIconType: Int {
 	case logo
 	case warning
 	case success
 	case key
 }
 
-enum TPBezelMode {
+enum BezelMode {
 	case hidden
 	case controlling(host: RemoteHost, emergencyHint: String?)
 	case emergency(title: String, subtitle: String, count: Int, maxCount: Int)
-	case notification(title: String, subtitle: String, icon: TPNotificationIconType, duration: TimeInterval)
+	case notification(title: String, subtitle: String, icon: NotificationIconType, duration: TimeInterval)
 }
 
-@objc(BezelController)
 final class BezelController: NSObject {
 	private static var _default: BezelController?
 
@@ -28,7 +27,6 @@ final class BezelController: NSObject {
 	private var textTimer: Timer?
 	private var activeControlledHost: RemoteHost?
 
-	@objc(defaultController)
 	class func `default`() -> BezelController {
 		if let existing = _default {
 			return existing
@@ -38,7 +36,7 @@ final class BezelController: NSObject {
 		return created
 	}
 
-	func setMode(_ mode: TPBezelMode) {
+	func setMode(_ mode: BezelMode) {
 		// Ensure window and view are created on main thread.
 		if bezelWindow == nil {
 			let mainScreenFrame = LocalHost.shared.mainScreen.frame
@@ -94,16 +92,14 @@ final class BezelController: NSObject {
 		}
 	}
 
-	@objc(showBezelWithControlledHost:)
 	func showBezel(withControlledHost host: RemoteHost) {
 		setMode(.controlling(host: host, emergencyHint: "⌃⌥⇧⎋ to release"))
 	}
 
-	@objc func hideBezel() {
+	func hideBezel() {
 		setMode(.hidden)
 	}
 
-	@objc(showText:withDuration:)
 	func showText(_ text: String, withDuration duration: TimeInterval) {
 		setMode(.notification(title: "", subtitle: text, icon: .logo, duration: duration))
 	}

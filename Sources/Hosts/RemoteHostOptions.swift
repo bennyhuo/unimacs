@@ -3,6 +3,8 @@
 // Migrated to Swift and modified from Teleport.
 // SPDX-License-Identifier: GPL-2.0-only
 
+import Foundation
+
 @objcMembers
 class RemoteHostOptions: NSObject, NSMutableCopying, NSCoding {
 

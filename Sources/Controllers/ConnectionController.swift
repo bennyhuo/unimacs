@@ -10,7 +10,7 @@ let DISCONNECT_WHEN_STOP_CONTROL = false
 
 @MainActor
 @objcMembers
-class ConnectionController: NSObject, TPHotBorderDelegate {
+class ConnectionController: NSObject, HotBorderDelegate {
 	
     private var _currentConnection: NetworkConnection?
     private var _eventsController: EventsController?
@@ -47,7 +47,7 @@ class ConnectionController: NSObject, TPHotBorderDelegate {
         return _eventsController
     }
     
-	func currentHotBorder() -> TPHotBorder? {
+	func currentHotBorder() -> HotBorder? {
         return nil
     }
 
@@ -67,19 +67,19 @@ class ConnectionController: NSObject, TPHotBorderDelegate {
         }
     }
 
-    func setupHotBorder(_ hotBorder: TPHotBorder, forHost host: RemoteHost) {
+    func setupHotBorder(_ hotBorder: HotBorder, forHost host: RemoteHost) {
         // Hot border setup - no longer needs drag configuration
     }
 
-    func takeDownHotBorder(_ hotBorder: TPHotBorder) {
+    func takeDownHotBorder(_ hotBorder: HotBorder) {
         // No-op: hot border cleanup handled elsewhere
     }
 
-    func hotBorder(_ hotBorder: TPHotBorder, firedAtLocation location: NSPoint) -> Bool {
+    func hotBorder(_ hotBorder: HotBorder, firedAtLocation location: NSPoint) -> Bool {
         return false
     }
 	
-	func hotBorder(_ hotBorder: TPHotBorder, canFireWithEvent event: NSEvent?) -> Bool {
+	func hotBorder(_ hotBorder: HotBorder, canFireWithEvent event: NSEvent?) -> Bool {
 		return false
 	}
 

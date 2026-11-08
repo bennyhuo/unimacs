@@ -33,6 +33,7 @@
 		A7BB550E0A1BD00D007044EA /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = /System/Library/Frameworks/IOKit.framework; sourceTree = "<absolute>"; };
 		A7E612E609EDC0210024712F /* SecurityInterface.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SecurityInterface.framework; path = /System/Library/Frameworks/SecurityInterface.framework; sourceTree = "<absolute>"; };
 		B29F63692F01E97900486ABF /* UnimacsDebug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = UnimacsDebug.entitlements; sourceTree = "<group>"; };
+		B29F636A2F01E97900486ABF /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 		F506C035013D953901CA16C8 /* PreferencePanes.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PreferencePanes.framework; path = /System/Library/Frameworks/PreferencePanes.framework; sourceTree = "<absolute>"; };
 /* End PBXFileReference section */
 
@@ -71,11 +72,6 @@
 				Backend/Network/Connections/NWMessageChannel.swift,
 				Backend/Network/Connections/ConnectionsDelegate.swift,
 				Backend/Network/Connections/ConnectionsManager.swift,
-				Backend/Network/Connections/UMTCPSecureSocket.h,
-				Backend/Network/Connections/UMTCPSecureSocket.m,
-				Backend/Network/Connections/UMTCPSocket.h,
-				Backend/Network/Connections/UMTCPSocket.m,
-				Backend/Network/Connections/UMTCPSocketDelegates.h,
 				Backend/Network/DeviceConnectionManager.swift,
 				Backend/Network/Protocol/Protocol.swift,
 				Backend/Network/Protocol/Message.swift,
@@ -133,9 +129,9 @@
 				Utils/Network/PingManager.swift,
 				Utils/Network/NetworkConfigurationWatcher.swift,
 				Utils/Notifiable.swift,
-				"Utils/NSData+TPUtils.swift",
-				"Utils/Process+TPUtils.swift",
-				"Utils/String+TPUtils.swift",
+				"Utils/NSData+Extensions.swift",
+				"Utils/Process+Extensions.swift",
+				"Utils/String+Extensions.swift",
 				Utils/System/AccessibilityManager.swift,
 				Utils/System/ActivityLogManager.swift,
 				Utils/System/DisplaySleepAssertion.swift,
@@ -180,6 +176,7 @@
 		089C166AFE841209C02AAC07 /* Unimacs */ = {
 			isa = PBXGroup;
 			children = (
+				B29F636A2F01E97900486ABF /* Signing.xcconfig */,
 				B29F63692F01E97900486ABF /* UnimacsDebug.entitlements */,
 				B2E93B592EDEC7AD00B392EF /* Resources */,
 				B2FFA2962EDE63EB006D3198 /* Sources */,
@@ -329,7 +326,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = "/usr/bin/perl -w";
-			shellScript = "# Xcode auto-versioning script for Subversion\n# by Axel Andersson, modified by Daniel Jalkut to add\n# \"--revision HEAD\" to the svn info line, which allows\n# the latest revision to always be used.\n\nuse strict;\n\ndie \"$0: Must be run from Xcode\" unless $ENV{\"BUILT_PRODUCTS_DIR\"};\n\nmy $REV = `git describe`;\nmy $INFO = \"$ENV{BUILT_PRODUCTS_DIR}/$ENV{WRAPPER_NAME}/Contents/Info.plist\";\n\nmy $version = $REV;\n\nopen(FH, \"$INFO\") or die \"$0: $INFO: $!\";\nmy $info = join(\"\", <FH>);\nclose(FH);\n\n$info =~ s/([\\t ]+<key>TPRevision<\\/key>\\n[\\t ]+<string>).*?(<\\/string>)/$1$version$2/;\n\nopen(FH, \">$INFO\") or die \"$0: $INFO: $!\";\nprint FH $info;\nclose(FH);\n";
+			shellScript = "# Xcode auto-versioning script for Subversion\n# by Axel Andersson, modified by Daniel Jalkut to add\n# \"--revision HEAD\" to the svn info line, which allows\n# the latest revision to always be used.\n\nuse strict;\n\ndie \"$0: Must be run from Xcode\" unless $ENV{\"BUILT_PRODUCTS_DIR\"};\n\nmy $REV = `git describe`;\nmy $INFO = \"$ENV{BUILT_PRODUCTS_DIR}/$ENV{WRAPPER_NAME}/Contents/Info.plist\";\n\nmy $version = $REV;\n\nopen(FH, \"$INFO\") or die \"$0: $INFO: $!\";\nmy $info = join(\"\", <FH>);\nclose(FH);\n\n$info =~ s/([\\t ]+<key>UMRevision<\\/key>\\n[\\t ]+<string>).*?(<\\/string>)/$1$version$2/;\n\nopen(FH, \">$INFO\") or die \"$0: $INFO: $!\";\nprint FH $info;\nclose(FH);\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -346,20 +343,17 @@
 /* Begin XCBuildConfiguration section */
 		A729278408564D7C00518F7E /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = B29F636A2F01E97900486ABF /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				APP_DISPLAY_NAME = "unimacs-rl";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGN_ENTITLEMENTS = Unimacs.entitlements;
-				CODE_SIGN_IDENTITY = "Apple Development";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				COPY_PHASE_STRIP = YES;
 				CURRENT_PROJECT_VERSION = 1.0.0;
 				DEFINES_MODULE = YES;
-				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				EXCLUDED_ARCHS = "";
 				FRAMEWORK_SEARCH_PATHS = (
@@ -367,7 +361,6 @@
 					"$(SRCROOT)",
 					"$(PROJECT_DIR)",
 				);
-				GCC_PREFIX_HEADER = Sources/Unimacs_Prefix.pch;
 				INFOPLIST_FILE = Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "${APP_DISPLAY_NAME}";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -382,7 +375,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.bennyhuo.unimacs.rl;
 				PRODUCT_NAME = "${APP_DISPLAY_NAME}";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				SWIFT_OBJC_BRIDGING_HEADER = "Sources/Unimacs-Bridging-Header.h";
 				SWIFT_OBJC_INTERFACE_HEADER_NAME = "Unimacs-Swift.h";
 				SWIFT_STRICT_CONCURRENCY = targeted;
 				SWIFT_UPCOMING_FEATURE_GLOBAL_CONCURRENCY = NO;
@@ -395,6 +387,7 @@
 		};
 		A729278508564D7C00518F7E /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = B29F636A2F01E97900486ABF /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				APP_DISPLAY_NAME = "unimacs-dev";
@@ -402,12 +395,9 @@
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGN_ENTITLEMENTS = UnimacsDebug.entitlements;
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1.0.0;
 				DEFINES_MODULE = YES;
-				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
@@ -417,7 +407,6 @@
 					"$(SRCROOT)",
 					"$(PROJECT_DIR)",
 				);
-				GCC_PREFIX_HEADER = Sources/Unimacs_Prefix.pch;
 				INFOPLIST_FILE = Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "${APP_DISPLAY_NAME}";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -439,7 +428,6 @@
 				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
 				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
-				SWIFT_OBJC_BRIDGING_HEADER = "Sources/Unimacs-Bridging-Header.h";
 				SWIFT_OBJC_INTERFACE_HEADER_NAME = "Unimacs-Swift.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_STRICT_CONCURRENCY = targeted;
@@ -538,19 +526,16 @@
 		};
 		A751657309314763008F278D /* Tests */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = B29F636A2F01E97900486ABF /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				APP_DISPLAY_NAME = "unimacs-dev";
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CODE_SIGN_ENTITLEMENTS = Unimacs.entitlements;
-				CODE_SIGN_IDENTITY = "Apple Development";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1.0.0;
 				DEFINES_MODULE = YES;
-				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				EXCLUDED_ARCHS = "";
 				FRAMEWORK_SEARCH_PATHS = (
@@ -558,7 +543,6 @@
 					"$(SRCROOT)",
 					"$(PROJECT_DIR)",
 				);
-				GCC_PREFIX_HEADER = Sources/Unimacs_Prefix.pch;
 				INFOPLIST_FILE = Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "${APP_DISPLAY_NAME}";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -574,7 +558,6 @@
 				PRODUCT_NAME = "${APP_DISPLAY_NAME}";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
-				SWIFT_OBJC_BRIDGING_HEADER = "Sources/Unimacs-Bridging-Header.h";
 				SWIFT_OBJC_INTERFACE_HEADER_NAME = "Unimacs-Swift.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_STRICT_CONCURRENCY = targeted;
@@ -695,7 +678,6 @@
 					"$(SRCROOT)",
 					"$(PROJECT_DIR)",
 				);
-				GCC_PREFIX_HEADER = Sources/Unimacs_Prefix.pch;
 				INFOPLIST_FILE = Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "${APP_DISPLAY_NAME}";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -710,7 +692,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.bennyhuo.unimacs;
 				PRODUCT_NAME = "${APP_DISPLAY_NAME}";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				SWIFT_OBJC_BRIDGING_HEADER = "Sources/Unimacs-Bridging-Header.h";
 				SWIFT_OBJC_INTERFACE_HEADER_NAME = "Unimacs-Swift.h";
 				SWIFT_STRICT_CONCURRENCY = targeted;
 				SWIFT_UPCOMING_FEATURE_GLOBAL_CONCURRENCY = NO;

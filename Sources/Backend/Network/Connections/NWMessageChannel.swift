@@ -9,7 +9,7 @@ import Security
 
 private enum NWTLSConfigurator {
 
-    /// Build TCP options for a control channel.
+    /// Build TCP options for a control or transfer channel.
     static func tcpOptions(noDelay: Bool) -> NWProtocolTCP.Options {
         let options = NWProtocolTCP.Options()
         options.noDelay = noDelay
@@ -20,7 +20,7 @@ private enum NWTLSConfigurator {
         return options
     }
 
-    /// Build TLS options replicating the legacy mutual-auth / TOFU behaviour.
+    /// Build TLS options replicating the mutual-auth / TOFU behaviour.
     /// `onPeerCertificate` is invoked during the handshake with the peer leaf cert.
     static func tlsOptions(verifyQueue: DispatchQueue,
                            onPeerCertificate: @escaping (SecCertificate) -> Void) -> NWProtocolTLS.Options {
@@ -36,7 +36,6 @@ private enum NWTLSConfigurator {
         }
         sec_protocol_options_set_peer_authentication_required(sec, true)
 
-        // Common floor with the legacy SecureTransport stack.
         sec_protocol_options_set_min_tls_protocol_version(sec, .TLSv12)
 
         // Trust-on-first-use: accept any chain, capture the peer leaf certificate.
@@ -58,14 +57,20 @@ private enum NWTLSConfigurator {
         return nil
     }
 
-    /// Helper: extract a bare IPv4/host string from an endpoint (legacy returns IP only).
+    /// Extract a bare IPv4/IPv6/host string from an endpoint (stripping any `%ifname` scope suffix).
     static func ipString(from endpoint: NWEndpoint?) -> String? {
         guard case let .hostPort(host, _)? = endpoint else { return nil }
+        let raw: String
         switch host {
-        case .ipv4(let address): return "\(address)"
-        case .name(let name, _): return name
-        default: return nil
+        case .ipv4(let address): raw = "\(address)"
+        case .ipv6(let address): raw = "\(address)"
+        case .name(let name, _): raw = name
+        @unknown default: return nil
         }
+        if let percentIndex = raw.firstIndex(of: "%") {
+            return String(raw[..<percentIndex])
+        }
+        return raw
     }
 }
 
@@ -76,11 +81,7 @@ final class NWMessageChannel: MessageChannel {
     private static let connectionTimeout: TimeInterval = 5.0
 
     /// How long an *established* connection may stay parked in `.waiting` (path lost) before we
-    /// give up and tear it down. NWConnection tries to recover transparently across transient
-    /// network changes by entering `.waiting`; the legacy socket stack fails fast instead, and the
-    /// rest of the app relies on the channel state flipping to disconnected so keep-alive / reset /
-    /// re-publish logic can run. Without this, a `.waiting` connection lingers forever in
-    /// `connectedState` and becomes a zombie that blocks all self-healing.
+    /// give up and tear it down.
     private static let waitingGracePeriod: TimeInterval = 6.0
 
     /// Max time `send` blocks waiting for NWConnection to process the bytes. Guards against a
@@ -97,9 +98,9 @@ final class NWMessageChannel: MessageChannel {
     /// `channelDidConnect` → `NetworkConnection.sendAsync` → reads `state`); a `queue.sync`
     /// getter would then re-enter `queue` from within `queue` and deadlock on connect.
     /// Keep state behind this lightweight lock, held only for the trivial get/set (never
-    /// across a delegate callback). Regression fixed in commit e9756b0.
+    /// across a delegate callback).
     private let stateLock = NSLock()
-    private var _state: TPSocketState = .disconnectedState
+    private var _state: SocketState = .disconnectedState
     private var _noDelay = false
     private var _peerCertificate: SecCertificate?
     private var _lastFailureReason: String?
@@ -115,18 +116,29 @@ final class NWMessageChannel: MessageChannel {
     /// Pending `.waiting` grace timer; non-nil means a countdown to termination is in flight.
     private var waitingWorkItem: DispatchWorkItem?
 
-    /// Buffers inbound data that arrives before a delegate is attached.
+    /// Buffers inbound data that arrives before a delegate is attached. Only accessed on `queue`.
     private var pendingInbound = Data()
 
     /// For accepted channels: notified (instead of `delegate.channelDidConnect`)
     /// once the connection is ready, so the listener can hand it up.
     private var onReady: ((NWMessageChannel) -> Void)?
+    /// Retains `self` while an accepted connection transitions from `.setup` to `.ready`.
+    private var acceptedSelfRetain: NWMessageChannel?
     private let isAccepted: Bool
 
-    var enableEncryption: Bool = true
+    var enableEncryption: Bool = false
 
-    weak var delegate: MessageChannelDelegate? {
-        didSet { flushPendingInbound() }
+    private weak var _delegate: MessageChannelDelegate?
+    var delegate: MessageChannelDelegate? {
+        get { locked { _delegate } }
+        set {
+            locked { _delegate = newValue }
+            if newValue != nil {
+                queue.async { [weak self] in
+                    self?.flushPendingInbound()
+                }
+            }
+        }
     }
 
     /// Outbound channel.
@@ -144,7 +156,7 @@ final class NWMessageChannel: MessageChannel {
 
     // MARK: MessageChannel
 
-    var state: TPSocketState { locked { _state } }
+    var state: SocketState { locked { _state } }
     var localAddress: String? { NWTLSConfigurator.ipString(from: connection?.currentPath?.localEndpoint) }
     var remoteAddress: String? {
         if let remote = connection?.currentPath?.remoteEndpoint {
@@ -165,7 +177,8 @@ final class NWMessageChannel: MessageChannel {
 
     @discardableResult
     func connect(toHost host: String, port: Int32) -> Bool {
-        guard !host.isEmpty, let nwPort = NWEndpoint.Port(rawValue: UInt16(truncatingIfNeeded: port)) else {
+        guard !host.isEmpty, port > 0, let nwPort = NWEndpoint.Port(rawValue: UInt16(truncatingIfNeeded: port)) else {
+            locked { _lastFailureReason = "Invalid host or port (\(host):\(port))" }
             return false
         }
 
@@ -185,8 +198,10 @@ final class NWMessageChannel: MessageChannel {
     /// Start an accepted connection (called by the listener).
     func startAccepted() {
         guard let connection else { return }
+        acceptedSelfRetain = self
         locked { _state = .connectingState }
         wireStateHandler(connection)
+        startConnectTimeout()
         connection.start(queue: queue)
     }
 
@@ -220,9 +235,33 @@ final class NWMessageChannel: MessageChannel {
     func close() {
         cancelConnectTimeout()
         cancelWaitingTimeout()
-        locked { _state = .disconnectedState }
+        let wasReady: Bool = locked {
+            _delegate = nil
+            let ready = (_state == .connectedState)
+            _state = .disconnectedState
+            return ready
+        }
         let conn = connection
-        queue.async { conn?.cancel() }
+        connection = nil
+        queue.async { [weak self] in
+            self?.didReportTermination = true
+            self?.acceptedSelfRetain = nil
+            self?.onReady = nil
+            self?.pendingInbound.removeAll()
+            guard let conn else { return }
+            if wasReady {
+                // Send a graceful TCP FIN after any queued payload bytes so the peer sees a clean EOF
+                // rather than ECONNRESET when closing right after a transfer completes.
+                conn.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in
+                    conn.cancel()
+                })
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.0) {
+                    conn.cancel()
+                }
+            } else {
+                conn.cancel()
+            }
+        }
     }
 
     // MARK: - Internals
@@ -267,6 +306,10 @@ final class NWMessageChannel: MessageChannel {
     private func handleReady() {
         cancelConnectTimeout()
         cancelWaitingTimeout()
+        guard locked({ _state }) != .disconnectedState else {
+            acceptedSelfRetain = nil
+            return
+        }
         locked { _state = .connectedState }
         hasBecomeReady = true
         infoLog("[NW] connected local=\(localAddress ?? "nil") remote=\(remoteAddress ?? "nil")", module: .network)
@@ -274,8 +317,10 @@ final class NWMessageChannel: MessageChannel {
         // Notify the owner first (it attaches the real delegate), then start
         // reading so inbound bytes are delivered to the right place.
         if isAccepted {
-            onReady?(self)
+            let callback = onReady
             onReady = nil
+            callback?(self)
+            acceptedSelfRetain = nil
         } else {
             delegate?.channelDidConnect(self)
         }
@@ -289,15 +334,10 @@ final class NWMessageChannel: MessageChannel {
                 _lastFailureReason = "\(error)"
             }
         }
-        // Give the path a short window to recover; if it does not, fail fast like the legacy
-        // stack so we don't leave a zombie connection stuck in `connectedState`. A subsequent
-        // `.ready` cancels this; repeated `.waiting` updates do not extend the window.
         startWaitingTimeout()
     }
 
     private func startWaitingTimeout() {
-        // Already counting down — don't restart, or a flood of `.waiting` updates would push the
-        // deadline out indefinitely.
         guard waitingWorkItem == nil else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
@@ -327,26 +367,26 @@ final class NWMessageChannel: MessageChannel {
         cancelWaitingTimeout()
         guard !didReportTermination else { return }
         didReportTermination = true
+        acceptedSelfRetain = nil
+        onReady = nil
 
         let wasReady = hasBecomeReady
-        locked {
+        let currentDelegate: MessageChannelDelegate? = locked {
             _state = .disconnectedState
             if let error {
                 _lastFailureReason = "\(error)"
             }
+            return _delegate
         }
 
         if let error {
             warningLog("[NW] connection terminated: \(error)", module: .network)
         }
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            if wasReady {
-                self.delegate?.channelDidDisconnect(self)
-            } else if !self.isAccepted {
-                self.delegate?.channelDidFailToConnect(self)
-            }
+        if wasReady {
+            currentDelegate?.channelDidDisconnect(self)
+        } else if !isAccepted {
+            currentDelegate?.channelDidFailToConnect(self)
         }
     }
 
@@ -369,15 +409,22 @@ final class NWMessageChannel: MessageChannel {
     }
 
     private func deliver(_ data: Data) {
-        if let delegate {
-            delegate.channel(self, didReceiveData: data)
+        if let delegate = self.delegate {
+            if !pendingInbound.isEmpty {
+                var combined = pendingInbound
+                pendingInbound.removeAll()
+                combined.append(data)
+                delegate.channel(self, didReceiveData: combined)
+            } else {
+                delegate.channel(self, didReceiveData: data)
+            }
         } else {
             pendingInbound.append(data)
         }
     }
 
     private func flushPendingInbound() {
-        guard let delegate, !pendingInbound.isEmpty else { return }
+        guard let delegate = self.delegate, !pendingInbound.isEmpty else { return }
         let buffered = pendingInbound
         pendingInbound.removeAll()
         delegate.channel(self, didReceiveData: buffered)
@@ -393,8 +440,9 @@ final class NWMessageChannel: MessageChannel {
                         self._lastFailureReason = "Connection timed out (\(Int(Self.connectionTimeout))s)"
                     }
                 }
+                let conn = self.connection
                 self.handleTermination(error: nil)
-                self.connection?.cancel()
+                conn?.cancel()
             }
         }
         timeoutWorkItem = work
@@ -413,19 +461,28 @@ final class NWMessageListener: MessageListener {
 
     private let queue = DispatchQueue(label: "com.unimacs.nwlistener", qos: .userInitiated)
     private var listener: NWListener?
+    private var cancelSemaphore: DispatchSemaphore?
 
-    var enableEncryption: Bool = true
+    var enableEncryption: Bool = false
     weak var delegate: MessageListenerDelegate?
 
     @discardableResult
     func start(onPort port: UnsafeMutablePointer<Int32>, tries: Int) -> Bool {
         var candidate = port.pointee
-        let attempts = max(1, tries)
+        if candidate == 0 {
+            if let assigned = startListener(on: 0) {
+                port.pointee = assigned
+                infoLog("[NW] listening on ephemeral port \(assigned) encryption=\(enableEncryption)", module: .network)
+                return true
+            }
+            return false
+        }
 
+        let attempts = max(1, tries)
         for _ in 0..<attempts {
-            if startListener(on: candidate) {
-                port.pointee = candidate
-                infoLog("[NW] listening on port \(candidate) encryption=\(enableEncryption)", module: .network)
+            if let assigned = startListener(on: candidate) {
+                port.pointee = assigned
+                infoLog("[NW] listening on port \(assigned) encryption=\(enableEncryption)", module: .network)
                 return true
             }
             candidate += 1
@@ -434,13 +491,26 @@ final class NWMessageListener: MessageListener {
     }
 
     func stop() {
-        let listener = self.listener
+        guard let listener = self.listener else { return }
         self.listener = nil
-        queue.async { listener?.cancel() }
+        let sem = DispatchSemaphore(value: 0)
+        queue.async {
+            self.cancelSemaphore = sem
+            listener.cancel()
+        }
+        _ = sem.wait(timeout: .now() + 0.5)
     }
 
-    private func startListener(on port: Int32) -> Bool {
-        guard let nwPort = NWEndpoint.Port(rawValue: UInt16(truncatingIfNeeded: port)) else { return false }
+    private func startListener(on port: Int32) -> Int32? {
+        let nwPort: NWEndpoint.Port
+        if port == 0 {
+            nwPort = .any
+        } else {
+            guard port > 0, let validPort = NWEndpoint.Port(rawValue: UInt16(truncatingIfNeeded: port)) else {
+                return nil
+            }
+            nwPort = validPort
+        }
 
         let params = makeParameters()
         let selectedIp = NetworkConfigurationWatcher.shared.selectedLocalIpAddress
@@ -449,16 +519,16 @@ final class NWMessageListener: MessageListener {
         let listener: NWListener
         do {
             if bindToSpecificIp {
-                // The port is carried by the required local endpoint; do not also
-                // pass `on:` (that would double-specify the port).
                 params.requiredLocalEndpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(selectedIp), port: nwPort)
+                listener = try NWListener(using: params)
+            } else if port == 0 {
                 listener = try NWListener(using: params)
             } else {
                 listener = try NWListener(using: params, on: nwPort)
             }
         } catch {
             warningLog("[NW] failed to create listener on \(port): \(error)", module: .network)
-            return false
+            return nil
         }
 
         listener.newConnectionHandler = { [weak self] connection in
@@ -467,15 +537,44 @@ final class NWMessageListener: MessageListener {
 
         // Wait synchronously for the listener to bind (or fail) so port retry works.
         let semaphore = DispatchSemaphore(value: 0)
+        let stateLock = NSLock()
+        var didSignal = false
         var bound = false
-        listener.stateUpdateHandler = { state in
+
+        listener.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
-                bound = true
-                semaphore.signal()
+                stateLock.lock()
+                if !didSignal {
+                    didSignal = true
+                    bound = true
+                    stateLock.unlock()
+                    semaphore.signal()
+                } else {
+                    stateLock.unlock()
+                }
             case .failed:
-                bound = false
-                semaphore.signal()
+                stateLock.lock()
+                if !didSignal {
+                    didSignal = true
+                    bound = false
+                    stateLock.unlock()
+                    semaphore.signal()
+                } else {
+                    stateLock.unlock()
+                }
+            case .cancelled:
+                stateLock.lock()
+                if !didSignal {
+                    didSignal = true
+                    bound = false
+                    stateLock.unlock()
+                    semaphore.signal()
+                } else {
+                    stateLock.unlock()
+                }
+                self?.cancelSemaphore?.signal()
+                self?.cancelSemaphore = nil
             default:
                 break
             }
@@ -484,11 +583,12 @@ final class NWMessageListener: MessageListener {
 
         if semaphore.wait(timeout: .now() + 2.0) == .timedOut || !bound {
             listener.cancel()
-            return false
+            return nil
         }
 
+        let assignedPort = Int32(listener.port?.rawValue ?? UInt16(truncatingIfNeeded: port))
         self.listener = listener
-        return true
+        return assignedPort
     }
 
     private func handleNewConnection(_ connection: NWConnection) {
@@ -504,8 +604,6 @@ final class NWMessageListener: MessageListener {
         let tcp = NWTLSConfigurator.tcpOptions(noDelay: true)
         let params: NWParameters
         if enableEncryption {
-            // Accepted channels capture their own peer certificate; the listener
-            // params only need a local identity + TOFU verify block.
             let tls = NWTLSConfigurator.tlsOptions(verifyQueue: queue) { _ in }
             params = NWParameters(tls: tls, tcp: tcp)
         } else {
@@ -514,7 +612,6 @@ final class NWMessageListener: MessageListener {
         if let ipOptions = params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
             ipOptions.version = .v4
         }
-        params.allowLocalEndpointReuse = true
         return params
     }
 }

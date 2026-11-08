@@ -1,0 +1,25 @@
+// Default code signing settings for Unimacs.
+// By default, Debug and Release builds use ad-hoc signing ("-") so the project
+// builds out of the box without requiring an Apple Developer Team ID.
+//
+// To sign local builds with your Apple Development certificate (recommended for
+// persistent macOS Accessibility/TCC permissions across rebuilds), create an
+// untracked `Local.xcconfig` file in the repository root with:
+//
+//   DEVELOPMENT_TEAM = YOUR_TEAM_ID
+//   CODE_SIGN_STYLE = Automatic
+//   CODE_SIGN_IDENTITY = Apple Development
+//   CODE_SIGN_IDENTITY[sdk=macosx*] = Apple Development
+//
+// Optional (for free Apple ID / Personal Team 7-day certificates that expire or
+// get superseded frequently): set `AUTO_CLEAN_REVOKED_CERTIFICATES = YES` in
+// `Local.xcconfig` to let `Scripts/ensure_development_certificate.sh` remove
+// revoked/stale certificates from your login keychain before Debug builds.
+
+DEVELOPMENT_TEAM =
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+CODE_SIGN_IDENTITY[sdk=macosx*] = -
+AUTO_CLEAN_REVOKED_CERTIFICATES = NO
+
+#include? "Local.xcconfig"

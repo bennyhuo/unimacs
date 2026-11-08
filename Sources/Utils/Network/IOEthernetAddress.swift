@@ -6,7 +6,6 @@
 import Foundation
 import IOKit.network
 
-@objcMembers
 class IOEthernetAddress: NSObject, NSCoding {
     static let size: Int = Int(kIOEthernetAddressSize)
 	private static let BytesKey = "BytesKey"
@@ -38,7 +37,6 @@ class IOEthernetAddress: NSObject, NSCoding {
         }
     }
 
-    @objc(initWithBytes:)
     init(_ bytes: UnsafePointer<UInt8>) {
         self.bytes.initialize(from: bytes, count: Self.size)
     }

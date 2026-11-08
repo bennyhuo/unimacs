@@ -6,13 +6,13 @@
 import Foundation
 
 let ScreenPlacementKey = "ScreenPlacement"
-let TPMousePositionKey = "TPMousePosition"
-let TPHotBorderRelativePointKey = "TPHotBorderRelativePoint"
-let TPSwitchOptionsKey = "TPSwitchOptions"
-let TPSwitchControlKey = "TPSwitchControl"
-let TPStopControlReasonKey = "TPStopControlReason"
-let TPControlFailureReasonKey = "reason"
-let TPControlFailureIsPermissionIssueKey = "TPControlFailureIsPermissionIssue"
+let MousePositionKey = "MousePosition"
+let HotBorderRelativePointKey = "HotBorderRelativePoint"
+let SwitchOptionsKey = "SwitchOptions"
+let SwitchControlKey = "SwitchControl"
+let StopControlReasonKey = "StopControlReason"
+let ControlFailureReasonKey = "reason"
+let ControlFailureIsPermissionIssueKey = "ControlFailureIsPermissionIssue"
 
 class ControlRequestBody {
 
@@ -28,9 +28,9 @@ class ControlRequestBody {
 
         screenPlacement = (message.infoDict[ScreenPlacementKey] as? NSData)!.rectValue
 
-        mousePosition = (message.infoDict[TPMousePositionKey] as? NSData)?.pointValue ?? NSPoint(x: -1, y: -1)
-        hotBorderRelativePoint = (message.infoDict[TPHotBorderRelativePointKey] as? NSData)?.pointValue
-        options = message.infoDict[TPSwitchOptionsKey] as? [String: Any]
+        mousePosition = (message.infoDict[MousePositionKey] as? NSData)?.pointValue ?? NSPoint(x: -1, y: -1)
+        hotBorderRelativePoint = (message.infoDict[HotBorderRelativePointKey] as? NSData)?.pointValue
+        options = message.infoDict[SwitchOptionsKey] as? [String: Any]
     }
 
 }
@@ -48,11 +48,11 @@ extension Message {
     ) -> Message {
         var infoDict: [String: Any] = [
 			ScreenPlacementKey: NSData.data(with: screenPlacement),
-			TPMousePositionKey: NSData.data(with: mousePosition),
-            TPSwitchOptionsKey: options,
+			MousePositionKey: NSData.data(with: mousePosition),
+            SwitchOptionsKey: options,
         ]
         if let point = hotBorderRelativePoint {
-			infoDict[TPHotBorderRelativePointKey] = NSData.data(with: point)
+			infoDict[HotBorderRelativePointKey] = NSData.data(with: point)
         }
 
 		return Message.create(with: .controlRequest, andInfoDict: infoDict)

@@ -7,7 +7,7 @@ import Security
 @preconcurrency import ApplicationServices
 
 extension Notification.Name {
-	static let TPAccessibilityStatusDidChange = Notification.Name("TPAccessibilityStatusDidChangeNotification")
+	static let UMAccessibilityStatusDidChange = Notification.Name("UMAccessibilityStatusDidChangeNotification")
 }
 
 @objc enum AccessibilityIssueKind: Int {
@@ -30,7 +30,7 @@ class AccessibilityManager: NSObject, ObservableObject {
 		}
 		didSet {
 			if oldValue != isTrustedState {
-				NotificationCenter.default.post(name: .TPAccessibilityStatusDidChange, object: self)
+				NotificationCenter.default.post(name: .UMAccessibilityStatusDidChange, object: self)
 			}
 		}
 	}
@@ -43,7 +43,7 @@ class AccessibilityManager: NSObject, ObservableObject {
 		}
 		didSet {
 			if oldValue != issueKind && !isTrustedState {
-				NotificationCenter.default.post(name: .TPAccessibilityStatusDidChange, object: self)
+				NotificationCenter.default.post(name: .UMAccessibilityStatusDidChange, object: self)
 			}
 		}
 	}

@@ -166,19 +166,3 @@ private extension LogLevel {
     }
 }
 
-// MARK: - ObjC bridge (callable from C/ObjC log macros in common.h)
-
-/// C-callable entry point used by the Objective-C logging macros.
-/// `level` and `module` match the raw values of `LogLevel` / `LogModule`.
-@_cdecl("TPFileLog")
-func TPFileLog(_ level: Int32, _ module: Int32, _ cMessage: UnsafePointer<CChar>) {
-    let logLevel = LogLevel(rawValue: level) ?? .debug
-
-    // Honor the configured minimum log level for the file as well.
-    let minLevel = LogLevel(rawValue: PreferencesManager.shared().int(forPref: Settings.logLevelKey)) ?? .debug
-    guard logLevel >= minLevel else { return }
-
-    let category = (LogModule(rawValue: module) ?? .general).displayName
-    let message = String(cString: cMessage)
-    FileLogger.shared.append(level: logLevel, category: category, message: message)
-}

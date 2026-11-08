@@ -346,17 +346,6 @@ struct SettingsTabView: View {
                             .labelsHidden()
                             .toggleStyle(.switch)
                     }
-
-                    Divider()
-
-                    SettingsRow(
-                        title: "Use Swift network stack (experimental)",
-                        description: "Use Network.framework for the control connection; off falls back to the legacy socket. Takes effect on next reconnect."
-                    ) {
-                        Toggle("", isOn: $viewModel.useSwiftNetworkStack)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                    }
                 }
                 
                 // Notifications Section

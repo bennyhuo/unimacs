@@ -73,7 +73,7 @@ struct ActivityLogDrawerView: View {
         .onAppear {
             refreshActiveDiagnoses()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TPConnectionStateDidChangeNotification"))) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("UMConnectionStateDidChangeNotification"))) { _ in
             refreshActiveDiagnoses()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("HostDeviceDidUpdateNotification"))) { _ in
@@ -82,7 +82,7 @@ struct ActivityLogDrawerView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name(HostDevicesManager.HostDevicesConfigurationDidChangeNotification))) { _ in
             refreshActiveDiagnoses()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .TPAccessibilityStatusDidChange)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .UMAccessibilityStatusDidChange)) { _ in
             refreshActiveDiagnoses()
         }
         .onReceive(logManager.$entries) { _ in

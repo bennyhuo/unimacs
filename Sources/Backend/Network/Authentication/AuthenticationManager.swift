@@ -6,23 +6,17 @@
 import Cocoa
 
 private let trustedHostsVersion = 2
-private let trustedHostsVersionKey = "TPTrustedHostsVersion"
-private let trustedHostsKey = "TPTrustedHosts"
+private let trustedHostsVersionKey = "UMTrustedHostsVersion"
+private let trustedHostsKey = "UMTrustedHosts"
 
-@objc class AuthenticationManager: NSObject, ClientConnectionsDelegate, NetworkConnectionDelegate {
+class AuthenticationManager: NSObject, ClientConnectionsDelegate, NetworkConnectionDelegate {
     
-    @objc static let `default` = AuthenticationManager()
-    
-    // Legacy ObjC compatibility
-    @objc class func defaultManager() -> AuthenticationManager {
-        return Self.default
-    }
+    static let `default` = AuthenticationManager()
     
     private var _trustedHosts: [RemoteHost] = []
     private var currentConnection: NetworkConnection?
     
-    // Public ObjC-compatible property
-    @objc var trustedHosts: [RemoteHost] {
+    var trustedHosts: [RemoteHost] {
         return _trustedHosts
     }
     
@@ -32,7 +26,7 @@ private let trustedHostsKey = "TPTrustedHosts"
     
     // MARK: - Loading/Saving
     
-    @objc func loadHosts() {
+    func loadHosts() {
         let prefsManager = PreferencesManager.shared()
         
         // Do not load hosts from an earlier version
@@ -49,7 +43,7 @@ private let trustedHostsKey = "TPTrustedHosts"
 		}
     }
     
-    @objc func saveHosts() {
+    func saveHosts() {
         let prefsManager = PreferencesManager.shared()
 		let archivedData = LegacyKeyedArchiver.archive(value: _trustedHosts)
 		prefsManager.setValue(archivedData, forKey: trustedHostsKey)
@@ -283,11 +277,10 @@ private let trustedHostsKey = "TPTrustedHosts"
     
     // MARK: - Trusted hosts
     
-    @objc func getTrustedHosts() -> [RemoteHost] {
+    func getTrustedHosts() -> [RemoteHost] {
         return _trustedHosts
     }
     
-    @objc(host:setTrusted:)
     func host(_ remoteHost: RemoteHost, setTrusted trusted: Bool) {
         _trustedHosts.removeAll { $0 == remoteHost }
         

@@ -5,18 +5,18 @@
 
 import Foundation
 
-let TPRecordTXTVersionKey = "txtvers"
-let TPRecordTXTVersionValue = "1"
+let RecordTXTVersionKey = "txtvers"
+let RecordTXTVersionValue = "1"
 
-let TPRecordIDKey = "id"
-let TPRecordNameKey = "name"
-let TPRecordProtocolVersionKey = "protocol"
-let TPRecordScreenSizesKey = "screen-sizes"
-let TPRecordCapabilitiesKey = "capabilities"
-let TPRecordOSVersionKey = "os-vers"
-let TPRecordSelectedServiceIpAddressKey = "service-ip"
-let TPRecordHideIfNotPaired = "hide"
-let TPRecordMacAddressesKey = "mac-addrs"
+let RecordIDKey = "id"
+let RecordNameKey = "name"
+let RecordProtocolVersionKey = "protocol"
+let RecordScreenSizesKey = "screen-sizes"
+let RecordCapabilitiesKey = "capabilities"
+let RecordOSVersionKey = "os-vers"
+let RecordSelectedServiceIpAddressKey = "service-ip"
+let RecordHideIfNotPairedKey = "hide"
+let RecordMacAddressesKey = "mac-addrs"
 
 class TXTRecord {
 	
@@ -103,16 +103,16 @@ class TXTRecord {
     static func from(data: Data) -> TXTRecord {
         let dict = NetService.dictionary(fromTXTRecord: data).compactMapValues({ String(data: $0, encoding: .utf8) })
         return TXTRecord(
-            version: dict[TPRecordTXTVersionKey].flatMap { Int($0) } ?? 0,
-            protocolVersion: dict[TPRecordProtocolVersionKey].flatMap { Int($0) } ?? 0,
-            id: dict[TPRecordIDKey] ?? "",
-            name: dict[TPRecordNameKey] ?? "",
-            screens: dict[TPRecordScreenSizesKey] ?? "",
-            capabilities: dict[TPRecordCapabilitiesKey].flatMap({ string in UInt(string) }) ?? 0,
-            osVersion: dict[TPRecordOSVersionKey].flatMap({ string in Int(string) }) ?? 0,
-            serviceIp: dict[TPRecordSelectedServiceIpAddressKey] ?? "",
+            version: dict[RecordTXTVersionKey].flatMap { Int($0) } ?? 0,
+            protocolVersion: dict[RecordProtocolVersionKey].flatMap { Int($0) } ?? 0,
+            id: dict[RecordIDKey] ?? "",
+            name: dict[RecordNameKey] ?? "",
+            screens: dict[RecordScreenSizesKey] ?? "",
+            capabilities: dict[RecordCapabilitiesKey].flatMap({ string in UInt(string) }) ?? 0,
+            osVersion: dict[RecordOSVersionKey].flatMap({ string in Int(string) }) ?? 0,
+            serviceIp: dict[RecordSelectedServiceIpAddressKey] ?? "",
             hideIfNotPaired: 0,
-            macAddresses: Self.parseMacAddresses(dict[TPRecordMacAddressesKey])
+            macAddresses: Self.parseMacAddresses(dict[RecordMacAddressesKey])
         )
     }
     
@@ -127,16 +127,16 @@ class TXTRecord {
         let macAddressesString = macAddresses.map { $0.description }.joined(separator: ",")
         
         let dict = [
-            TPRecordTXTVersionKey: String(self.txtVersion),
-            TPRecordIDKey: self.id,
-            TPRecordNameKey: self.name,
-            TPRecordProtocolVersionKey: String(self.protocolVersion),
-            TPRecordScreenSizesKey: self.screens,
-            TPRecordCapabilitiesKey: String(self.capabilities),
-            TPRecordOSVersionKey: String(self.osVersion),
-            TPRecordSelectedServiceIpAddressKey: self.serviceIp,
-            TPRecordHideIfNotPaired: String(self.hideIfNotPaired),
-            TPRecordMacAddressesKey: macAddressesString,
+            RecordTXTVersionKey: String(self.txtVersion),
+            RecordIDKey: self.id,
+            RecordNameKey: self.name,
+            RecordProtocolVersionKey: String(self.protocolVersion),
+            RecordScreenSizesKey: self.screens,
+            RecordCapabilitiesKey: String(self.capabilities),
+            RecordOSVersionKey: String(self.osVersion),
+            RecordSelectedServiceIpAddressKey: self.serviceIp,
+            RecordHideIfNotPairedKey: String(self.hideIfNotPaired),
+            RecordMacAddressesKey: macAddressesString,
         ].compactMapValues { $0.isEmpty ? nil : $0.data(using: .utf8) }
 
         return NetService.data(fromTXTRecord: dict)

@@ -43,7 +43,7 @@ class LocalHost: HostDevice {
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(_accessibilityAPIChanged),
-            name: .TPAccessibilityStatusDidChange, object: nil)
+            name: .UMAccessibilityStatusDidChange, object: nil)
 		
 		NotificationCenter.default.addObserver(
 					self,

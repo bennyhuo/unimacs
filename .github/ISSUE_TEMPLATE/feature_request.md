@@ -1,6 +1,6 @@
 ---
 name: New issue for Feature Request
-about: Share your idea or suggestion for a new feature for Teleport.
+about: Share your idea or suggestion for a new feature for Unimacs.
 labels: "feature-request"
 ---
 
@@ -8,20 +8,14 @@ labels: "feature-request"
 
 <!-- Please fill these sections with the relevant information: -->
 
-# A detailed description of the proposed feature
+## Summary of the proposed feature
 
 <!-- replace me -->
 
-# The motivation for the feature
+## Motivation / use case
 
 <!-- replace me -->
 
-# How the feature would be relevant to at least 90% of Teleport users
-
-<!-- (if it's not: do not open a feature request) -->
-
-# What alternatives to the feature have been considered
+## Alternatives considered
 
 <!-- replace me -->
-
-<!-- We will close this issue or ask you to create a pull-request if it's something the maintainers are not actively planning to work on. -->

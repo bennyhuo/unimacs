@@ -1,8 +1,8 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
 
+import Cocoa
 import CoreGraphics
-import Foundation
 
 @MainActor
 @objcMembers

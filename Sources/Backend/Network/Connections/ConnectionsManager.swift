@@ -5,8 +5,8 @@
 
 import Cocoa
 
-private let TPMsgProtocolVersionKey = "proto-version"
-private let TPMsgHostDataKey = "host-data"
+private let MsgProtocolVersionKey = "proto-version"
+private let MsgHostDataKey = "host-data"
 
 // MARK: - Internal SocketConnection Class
 
@@ -96,10 +96,10 @@ extension SocketConnection: NetworkConnectionDelegate {
                 ConnectionsManager.shared.socketConnectionFailed(self)
                 return
             }
-            let protocolVersion = (infoDict[TPMsgProtocolVersionKey] as? NSNumber)?.intValue ?? 0
+            let protocolVersion = (infoDict[MsgProtocolVersionKey] as? NSNumber)?.intValue ?? 0
             
             if protocolVersion == PROTOCOL_VERSION {
-                if let hostData = infoDict[TPMsgHostDataKey] as? Data {
+                if let hostData = infoDict[MsgHostDataKey] as? Data {
                     let remoteHost = HostDevicesManager.shared.updatedHost(from: hostData)
                     connection.connectedHost = remoteHost
                     ConnectionsManager.shared.socketConnection(self, succeededWithNetworkConnection: connection)
@@ -109,7 +109,7 @@ extension SocketConnection: NetworkConnectionDelegate {
                 }
             } else {
                 let remoteHost: RemoteHost?
-                if let hostData = infoDict[TPMsgHostDataKey] as? Data {
+                if let hostData = infoDict[MsgHostDataKey] as? Data {
                     remoteHost = HostDevicesManager.shared.updatedHost(from: hostData)
                     connection.connectedHost = remoteHost
                 } else {
@@ -172,8 +172,8 @@ extension SocketConnection: NetworkConnectionDelegate {
     
     fileprivate static func identificationMessage(isPaired: Bool = false) -> Message {
         let infoDict: [String: Any] = [
-            TPMsgProtocolVersionKey: NSNumber(value: PROTOCOL_VERSION),
-            TPMsgHostDataKey: LocalHost.shared.toData() as Any,
+            MsgProtocolVersionKey: NSNumber(value: PROTOCOL_VERSION),
+            MsgHostDataKey: LocalHost.shared.toData() as Any,
             "isPaired": isPaired
         ]
         return Message.create(with: .identification, andInfoDict: infoDict)
@@ -377,10 +377,10 @@ extension ConnectionsManager: NetworkConnectionDelegate {
     func connection(_ connection: NetworkConnection, receivedMessage message: Message) {
         if message.msgType == .identification {
             guard let infoDict = message.infoDict as? [String: Any] else { return }
-            let protocolVersion = (infoDict[TPMsgProtocolVersionKey] as? NSNumber)?.intValue ?? 0
+            let protocolVersion = (infoDict[MsgProtocolVersionKey] as? NSNumber)?.intValue ?? 0
             
             if protocolVersion == PROTOCOL_VERSION {
-                if let hostData = infoDict[TPMsgHostDataKey] as? Data {
+                if let hostData = infoDict[MsgHostDataKey] as? Data {
                     let remoteHost = HostDevicesManager.shared.updatedHost(from: hostData)
                     connection.connectedHost = remoteHost
                     HostDevicesManager.shared.addClientHost(remoteHost)

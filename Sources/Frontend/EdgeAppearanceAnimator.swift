@@ -42,7 +42,7 @@ final class EdgeAppearanceAnimator {
         guard hasAnyScreen else { return }
         
         // Determine which side the host is on
-        let side = TPGluedRect(parentRect, representedRect, excluding: []).side
+        let side = gluedRect(parentRect, representedRect, excluding: []).side
         
         let horizontal = side.contains(.top) || side.contains(.bottom)
         

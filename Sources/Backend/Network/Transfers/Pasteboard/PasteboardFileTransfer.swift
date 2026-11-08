@@ -3,17 +3,17 @@
 // Migrated to Swift and modified from Teleport.
 // SPDX-License-Identifier: GPL-2.0-only
 
-import Foundation
+import Cocoa
 
 // MARK: - Constants
 
-let TPFileTransferRepresentedFilesKey = "TPFileTransferRepresentedFiles"
-let TPFileArchiverNameKey = "TPFileArchiverName"
-let TPFileArchiverTypeKey = "TPFileArchiverType"
+let FileTransferRepresentedFilesKey = "FileTransferRepresentedFiles"
+let FileArchiverNameKey = "FileArchiverName"
+let FileArchiverTypeKey = "FileArchiverType"
 
 // MARK: - Tar Size Estimation
 
-private func TPEstimateUncompressedTarSize(forPaths paths: [String]) -> UInt64 {
+private func estimateUncompressedTarSize(forPaths paths: [String]) -> UInt64 {
 	let tarBlock: UInt64 = 512
 	var total: UInt64 = 2 * tarBlock
 
@@ -53,29 +53,29 @@ private func TPEstimateUncompressedTarSize(forPaths paths: [String]) -> UInt64 {
 
 // MARK: - File Representation
 
-private struct TPFileRepresentation {
+private struct FileRepresentation {
 	let name: String
 	let fileType: String?
 
 	init?(dictionary: [AnyHashable: Any]) {
-		guard let name = dictionary[TPFileArchiverNameKey] as? String else {
+		guard let name = dictionary[FileArchiverNameKey] as? String else {
 			return nil
 		}
 		self.name = name
-		self.fileType = dictionary[TPFileArchiverTypeKey] as? String
+		self.fileType = dictionary[FileArchiverTypeKey] as? String
 	}
 }
 
 // MARK: - File Archiver
 
-@objc protocol TPFileArchiverDelegate: NSObjectProtocol {
-	func fileArchiver(_ archiver: TPFileArchiver, hasDataAvailable data: Data)
-	func fileArchiverDidCompleteReading(_ archiver: TPFileArchiver)
+protocol FileArchiverDelegate: AnyObject {
+	func fileArchiver(_ archiver: FileArchiver, hasDataAvailable data: Data)
+	func fileArchiverDidCompleteReading(_ archiver: FileArchiver)
 }
 
 @objcMembers
-final class TPFileArchiver: NSObject {
-	private weak var delegate: TPFileArchiverDelegate?
+final class FileArchiver: NSObject {
+	private weak var delegate: FileArchiverDelegate?
 	private let paths: [String]
 
 	private let readPipe = Pipe()
@@ -95,8 +95,7 @@ final class TPFileArchiver: NSObject {
 		]
 	}
 
-	@objc(initForReadingFilesAtPaths:delegate:)
-	init(forReadingFilesAtPaths paths: [String], delegate: TPFileArchiverDelegate) {
+	init(forReadingFilesAtPaths paths: [String], delegate: FileArchiverDelegate) {
 		self.paths = paths
 		self.delegate = delegate
 		super.init()
@@ -123,25 +122,25 @@ final class TPFileArchiver: NSObject {
 		NotificationCenter.default.addObserver(self, selector: #selector(errorFileHandleDidReadData(_:)), name: FileHandle.readCompletionNotification, object: readErrorFileHandle)
 	}
 
-	@objc var representedFiles: [NSDictionary] {
+	var representedFiles: [NSDictionary] {
 		var representedFiles: [NSDictionary] = []
 		for path in paths {
 			let name = (path as NSString).lastPathComponent
 			let type = (try? NSWorkspace.shared.type(ofFile: path)) ?? "public.data"
 			let dict: NSDictionary = [
-				TPFileArchiverNameKey: name,
-				TPFileArchiverTypeKey: type
+				FileArchiverNameKey: name,
+				FileArchiverTypeKey: type
 			]
 			representedFiles.append(dict)
 		}
 		return representedFiles
 	}
 
-	@objc func startReading() {
+	func startReading() {
 		do {
 			try readTask.run()
 		} catch {
-			NSLog("[TPFileArchiver] Failed to launch tar: %@", String(describing: error))
+			NSLog("[FileArchiver] Failed to launch tar: %@", String(describing: error))
 			delegate?.fileArchiverDidCompleteReading(self)
 			return
 		}
@@ -149,7 +148,7 @@ final class TPFileArchiver: NSObject {
 		readErrorFileHandle.readInBackgroundAndNotify()
 	}
 
-	@objc func continueReading() {
+	func continueReading() {
 		readFileHandle.readInBackgroundAndNotify()
 	}
 
@@ -165,7 +164,7 @@ final class TPFileArchiver: NSObject {
 			readTask.waitUntilExit()
 			let status = readTask.terminationStatus
 			if status != 0 {
-				NSLog("[TPFileArchiver] tar exited with status %d", status)
+				NSLog("[FileArchiver] tar exited with status %d", status)
 			}
 			delegate?.fileArchiverDidCompleteReading(self)
 		}
@@ -176,7 +175,7 @@ final class TPFileArchiver: NSObject {
 			return
 		}
 		if let str = String(data: data, encoding: .utf8), !str.isEmpty {
-			NSLog("[TPFileArchiver][tar stderr] %@", str)
+			NSLog("[FileArchiver][tar stderr] %@", str)
 		}
 		readErrorFileHandle.readInBackgroundAndNotify()
 	}
@@ -185,7 +184,7 @@ final class TPFileArchiver: NSObject {
 // MARK: - File Unarchiver
 
 @objcMembers
-final class TPFileUnarchiver: NSObject {
+final class FileUnarchiver: NSObject {
 	private let writePipe = Pipe()
 	private let writeErrorPipe = Pipe()
 	private let writeTask = Process()
@@ -195,44 +194,42 @@ final class TPFileUnarchiver: NSObject {
 
 	private let path: String
 
-	@objc(initForWritingAtPath:)
 	init(forWritingAtPath path: String) {
 		self.path = path
 		super.init()
 
-		writeTask.executableURL = URL(fileURLWithPath: TPFileArchiver.tarPath)
+		writeTask.executableURL = URL(fileURLWithPath: FileArchiver.tarPath)
 		writeTask.arguments = ["x", "--no-mac-metadata", "--no-xattrs", "--no-acls", "--no-fflags", "-C", path]
-		writeTask.environment = TPFileArchiver.environment()
+		writeTask.environment = FileArchiver.environment()
 		writeTask.standardInput = writePipe
 		writeTask.standardError = writeErrorPipe
 
 		NotificationCenter.default.addObserver(self, selector: #selector(writeErrorFileHandleDidReadData(_:)), name: FileHandle.readCompletionNotification, object: writeErrorFileHandle)
 	}
 
-	@objc func startWriting() {
+	func startWriting() {
 		do {
 			try writeTask.run()
 		} catch {
-			NSLog("[TPFileUnarchiver] Failed to launch tar: %@", String(describing: error))
+			NSLog("[FileUnarchiver] Failed to launch tar: %@", String(describing: error))
 			return
 		}
 		writeErrorFileHandle.readInBackgroundAndNotify()
 	}
 
-	@objc func close() {
+	func close() {
 		writeFileHandle.closeFile()
 		writeTask.waitUntilExit()
 		let status = writeTask.terminationStatus
 		if status != 0 {
-			NSLog("[TPFileUnarchiver] tar exited with status %d", status)
+			NSLog("[FileUnarchiver] tar exited with status %d", status)
 		}
 	}
 
-	@objc func writeData(_ data: Data) {
+	func writeData(_ data: Data) {
 		writeFileHandle.write(data)
 	}
 
-	@objc(write:)
 	func write(_ data: Data) {
 		writeData(data)
 	}
@@ -242,7 +239,7 @@ final class TPFileUnarchiver: NSObject {
 			return
 		}
 		if let str = String(data: data, encoding: .utf8), !str.isEmpty {
-			NSLog("[TPFileUnarchiver][tar stderr] %@", str)
+			NSLog("[FileUnarchiver][tar stderr] %@", str)
 		}
 		writeErrorFileHandle.readInBackgroundAndNotify()
 	}
@@ -250,17 +247,17 @@ final class TPFileUnarchiver: NSObject {
 
 // MARK: - Outgoing Pasteboard File Transfer
 
-private let TPArchiveProgressRefreshRate: TimeInterval = 0.1
+private let archiveProgressRefreshRate: TimeInterval = 0.1
 
-class TPOutgoingPasteboardFileTransfer: TPOutgoingTransfer, TPFileArchiverDelegate {
-	private var _archiver: TPFileArchiver?
+class OutgoingPasteboardFileTransfer: OutgoingTransfer, FileArchiverDelegate {
+	private var _archiver: FileArchiver?
 	private var _filePaths: [String] = []
 	private var _lastProgressDate: Date = .distantPast
 	private var _didLogArchiveHeader: Bool = false
 	private var _archiveFinished: Bool = false
 
 	override var type: String {
-		return "TPIncomingPasteboardFileTransfer"
+		return "IncomingPasteboardFileTransfer"
 	}
 
 	override var shouldBeEncrypted: Bool {
@@ -291,13 +288,13 @@ let sizeString = String.sizeString(for: size)
 
 	func setFilePaths(_ filePaths: [String]) {
 		_filePaths = filePaths
-		_archiver = TPFileArchiver(forReadingFilesAtPaths: filePaths, delegate: self)
+		_archiver = FileArchiver(forReadingFilesAtPaths: filePaths, delegate: self)
 	}
 
 	override func infoDict() -> [AnyHashable: Any] {
 		var infoDict = super.infoDict()
 		if let archiver = _archiver {
-			infoDict[TPFileTransferRepresentedFilesKey] = archiver.representedFiles
+			infoDict[FileTransferRepresentedFilesKey] = archiver.representedFiles
 		}
 		return infoDict
 	}
@@ -306,39 +303,34 @@ let sizeString = String.sizeString(for: size)
 		guard _archiver != nil, !_filePaths.isEmpty else { return false }
 
 		_totalDataLength = 0
-		_progressTotalDataLength = TPEstimateUncompressedTarSize(forPaths: _filePaths)
+		_progressTotalDataLength = estimateUncompressedTarSize(forPaths: _filePaths)
 		_sentDataLength = 0
 		_lastProgressDate = .distantPast
 		return true
 	}
 
 	override func _beginTransfer() {
-		// `_beginTransfer` runs on the socket's run loop, which is the main run loop because the
-		// transfer socket connects on the MainActor. Drive tar reading and socket writes on a
-		// dedicated background thread (mirroring TPOutgoingTransfer._sendDataThread) so a large
+		// Drive tar reading and channel writes on a dedicated background thread so a large
 		// file transfer never blocks input/UI on the main thread.
 		manager?.transfer(self, didProgress: 0.0)
 		_lastProgressDate = Date()
 		_archiveFinished = false
-		_socket?._setRunLoop(nil)
 		Thread.detachNewThreadSelector(#selector(_archiveThread), toTarget: self, with: nil)
 	}
 
 	@objc private func _archiveThread() {
 		autoreleasepool {
-			_socket?._setRunLoop(RunLoop.current.getCFRunLoop())
 			_archiver?.startReading()
 			// Pump this thread's run loop so the archiver's background-read notifications
-			// (and the socket callbacks) are delivered here instead of on the main thread.
+			// are delivered here instead of on the main thread.
 			while !_archiveFinished {
 				CFRunLoopRunInMode(.defaultMode, 0.1, true)
 			}
-			_socket?._setRunLoop(nil)
 		}
 	}
 
-	func fileArchiver(_ archiver: TPFileArchiver, hasDataAvailable data: Data) {
-		let sent = _socket?.send(data) ?? false
+	func fileArchiver(_ archiver: FileArchiver, hasDataAvailable data: Data) {
+		let sent = _channel?.send(data) ?? false
 		if !sent {
 			_archiveFinished = true
 			self.performSelector(onMainThread: #selector(_senderDataTransferAborted), with: nil, waitUntilDone: false)
@@ -346,7 +338,7 @@ let sizeString = String.sizeString(for: size)
 		}
 
 		_sentDataLength &+= UInt64(data.count)
-		if abs(_lastProgressDate.timeIntervalSinceNow) >= TPArchiveProgressRefreshRate {
+		if abs(_lastProgressDate.timeIntervalSinceNow) >= archiveProgressRefreshRate {
 			self.performSelector(onMainThread: #selector(_notifyProgress(_:)), with: NSNumber(value: _sentDataLength), waitUntilDone: false)
 			_lastProgressDate = Date()
 		}
@@ -355,11 +347,7 @@ let sizeString = String.sizeString(for: size)
 		archiver.continueReading()
 	}
 
-	override func tcpSocketDidSendData(_ tcpSocket: UMTCPSocket) {
-		// No-op: driven by `fileArchiver` callback.
-	}
-
-	func fileArchiverDidCompleteReading(_ archiver: TPFileArchiver) {
+	func fileArchiverDidCompleteReading(_ archiver: FileArchiver) {
 		_sentDataLength = _progressTotalDataLength
 		self.performSelector(onMainThread: #selector(_notifyProgress(_:)), with: NSNumber(value: _sentDataLength), waitUntilDone: false)
 		_archiveFinished = true
@@ -369,13 +357,13 @@ let sizeString = String.sizeString(for: size)
 
 // MARK: - Incoming Pasteboard File Transfer
 
-class TPIncomingPasteboardFileTransfer: TPIncomingTransfer {
+class IncomingPasteboardFileTransfer: IncomingTransfer {
 	override var shouldBufferIncomingData: Bool {
 		return false
 	}
 
-	private var _representedFiles: [TPFileRepresentation]?
-	private var _unarchiver: TPFileUnarchiver?
+	private var _representedFiles: [FileRepresentation]?
+	private var _unarchiver: FileUnarchiver?
 	private var _didLogArchiveHeader: Bool = false
 	private var _didApplyPasteboard = false
 
@@ -411,8 +399,8 @@ let sizeString = String.sizeString(for: size)
 	}
 
 	override func prepareToReceiveData(withInfoDict infoDict: [AnyHashable : Any], from host: RemoteHost, onPort port: inout Int32, delegate: Any) -> Bool {
-		if let representedFiles = infoDict[TPFileTransferRepresentedFilesKey] as? [[AnyHashable: Any]] {
-			_representedFiles = representedFiles.compactMap { TPFileRepresentation(dictionary: $0) }
+		if let representedFiles = infoDict[FileTransferRepresentedFilesKey] as? [[AnyHashable: Any]] {
+			_representedFiles = representedFiles.compactMap { FileRepresentation(dictionary: $0) }
 		} else {
 			_representedFiles = nil
 		}
@@ -425,7 +413,7 @@ let sizeString = String.sizeString(for: size)
 			return false
 		}
 
-		_unarchiver = TPFileUnarchiver(forWritingAtPath: destPath)
+		_unarchiver = FileUnarchiver(forWritingAtPath: destPath)
 		_unarchiver?.startWriting()
 
 		let ok = super.prepareToReceiveData(withInfoDict: infoDict, from: host, onPort: &port, delegate: delegate)
@@ -443,8 +431,13 @@ let sizeString = String.sizeString(for: size)
 
 	override func _receivedData(_ data: Data) {
 		_logArchiveHeaderIfNeeded(data)
+		_lock.lock()
 		_receivedDataLength &+= UInt64(data.count)
+		let currentReceived = _receivedDataLength
+		let total = _totalDataLength
+		_lock.unlock()
 		_unarchiver?.write(data)
+		_reportReceiveProgressIfNeeded(currentReceived: currentReceived, total: total)
 	}
 
 	override func _prepareReceivedDataBeforeCompletion() {
@@ -482,7 +475,7 @@ let sizeString = String.sizeString(for: size)
 
 	override func _receiverDataTransferCompleted() {
 		if _didApplyPasteboard {
-			TPClipboardTransferCoordinator.shared.didApplyIncomingPasteboard()
+			ClipboardTransferCoordinator.shared.didApplyIncomingPasteboard()
 		}
 		super._receiverDataTransferCompleted()
 	}

@@ -10,7 +10,6 @@ import CoreGraphics
 // MARK: - MainController
 
 @MainActor
-@objc(MainController)
 @objcMembers
 class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatcherDelegate {
     
@@ -27,18 +26,18 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     
     // MARK: - Singleton
     
-    @objc static func shared() -> MainController {
-        return _sharedController!
-    }
-    
-    /// ObjC compatibility - maps to +[MainController sharedController]
-    @objc static func sharedController() -> MainController {
-        return _sharedController!
+    static func shared() -> MainController {
+        if let controller = _sharedController {
+            return controller
+        }
+        let controller = MainController()
+        _sharedController = controller
+        return controller
     }
     
     // MARK: - Host Control Checks
     
-    @objc func canBeControlledByHost(withIdentifier identifier: String) -> Bool {
+    func canBeControlledByHost(withIdentifier identifier: String) -> Bool {
         if ClientController.shared.isControlling {
             if let controlledHost = ClientController.shared.currentConnection?.connectedHost {
                 return controlledHost.identifier != identifier
@@ -47,7 +46,7 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
         return true
     }
     
-    @objc func canControlHost(withIdentifier identifier: String) -> Bool {
+    func canControlHost(withIdentifier identifier: String) -> Bool {
         if ServerController.shared.isControlled {
             if let controllingHost = ServerController.shared.currentConnection?.connectedHost {
                 return controllingHost.identifier != identifier
@@ -78,28 +77,28 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
         DistributedNotificationCenter.default().addObserver(
             self,
             selector: #selector(prefDidChange(_:)),
-			name: .TPDefaultsDidChange,
+			name: .UMDefaultsDidChange,
             object: nil
         )
         
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(prefsDidUpgrade(_:)),
-			name: .TPPreferencesDidUpgrade,
+			name: .UMPreferencesDidUpgrade,
             object: nil
         )
         
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(accessibilityStatusDidChange),
-            name: .TPAccessibilityStatusDidChange,
+            name: .UMAccessibilityStatusDidChange,
             object: nil
         )
         
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(connectionStateDidChange(_:)),
-            name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+            name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
             object: nil
         )
         
@@ -642,11 +641,11 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
         }
     }
     
-    private let TPTerminateDaemonNotification = "TPTerminateDaemonNotification"
+    private let UMTerminateDaemonNotification = "UMTerminateDaemonNotification"
     
     @objc private func prefsDidUpgrade(_ notification: Notification) {
         DistributedNotificationCenter.default().postNotificationName(
-            NSNotification.Name(TPTerminateDaemonNotification),
+            NSNotification.Name(UMTerminateDaemonNotification),
             object: nil,
             userInfo: nil,
             deliverImmediately: true

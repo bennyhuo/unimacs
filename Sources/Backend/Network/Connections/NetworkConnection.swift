@@ -45,8 +45,7 @@ enum NetworkConnectionError: Error, LocalizedError {
     case accepted
 }
 
-/// Swift implementation of TPNetworkConnection with async/await support
-/// This class manages a network connection and provides async message sending
+/// Manages a network connection and provides async message sending
 @objcMembers
 class NetworkConnection: NSObject, MessageChannelDelegate {
     
@@ -55,11 +54,11 @@ class NetworkConnection: NSObject, MessageChannelDelegate {
     /// The origin of this connection (whether dialed by us or accepted from a peer)
     let origin: ConnectionOrigin
     
-    /// The underlying transport channel (legacy socket or Network.framework).
+    /// The underlying transport channel (`NWMessageChannel`).
     private let _channel: MessageChannel
 
     /// Current transport state (used by callers for logging / liveness checks).
-    var channelState: TPSocketState { _channel.state }
+    var channelState: SocketState { _channel.state }
     
     /// The local IP address for this connection
     var localAddress: String? { _channel.localAddress }
@@ -500,11 +499,7 @@ private actor PendingMessagesManager {
     }
 }
 
-// MARK: - ObjC Compatibility Extension
-
 extension NetworkConnection {
-    /// For ObjC compatibility - alias for send(_:)
-    @objc(sendMessage:)
     func sendMessage(_ message: Message) -> Bool {
         return send(message)
     }

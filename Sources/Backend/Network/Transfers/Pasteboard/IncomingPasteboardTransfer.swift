@@ -3,7 +3,9 @@
 // Migrated to Swift and modified from Teleport.
 // SPDX-License-Identifier: GPL-2.0-only
 
-class IncomingPasteboardTransfer: TPIncomingTransfer {
+import Cocoa
+
+class IncomingPasteboardTransfer: IncomingTransfer {
     private var _pasteboardName: String?
     private var _didApplyPasteboard = false
 
@@ -25,7 +27,7 @@ class IncomingPasteboardTransfer: TPIncomingTransfer {
     }
 
     override func prepareToReceiveData(withInfoDict infoDict: [AnyHashable : Any], from host: RemoteHost, onPort port: inout Int32, delegate: Any) -> Bool {
-        _pasteboardName = infoDict[TPPasteboardTransferNameKey] as? String
+        _pasteboardName = infoDict[PasteboardTransferNameKey] as? String
 		return super.prepareToReceiveData(withInfoDict: infoDict, from: host, onPort: &port, delegate: delegate)
     }
 
@@ -51,7 +53,7 @@ class IncomingPasteboardTransfer: TPIncomingTransfer {
             for typeString in typesStrings {
                 var data = dictionary[typeString]
 
-                if let currentData = data, TPTypeNeedsSwapping(typeString) {
+                if let currentData = data, pasteboardTypeNeedsSwapping(typeString) {
                     if let string = String(data: currentData, encoding: .utf16BigEndian) {
                         if let newData = string.data(using: String.Encoding.utf16LittleEndian) {
                             data = newData
@@ -77,7 +79,7 @@ class IncomingPasteboardTransfer: TPIncomingTransfer {
         // not a local user change, so it must not be echoed back when control stops.
         if _didApplyPasteboard {
             DispatchQueue.main.async {
-                TPClipboardTransferCoordinator.shared.didApplyIncomingPasteboard()
+                ClipboardTransferCoordinator.shared.didApplyIncomingPasteboard()
             }
         }
     }

@@ -3,8 +3,8 @@
 
 import Cocoa
 
-let TPPasteboardTransferNameKey = "TPPasteboardTransferName"
-let TPPasteboardTransferChangeCountKey = "TPPasteboardTransferChangeCount"
+let PasteboardTransferNameKey = "PasteboardTransferName"
+let PasteboardTransferChangeCountKey = "PasteboardTransferChangeCount"
 
 /// Serializes all `NSPasteboard` I/O onto one queue.
 ///
@@ -43,7 +43,7 @@ enum PasteboardAccess {
 	}
 }
 
-func TPTypeNeedsSwapping(_ type: String) -> Bool {
+func pasteboardTypeNeedsSwapping(_ type: String) -> Bool {
     if CFByteOrderGetCurrent() == Int(CFByteOrderBigEndian.rawValue) {
         return false
     } else {
@@ -51,6 +51,6 @@ func TPTypeNeedsSwapping(_ type: String) -> Bool {
     }
 }
 
-func TPTypeNeedsIgnoring(_ type: String) -> Bool {
+func pasteboardTypeNeedsIgnoring(_ type: String) -> Bool {
     return type == "com.apple.txn.text-multimedia-data" || type == "CorePasteboardFlavorType 0x7478746E"
 }

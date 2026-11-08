@@ -6,7 +6,6 @@
 import Cocoa
 import CoreGraphics
 
-@objc(BezelWindow)
 final class BezelWindow: NSPanel {
 	override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
 		super.init(contentRect: contentRect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)

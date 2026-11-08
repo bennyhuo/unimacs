@@ -3,7 +3,9 @@
 // Migrated to Swift and modified from Teleport.
 // SPDX-License-Identifier: GPL-2.0-only
 
-class OutgoingBackgroundImageTransfer: TPOutgoingTransfer {
+import Cocoa
+
+class OutgoingBackgroundImageTransfer: OutgoingTransfer {
     
     override var type: String {
         return "IncomingBackgroundImageTransfer"

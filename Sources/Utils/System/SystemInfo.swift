@@ -35,7 +35,7 @@ class SystemInfo {
     }
 
     static var appBuildNumber: String {
-        Bundle.main.infoDictionary?["TPRevision"] as? String ?? ""
+        Bundle.main.infoDictionary?["UMRevision"] as? String ?? ""
     }
 
     static var appCopyright: String {
@@ -49,7 +49,7 @@ class SystemInfo {
             "Version \(appVersion)",
             "Build \(appBuildNumber)"
         ]
-        if let translationInfo = Bundle.main.localizedInfoDictionary?["TPTranslationInfoString"] as? String {
+        if let translationInfo = Bundle.main.localizedInfoDictionary?["UMTranslationInfoString"] as? String {
             versions.append(translationInfo)
         }
         return versions

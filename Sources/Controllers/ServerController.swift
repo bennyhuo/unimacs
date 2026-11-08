@@ -19,13 +19,13 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
         didSet {
             if oldValue != state {
                 NotificationCenter.default.post(
-                    name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+                    name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
                     object: nil
                 )
             }
         }
     }
-    private var clientHotBorder: TPHotBorder?
+    private var clientHotBorder: HotBorder?
     private var switchOptions: [AnyHashable: Any]?
 	/// Client desktop placement in *server* global coordinates. Used to map cross-screen border locations.
 	private var clientDesktopPlacementInServerCoords: NSRect?
@@ -75,22 +75,22 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
     // MARK: - Hot border
 
 	@MainActor
-	override func currentHotBorder() -> TPHotBorder? {
+	override func currentHotBorder() -> HotBorder? {
         return clientHotBorder
     }
     
 	@MainActor
-	func setupHotBorder(_ hotBorder: TPHotBorder, for host: RemoteHost) {
+	func setupHotBorder(_ hotBorder: HotBorder, for host: RemoteHost) {
         // Hot border setup - no longer needs drag configuration
     }
     
-	override func hotBorder(_ hotBorder: TPHotBorder, canFireWithEvent event: NSEvent?) -> Bool {
+	override func hotBorder(_ hotBorder: HotBorder, canFireWithEvent event: NSEvent?) -> Bool {
         let requireKey = (self.optionForRemoteHost(nil, key: REQUIRE_KEY) as? NSNumber)?.boolValue ?? false
 		let keyTag = (self.optionForRemoteHost(nil, key: SWITCH_KEY_TAG) as? NSNumber)?.uintValue ?? 0
 		return self.eventsController?.event(event, hasRequiredKeyIfNeeded: requireKey, withTag: NSEvent.EventType(rawValue: keyTag)!) ?? false
     }
     
-	override func hotBorder(_ hotBorder: TPHotBorder, firedAtLocation location: NSPoint) -> Bool {
+	override func hotBorder(_ hotBorder: HotBorder, firedAtLocation location: NSPoint) -> Bool {
         self.requestStopControl(at: location, isSwitch: hotBorder.firedByRealCursor)
 		return super.hotBorder(hotBorder, firedAtLocation: location)
     }
@@ -138,8 +138,8 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
         if !AccessibilityManager.isTrusted {
             let reason = AccessibilityManager.shared.remoteStopReason(for: LocalHost.shared.computerName)
             connection.sendAsync(Message.create(with: .controlFailure, andInfoDict: [
-                TPControlFailureReasonKey: reason,
-                TPControlFailureIsPermissionIssueKey: true
+                ControlFailureReasonKey: reason,
+                ControlFailureIsPermissionIssueKey: true
             ]))
             if connectionIsCurrent {
                 self.currentConnection = nil
@@ -206,7 +206,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
         }
         
 		// Clip against the whole local desktop, not a single screen frame.
-        clientHotBorder = TPHotBorder(hostId: host.identifier, contentRect: adjustedPlacement, in: localDesktopFrame, kind: .control)
+        clientHotBorder = HotBorder(hostId: host.identifier, contentRect: adjustedPlacement, in: localDesktopFrame, kind: .control)
 		clientDesktopPlacementInServerCoords = adjustedPlacement
         if let border = clientHotBorder {
             self.setupHotBorder(border, for: host)
@@ -252,7 +252,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
         }
         
 		self.setSwitchOptions(data.options)
-		TPClipboardTransferCoordinator.shared.serverDidStartBeingControlled()
+		ClipboardTransferCoordinator.shared.serverDidStartBeingControlled()
 		
 		if LocalHost.shared.hasCustomBackgroundImage {
 
@@ -276,7 +276,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
 				x: serverCocoaPoint.x - placement.minX,
 				y: serverCocoaPoint.y - placement.minY
 			)
-			messageInfoDict[TPMousePositionKey] = NSData.data(with: clientDesktopRelative)
+			messageInfoDict[MousePositionKey] = NSData.data(with: clientDesktopRelative)
 			
 			// Preferred: normalized within the hot border window.
 			let contentSize = border.frame.size
@@ -288,10 +288,10 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
 				x: min(max(rawRelative.x, 0), 1),
 				y: min(max(rawRelative.y, 0), 1)
 			)
-			messageInfoDict[TPHotBorderRelativePointKey] = NSData.data(with: rel)
+			messageInfoDict[HotBorderRelativePointKey] = NSData.data(with: rel)
             
             if isSwitch {
-                messageInfoDict[TPSwitchControlKey] = true
+                messageInfoDict[SwitchControlKey] = true
                 self.pendingSwitchToHost = self.currentConnection?.connectedHost
                 
                 let localDesktopRect = LocalHost.shared.desktopFrame
@@ -303,9 +303,9 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
                 self.pendingSwitchRelativePoint = rel
             }
 		} else {
-			messageInfoDict[TPMousePositionKey] = NSData.data(with: location)
+			messageInfoDict[MousePositionKey] = NSData.data(with: location)
             if isSwitch {
-                messageInfoDict[TPSwitchControlKey] = true
+                messageInfoDict[SwitchControlKey] = true
                 self.pendingSwitchToHost = self.currentConnection?.connectedHost
                 self.pendingSwitchLocation = location
                 self.pendingSwitchRelativePoint = nil
@@ -313,7 +313,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
 		}
 		
 		if state == .controlled, let connection = currentConnection {
-			TPClipboardTransferCoordinator.shared.serverRequestStopControl(using: connection)
+			ClipboardTransferCoordinator.shared.serverRequestStopControl(using: connection)
 		}
 		
 		let message = Message.create(with: .controlStop, andInfoDict: messageInfoDict)
@@ -349,11 +349,11 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
 			lastControlledEndTime = Date.timeIntervalSinceReferenceDate
 		}
 		if state == .controlled, let connection = self.currentConnection {
-			TPClipboardTransferCoordinator.shared.serverWillStopBeingControlled(using: connection)
+			ClipboardTransferCoordinator.shared.serverWillStopBeingControlled(using: connection)
             if notifyPeer {
                 var infoDict: [AnyHashable: Any] = [:]
                 if let reason = reason, !reason.isEmpty {
-                    infoDict[TPStopControlReasonKey] = reason
+                    infoDict[StopControlReasonKey] = reason
                 }
                 let msg = infoDict.isEmpty
                     ? Message.create(with: .controlStop)
@@ -391,7 +391,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
                 self.pendingSwitchLocation = nil
                 self.pendingSwitchRelativePoint = nil
                 
-                TPClipboardTransferCoordinator.shared.isSwitchingControl = true
+                ClipboardTransferCoordinator.shared.isSwitchingControl = true
                 
                 debugLog("Executing pending switch to host: \(targetHost.computerName) at \(loc)", module: .control)
                 _ = ClientController.shared.requestStartControl(on: targetHost, at: loc, hotBorderRelativePoint: rel)
@@ -471,9 +471,9 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
             return true
         case .controlStop:
             if state != .controlled,
-               (message.infoDict[TPSwitchControlKey] != nil ||
-                message.infoDict[TPMousePositionKey] != nil ||
-                message.infoDict[TPHotBorderRelativePointKey] != nil) {
+               (message.infoDict[SwitchControlKey] != nil ||
+                message.infoDict[MousePositionKey] != nil ||
+                message.infoDict[HotBorderRelativePointKey] != nil) {
                 warningLog("Received server-initiated controlStop from \(host.computerName) while local ClientController is idle; replying with controlStop to release peer", module: .control)
                 connection.sendAsync(Message.create(with: .controlStop))
                 return true

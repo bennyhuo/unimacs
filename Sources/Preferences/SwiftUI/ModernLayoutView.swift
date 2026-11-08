@@ -353,22 +353,22 @@ final class LayoutViewModel: ObservableObject {
         }
         
         connectionObserver = NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+            forName: NSNotification.Name("UMConnectionStateDidChangeNotification"),
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            warningLog("[LayoutSyncUI] Received TPConnectionStateDidChangeNotification", module: .control)
+            warningLog("[LayoutSyncUI] Received UMConnectionStateDidChangeNotification", module: .control)
             Task { @MainActor in
                 self?.loadLayouts()
             }
         }
         
         accessibilityObserver = NotificationCenter.default.addObserver(
-            forName: .TPAccessibilityStatusDidChange,
+            forName: .UMAccessibilityStatusDidChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            warningLog("[LayoutSyncUI] Received TPAccessibilityStatusDidChange", module: .control)
+            warningLog("[LayoutSyncUI] Received UMAccessibilityStatusDidChange", module: .control)
             Task { @MainActor in
                 self?.isAccessibilityTrusted = AccessibilityManager.isTrusted
             }
@@ -608,7 +608,7 @@ final class LayoutViewModel: ObservableObject {
         guard movingRect != .zero else { return }
 
         // Glue to the nearest edge (no threshold). This matches RemoteHost.adjustedHostDesktopRect.
-        let result = TPGluedRect(localBounds, movingRect, excluding: [])
+        let result = gluedRect(localBounds, movingRect, excluding: [])
         hostLayout.position = result.rect.origin
 
         connectedHostLayouts[index] = hostLayout

@@ -39,7 +39,7 @@ protocol NetworkConfigurationWatcherDelegate: AnyObject {
         localIpAddresses = []
         updateLocalIpAddresses()
         
-        if let savedAddress = PreferencesManager.sharedPreferencesManager().value(forKey: LOCAL_IP_KEY) as? String {
+        if let savedAddress = PreferencesManager.shared().value(forKey: LOCAL_IP_KEY) as? String {
             selectedLocalIpAddress = savedAddress
         } else {
             selectedLocalIpAddress = LOCAL_IP_ANY_ADDR
@@ -171,7 +171,7 @@ protocol NetworkConfigurationWatcherDelegate: AnyObject {
         
         let oldValue = selectedLocalIpAddress
         selectedLocalIpAddress = value
-        PreferencesManager.sharedPreferencesManager().setValue(value, forKey: LOCAL_IP_KEY)
+        PreferencesManager.shared().setValue(value, forKey: LOCAL_IP_KEY)
         let displayNew = value == LOCAL_IP_ANY_ADDR ? "All Interfaces (0.0.0.0)" : value
         let displayOld = oldValue == LOCAL_IP_ANY_ADDR ? "All Interfaces (0.0.0.0)" : oldValue
         ActivityLogManager.shared.log(

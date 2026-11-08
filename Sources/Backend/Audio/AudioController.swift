@@ -51,23 +51,23 @@ final class AudioController: NSObject, AudioStreamManagerDelegate, ScreenCapture
     
     var muteLocalSpeakers: Bool = true {
         didSet {
-            PreferencesManager.shared().setValue(NSNumber(value: muteLocalSpeakers), forKey: "TPAudioMuteLocalSpeakers")
+            PreferencesManager.shared().setValue(NSNumber(value: muteLocalSpeakers), forKey: "UMAudioMuteLocalSpeakers")
         }
     }
     
     var enableAdaptiveSpeed: Bool = true {
         didSet {
-            PreferencesManager.shared().setValue(NSNumber(value: enableAdaptiveSpeed), forKey: "TPAudioEnableAdaptiveSpeed")
+            PreferencesManager.shared().setValue(NSNumber(value: enableAdaptiveSpeed), forKey: "UMAudioEnableAdaptiveSpeed")
         }
     }
     
     var selectedVirtualDeviceName: String = "BlackHole 2ch" {
         didSet {
-            PreferencesManager.shared().setValue(selectedVirtualDeviceName as NSString, forKey: "TPAudioVirtualDeviceName")
+            PreferencesManager.shared().setValue(selectedVirtualDeviceName as NSString, forKey: "UMAudioVirtualDeviceName")
         }
     }
     
-    @objc public static let audioHardwareStatusDidChangeNotification = Notification.Name("TPAudioHardwareStatusDidChangeNotification")
+    @objc public static let audioHardwareStatusDidChangeNotification = Notification.Name("UMAudioHardwareStatusDidChangeNotification")
     
     public private(set) var hasLocalMicHardware: Bool = true
     public private(set) var hasLocalSpeakerHardware: Bool = true
@@ -80,17 +80,17 @@ final class AudioController: NSObject, AudioStreamManagerDelegate, ScreenCapture
         scAudioEngine.delegate = self
         
         // Load settings
-        if let muteLocalVal = PreferencesManager.shared().value(forKey: "TPAudioMuteLocalSpeakers") as? NSNumber {
+        if let muteLocalVal = PreferencesManager.shared().value(forKey: "UMAudioMuteLocalSpeakers") as? NSNumber {
             self.muteLocalSpeakers = muteLocalVal.boolValue
         } else {
             self.muteLocalSpeakers = true
         }
-        if let adaptiveSpeedVal = PreferencesManager.shared().value(forKey: "TPAudioEnableAdaptiveSpeed") as? NSNumber {
+        if let adaptiveSpeedVal = PreferencesManager.shared().value(forKey: "UMAudioEnableAdaptiveSpeed") as? NSNumber {
             self.enableAdaptiveSpeed = adaptiveSpeedVal.boolValue
         } else {
             self.enableAdaptiveSpeed = true
         }
-        if let deviceNameVal = PreferencesManager.shared().value(forKey: "TPAudioVirtualDeviceName") as? String {
+        if let deviceNameVal = PreferencesManager.shared().value(forKey: "UMAudioVirtualDeviceName") as? String {
             self.selectedVirtualDeviceName = deviceNameVal
         }
         
@@ -117,7 +117,7 @@ final class AudioController: NSObject, AudioStreamManagerDelegate, ScreenCapture
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleConnectionStateChange(_:)),
-            name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+            name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
             object: nil
         )
         
@@ -383,7 +383,7 @@ final class AudioController: NSObject, AudioStreamManagerDelegate, ScreenCapture
             self.isHostSyncActive = true
             
             // Set up stream manager configuration
-            if let compressPref = PreferencesManager.shared().value(forKey: "TPAudioUseCompression") as? NSNumber {
+            if let compressPref = PreferencesManager.shared().value(forKey: "UMAudioUseCompression") as? NSNumber {
                 streamManager.useCompression = compressPref.boolValue
             }
             
@@ -416,7 +416,7 @@ final class AudioController: NSObject, AudioStreamManagerDelegate, ScreenCapture
             self.isClientSyncActive = true
             
             // Set up stream manager configuration
-            if let compressPref = PreferencesManager.shared().value(forKey: "TPAudioUseCompression") as? NSNumber {
+            if let compressPref = PreferencesManager.shared().value(forKey: "UMAudioUseCompression") as? NSNumber {
                 streamManager.useCompression = compressPref.boolValue
             }
             
@@ -681,35 +681,28 @@ final class AudioController: NSObject, AudioStreamManagerDelegate, ScreenCapture
                 
                 var micPacketCount = 0
                 
-                do {
-                    try UMObjCExceptionCatcher.catchException {
-                        inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { [weak self] buffer, time in
-                            guard let self = self else { return }
-                            // Only stream if mic target is remote
-                            guard self.activeMicTarget == .remote else { return }
-                            
-                            if let channels = buffer.floatChannelData {
-                                let sampleCount = Int(buffer.frameLength)
-                                let samples = Array(UnsafeBufferPointer(start: channels[0], count: sampleCount))
-                                
-                                micPacketCount &+= 1
-                                if micPacketCount == 1 || micPacketCount % 200 == 0 {
-                                    var minVal: Float = 0.0
-                                    var maxVal: Float = 0.0
-                                    for s in samples {
-                                        if s < minVal { minVal = s }
-                                        if s > maxVal { maxVal = s }
-                                    }
-                                    debugLog("AudioController: Captured local mic samples (size: \(samples.count)). Signal min: \(minVal), max: \(maxVal)", module: .network)
-                                }
-                                
-                                self.streamManager.sendAudio(samples: samples, isSystemAudio: false)
+                inputNode.installTap(onBus: 0, bufferSize: 1024, format: tapFormat) { [weak self] buffer, time in
+                    guard let self = self else { return }
+                    // Only stream if mic target is remote
+                    guard self.activeMicTarget == .remote else { return }
+                    
+                    if let channels = buffer.floatChannelData {
+                        let sampleCount = Int(buffer.frameLength)
+                        let samples = Array(UnsafeBufferPointer(start: channels[0], count: sampleCount))
+                        
+                        micPacketCount &+= 1
+                        if micPacketCount == 1 || micPacketCount % 200 == 0 {
+                            var minVal: Float = 0.0
+                            var maxVal: Float = 0.0
+                            for s in samples {
+                                if s < minVal { minVal = s }
+                                if s > maxVal { maxVal = s }
                             }
+                            debugLog("AudioController: Captured local mic samples (size: \(samples.count)). Signal min: \(minVal), max: \(maxVal)", module: .network)
                         }
+                        
+                        self.streamManager.sendAudio(samples: samples, isSystemAudio: false)
                     }
-                } catch {
-                    errorLog("AudioController: Exception caught during mic tap installation: \(error)", module: .network)
-                    return
                 }
                 
                 // If engine isn't running, start it
@@ -920,7 +913,7 @@ final class AudioController: NSObject, AudioStreamManagerDelegate, ScreenCapture
         self.activeMicTarget = target
         debugLog("AudioController: Microphone target changed to: \(target.rawValue)", module: .network)
         
-        NotificationCenter.default.post(name: NSNotification.Name("TPAudioMicRouteDidChangeNotification"), object: nil)
+        NotificationCenter.default.post(name: NSNotification.Name("UMAudioMicRouteDidChangeNotification"), object: nil)
         
         if isClientSyncActive { // Client role (MBP, Local)
             if target == .remote {

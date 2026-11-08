@@ -3,7 +3,9 @@
 // Migrated to Swift and modified from Teleport.
 // SPDX-License-Identifier: GPL-2.0-only
 
-class OutgoingPasteboardTransfer: TPOutgoingTransfer {
+import Cocoa
+
+class OutgoingPasteboardTransfer: OutgoingTransfer {
     private var _pasteboardName: String
     private var _maxSize: UInt64 = 0
     private var _capturedChangeCount: Int = 0
@@ -53,8 +55,8 @@ class OutgoingPasteboardTransfer: TPOutgoingTransfer {
 	override func infoDict() -> [AnyHashable : Any] {
         var infoDict = super.infoDict()
         
-        infoDict[TPPasteboardTransferNameKey] = _pasteboardName
-		infoDict[TPPasteboardTransferChangeCountKey] = NSNumber(value: _capturedChangeCount)
+        infoDict[PasteboardTransferNameKey] = _pasteboardName
+		infoDict[PasteboardTransferChangeCountKey] = NSNumber(value: _capturedChangeCount)
         
         return infoDict
     }
@@ -71,12 +73,12 @@ class OutgoingPasteboardTransfer: TPOutgoingTransfer {
             var pasteboardSize: UInt64 = 0
             for type in pasteboardTypes {
                 let typeString = type.rawValue
-                if TPTypeNeedsIgnoring(typeString) {
+                if pasteboardTypeNeedsIgnoring(typeString) {
                     continue
                 }
 
                 if var data = pasteboard.data(forType: type) {
-                    if TPTypeNeedsSwapping(typeString) {
+                    if pasteboardTypeNeedsSwapping(typeString) {
                         if let string = String(data: data, encoding: .utf16LittleEndian) {
                             if let newData = string.data(using: .utf16BigEndian) {
                                 data = newData

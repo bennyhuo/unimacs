@@ -331,7 +331,7 @@ public protocol EventsListener: NSObjectProtocol {
         
         if let shortcutAction = ClipboardShortcutDetector.classify(cgEvent: event) {
             DispatchQueue.main.async {
-                TPClipboardTransferCoordinator.shared.handleDetectedShortcut(shortcutAction)
+                ClipboardTransferCoordinator.shared.handleDetectedShortcut(shortcutAction)
             }
         }
     }

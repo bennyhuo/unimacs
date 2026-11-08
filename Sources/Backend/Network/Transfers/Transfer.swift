@@ -100,9 +100,9 @@ enum TransferPriority: Int {
 }
 
 @objcMembers
-class Transfer: NSObject, UMTCPSocketDelegate {
-    var _listenSocket: UMTCPSocket?
-    var _socket: UMTCPSocket?
+class Transfer: NSObject, MessageChannelDelegate, MessageListenerDelegate {
+    var _listener: MessageListener?
+    var _channel: MessageChannel?
     let _lock = NSLock()
     
     let uid: String
@@ -124,11 +124,12 @@ class Transfer: NSObject, UMTCPSocketDelegate {
     }
     
     deinit {
-        _socket?.delegate = nil
+        _channel?.delegate = nil
+        _listener?.delegate = nil
     }
     
     var type: String {
-        return "TPIncomingTransfer"
+        return "IncomingTransfer"
     }
     
     var priority: TransferPriority {
@@ -167,37 +168,39 @@ class Transfer: NSObject, UMTCPSocketDelegate {
     
     func _transferDone() {
         _lock.lock()
-        _socket?.delegate = nil
-        _socket?.close()
-        _socket = nil
+        let channel = _channel
+        _channel = nil
+        let listener = _listener
+        _listener = nil
         _data = nil
         _lock.unlock()
+
+        channel?.delegate = nil
+        channel?.close()
+        listener?.delegate = nil
+        listener?.stop()
     }
     
     func _receivedData(_ data: Data) {
         // Subclasses override this
     }
     
-    // MARK: - TCP Socket delegate
+    // MARK: - MessageChannelDelegate / MessageListenerDelegate
     
-    func tcpSocketConnectionSucceeded(_ tcpSocket: UMTCPSocket) {
-		
-	}
+    func channelDidConnect(_ channel: MessageChannel) {}
     
-    func tcpSocketConnectionFailed(_ tcpSocket: UMTCPSocket) {
-
-	}
+    func channelDidFailToConnect(_ channel: MessageChannel) {}
     
-    func tcpSocket(_ tcpSocket: UMTCPSocket, gotData data: Data) {
+    func channel(_ channel: MessageChannel, didReceiveData data: Data) {
         self._receivedData(data)
     }
     
-    func tcpSocketDidSendData(_ tcpSocket: UMTCPSocket) {
-        // Data sent callback
-    }
+    func channelDidDisconnect(_ channel: MessageChannel) {}
     
-    func tcpSocketConnectionClosed(_ tcpSocket: UMTCPSocket) {
-        // Connection closed - handled by subclasses
+    func listener(_ listener: MessageListener, didAcceptChannel channel: MessageChannel) {}
+    
+    func listenerShouldEnableEncryption(_ listener: MessageListener, forRemoteAddress address: String?) -> Bool {
+        false
     }
     
     override var description: String {
@@ -211,14 +214,14 @@ class Transfer: NSObject, UMTCPSocketDelegate {
     func _receiverDataTransferAborted() {}
 }
 
-class TPOutgoingTransfer: Transfer {
+class OutgoingTransfer: Transfer {
     
     static func shared() -> Self {
 		self.init()
     }
 	
 	required init() {
-		super.init(uid:  ProcessInfo.processInfo.globallyUniqueString)
+		super.init(uid: ProcessInfo.processInfo.globallyUniqueString)
 	}
 	
     var shouldBeEncrypted: Bool {
@@ -237,65 +240,68 @@ class TPOutgoingTransfer: Transfer {
     }
     
     override func _beginTransfer() {
-        if _totalDataLength > 0 {
-            _socket?._setRunLoop(nil)
-            Thread.detachNewThreadSelector(#selector(_sendDataThread), toTarget: self, with: nil)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?._sendDataWork()
         }
     }
     
-    @objc func _sendDataThread() {
-        autoreleasepool {
-            _socket?._setRunLoop(RunLoop.current.getCFRunLoop())
+    private func _sendDataWork() {
+        if _totalDataLength > 0 {
+            var lastDate = Date()
+            var offset: Int = 0
+            let total = Int(_totalDataLength)
+            let blockSize = Int(BLOCK_SIZE)
             
-            if _totalDataLength > 0 {
-                var lastDate = Date()
-                var sendRange = NSRange(location: 0, length: Int(min(BLOCK_SIZE, _totalDataLength)))
-                
-                while _data != nil && sendRange.length > 0 {
-					_sentDataLength = UInt64(sendRange.location)
-                    if abs(lastDate.timeIntervalSinceNow) >= REFRESH_RATE {
-                        self.performSelector(onMainThread: #selector(_notifyProgress(_:)), with: NSNumber(value: _sentDataLength), waitUntilDone: false)
-                        lastDate = Date()
+            while offset < total {
+                _sentDataLength = UInt64(offset)
+                if abs(lastDate.timeIntervalSinceNow) >= REFRESH_RATE {
+                    let sentSnapshot = _sentDataLength
+                    DispatchQueue.main.async { [weak self] in
+                        self?._notifyProgress(NSNumber(value: sentSnapshot))
                     }
-                    
-                    _lock.lock()
-                    let sendData = _data?.subdata(with: sendRange)
-                    let sent = sendData != nil ? _socket?.send(sendData!) ?? false : false
-                    _lock.unlock()
-                    
-                    if !sent {
-                        break
-                    } else {
-                        sendRange.location += sendRange.length
-                        sendRange.length = Int(min(BLOCK_SIZE, _totalDataLength - UInt64(sendRange.location)))
-                    }
+                    lastDate = Date()
                 }
                 
-                // Detach the socket from this thread's run loop *before* hopping to main.
-                // Completion runs on main and calls close(); if the socket still owned this
-                // (now blocked, waiting on the synchronous hop) thread's run loop, close()
-                // would wait 2s for it to respond and stall the main run loop — freezing
-                // input capture and the transfer progress UI. The receive thread does the same.
-                _socket?._setRunLoop(nil)
-
-                if UInt64(sendRange.location) == _totalDataLength {
-                    self.performSelector(onMainThread: #selector(_senderDataTransferCompleted), with: nil, waitUntilDone: true)
-                } else {
-                    self.performSelector(onMainThread: #selector(_senderDataTransferAborted), with: nil, waitUntilDone: true)
+                let chunkLength = min(blockSize, total - offset)
+                let sendRange = NSRange(location: offset, length: chunkLength)
+                
+                _lock.lock()
+                let currentData = _data
+                let currentChannel = _channel
+                let sendData = currentData?.subdata(with: sendRange)
+                _lock.unlock()
+                
+                guard let sendData, let currentChannel else {
+                    break
+                }
+                
+                if !currentChannel.send(sendData) {
+                    break
+                }
+                offset += chunkLength
+            }
+            
+            if UInt64(offset) == _totalDataLength {
+                DispatchQueue.main.async {
+                    self._senderDataTransferCompleted()
                 }
             } else {
-                // Logic for data is null or empty
-                while _data != nil {
-                    _lock.lock()
-                    let sent = _socket?.send(_data as Data?) ?? false
-                    _data = nil
-                    _lock.unlock()
-                    
-                    CFRunLoopRunInMode(.defaultMode, 0.0, false)
-                    if !sent { break }
+                DispatchQueue.main.async {
+                    self._senderDataTransferAborted()
                 }
-                _socket?._setRunLoop(nil)
-                self.performSelector(onMainThread: #selector(_senderDataTransferCompleted), with: nil, waitUntilDone: true)
+            }
+        } else {
+            _lock.lock()
+            let dataToSend = _data as Data?
+            let currentChannel = _channel
+            _data = nil
+            _lock.unlock()
+            
+            if let dataToSend, !dataToSend.isEmpty {
+                _ = currentChannel?.send(dataToSend)
+            }
+            DispatchQueue.main.async {
+                self._senderDataTransferCompleted()
             }
         }
     }
@@ -318,9 +324,9 @@ class TPOutgoingTransfer: Transfer {
         manager?.transferDidCancel(self)
     }
     
-    func setSocket(_ socket: UMTCPSocket) {
-        _socket = socket
-        _socket?.delegate = self
+    func setChannel(_ channel: MessageChannel) {
+        _channel = channel
+        _channel?.delegate = self
     }
     
     func dataToTransfer() -> Data? {
@@ -341,28 +347,34 @@ class TPOutgoingTransfer: Transfer {
 		).infoDict
     }
     
-    override func tcpSocketConnectionSucceeded(_ tcpSocket: UMTCPSocket) {
-        debugLog("Transfer connected: \(_socket?.remoteAddress ?? "unknown")", module: .transfer)
-        manager?.transferDidStart(self)
-        self._beginTransfer()
+    override func channelDidConnect(_ channel: MessageChannel) {
+        debugLog("Transfer connected: \(_channel?.remoteAddress ?? "unknown")", module: .transfer)
+        DispatchQueue.main.async {
+            self.manager?.transferDidStart(self)
+            self._beginTransfer()
+        }
     }
     
-    override func tcpSocketConnectionFailed(_ tcpSocket: UMTCPSocket) {
+    override func channelDidFailToConnect(_ channel: MessageChannel) {
         warningLog("Transfer connection failed", module: .transfer)
-        self._senderDataTransferFailed()
+        DispatchQueue.main.async {
+            self._senderDataTransferFailed()
+        }
     }
 }
 
-class TPIncomingTransfer: Transfer {
+class IncomingTransfer: Transfer {
     var _shouldEncrypt: Bool = false
+    private var _lastProgressNotifyDate: Date = .distantPast
+    private var _didFinishReceive: Bool = false
 	
-	static let incomingTransferTypes: [String: TPIncomingTransfer.Type] = [
+	static let incomingTransferTypes: [String: IncomingTransfer.Type] = [
 		"IncomingPasteboardTransfer": IncomingPasteboardTransfer.self,
-		"TPIncomingPasteboardFileTransfer": TPIncomingPasteboardFileTransfer.self,
+		"IncomingPasteboardFileTransfer": IncomingPasteboardFileTransfer.self,
 		"IncomingBackgroundImageTransfer": IncomingBackgroundImageTransfer.self
 	]
     
-    static func instance(withType type: String, uid: String) -> TPIncomingTransfer? {
+    static func instance(withType type: String, uid: String) -> IncomingTransfer? {
 		guard let transferClass = incomingTransferTypes[type] else {
             return nil
         }
@@ -384,12 +396,15 @@ class TPIncomingTransfer: Transfer {
 	}
     
     func _listen(onPort port: UnsafeMutablePointer<Int32>, for host: RemoteHost, encrypt shouldEncrypt: Bool) -> Bool {
-        if _listenSocket == nil {
-            _listenSocket = UMTCPSocket(delegate: self)
+        if _listener == nil {
+            let listener = MessageTransportFactory.makeListener(enableEncryption: false)
+            listener.delegate = self
+            _listener = listener
             
-            let result = _listenSocket?.listen(onPort: port, tries: 50) ?? false
+            let result = listener.start(onPort: port, tries: 50)
             if !result {
                 warningLog("Transfer listen failed on port \(port.pointee)", module: .transfer)
+                _listener = nil
             }
             return result
         }
@@ -397,9 +412,9 @@ class TPIncomingTransfer: Transfer {
     }
     
     func _stopListening() {
-        _listenSocket?.delegate = nil
-        _listenSocket?.close()
-        _listenSocket = nil
+        _listener?.delegate = nil
+        _listener?.stop()
+        _listener = nil
     }
     
     override var isIncoming: Bool {
@@ -413,6 +428,8 @@ class TPIncomingTransfer: Transfer {
 		_progressTotalDataLength = _totalDataLength > 0 ? _totalDataLength : (requestInfo?.expectedDataLength ?? 0)
         
 		_receivedDataLength = 0
+        _didFinishReceive = false
+        _lastProgressNotifyDate = .distantPast
 
 		if shouldBufferIncomingData, _totalDataLength > 0 {
 			_data = NSMutableData(capacity: Int(_totalDataLength))
@@ -422,12 +439,10 @@ class TPIncomingTransfer: Transfer {
 		}
         
 		return _listen(onPort: &port, for: host, encrypt: _shouldEncrypt)
-
     }
     
     override func _beginTransfer() {
-        _socket?._setRunLoop(nil)
-        Thread.detachNewThreadSelector(#selector(_receiveDataThread), toTarget: self, with: nil)
+        // Inbound bytes are delivered via `NWMessageChannel`'s background receive loop.
     }
     
     override func _notifyProgress(_ transferedNumber: NSNumber) {
@@ -442,60 +457,73 @@ class TPIncomingTransfer: Transfer {
     
     override func _receivedData(_ data: Data) {
         let dataLength = data.count
+        guard dataLength > 0 else { return }
         _lock.lock()
-        _data?.replaceBytes(in: NSRange(location: Int(_receivedDataLength), length: dataLength), withBytes: (data as NSData).bytes)
-        _lock.unlock()
-        _receivedDataLength += UInt64(dataLength)
-    }
-    
-    @objc func _receiveDataThread() {
-        autoreleasepool {
-            var ret: CFRunLoopRunResult = .timedOut
-            _socket?._setRunLoop(RunLoop.current.getCFRunLoop())
-            
-            if _totalDataLength > 0 {
-                _receivedDataLength = 0
-				var lastDate = Date()
-                while ret != .finished && _socket != nil && _receivedDataLength < _totalDataLength {
-                    autoreleasepool {
-                        ret = CFRunLoopRunInMode(.defaultMode, 0.0, false)
-                        if abs(lastDate.timeIntervalSinceNow) >= REFRESH_RATE {
-                            self.performSelector(onMainThread: #selector(_notifyProgress(_:)), with: NSNumber(value: _receivedDataLength), waitUntilDone: false)
-                            lastDate = Date()
-                        }
+        if let buffer = _data {
+            let offset = Int(_receivedDataLength)
+            let available = max(0, buffer.length - offset)
+            let copyLen = min(dataLength, available)
+            if copyLen > 0 {
+                data.withUnsafeBytes { rawBuf in
+                    if let base = rawBuf.baseAddress {
+                        buffer.replaceBytes(in: NSRange(location: offset, length: copyLen), withBytes: base)
                     }
                 }
-                
-                _socket?._setRunLoop(nil)
-                if _receivedDataLength == _totalDataLength {
-                    // Heavy post-receive work (deserialize + pasteboard write) runs here on the
-                    // background receive thread, so it never blocks the main thread / control I/O.
-                    self._prepareReceivedDataBeforeCompletion()
-                    self.performSelector(onMainThread: #selector(_receiverDataTransferCompleted), with: nil, waitUntilDone: true)
-                } else {
-                    self.performSelector(onMainThread: #selector(_receiverDataTransferAborted), with: nil, waitUntilDone: true)
+            }
+        }
+        _receivedDataLength &+= UInt64(dataLength)
+        let currentReceived = _receivedDataLength
+        let total = _totalDataLength
+        _lock.unlock()
+
+        _reportReceiveProgressIfNeeded(currentReceived: currentReceived, total: total)
+    }
+
+    func _reportReceiveProgressIfNeeded(currentReceived: UInt64, total: UInt64) {
+        let now = Date()
+        var shouldNotifyProgress = false
+        var shouldCompleteFixedLength = false
+
+        _lock.lock()
+        if abs(_lastProgressNotifyDate.timeIntervalSince(now)) >= REFRESH_RATE {
+            _lastProgressNotifyDate = now
+            shouldNotifyProgress = true
+        }
+        if total > 0 && currentReceived >= total && !_didFinishReceive {
+            _didFinishReceive = true
+            shouldCompleteFixedLength = true
+        }
+        _lock.unlock()
+
+        if shouldNotifyProgress {
+            DispatchQueue.main.async { [weak self] in
+                self?._notifyProgress(NSNumber(value: currentReceived))
+            }
+        }
+
+        if shouldCompleteFixedLength {
+            _finalizeIncomingTransfer(succeeded: true)
+        }
+    }
+
+    private func _finalizeIncomingTransfer(succeeded: Bool) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            if succeeded {
+                self._prepareReceivedDataBeforeCompletion()
+                DispatchQueue.main.async {
+                    self._receiverDataTransferCompleted()
                 }
             } else {
-				var lastDate = Date()
-                while ret != .finished && _socket != nil && _totalDataLength != UInt64.max { // Using max as proxy for -1
-                    autoreleasepool {
-                        ret = CFRunLoopRunInMode(.defaultMode, 0.0, false)
-						if abs(lastDate.timeIntervalSinceNow) >= REFRESH_RATE {
-							self.performSelector(onMainThread: #selector(_notifyProgress(_:)), with: NSNumber(value: _receivedDataLength), waitUntilDone: false)
-							lastDate = Date()
-						}
-                    }
+                DispatchQueue.main.async {
+                    self._receiverDataTransferAborted()
                 }
-                _socket?._setRunLoop(nil)
-				self.performSelector(onMainThread: #selector(_notifyProgress(_:)), with: NSNumber(value: _receivedDataLength), waitUntilDone: false)
-                self._prepareReceivedDataBeforeCompletion()
-                self.performSelector(onMainThread: #selector(_receiverDataTransferCompleted), with: nil, waitUntilDone: true)
             }
         }
     }
 
     /// Subclass hook for heavy post-receive processing (deserialize, write pasteboard, etc.).
-    /// Runs on the background receive thread *before* the main-thread completion callback,
+    /// Runs on a background queue *before* the main-thread completion callback,
     /// so it never stalls the main run loop or the persistent control connection's I/O.
     @objc func _prepareReceivedDataBeforeCompletion() {}
     
@@ -517,25 +545,60 @@ class TPIncomingTransfer: Transfer {
         manager?.transferDidCancel(self)
     }
     
-    func tcpSocket(_ listenSocket: UMTCPSocket, connectionAccepted childSocket: UMTCPSocket) {
-        _socket?.close()
-        _socket = childSocket
-        _socket?.setNoDelay(false)
-        _socket?.delegate = self
+    override func listener(_ listener: MessageListener, didAcceptChannel channel: MessageChannel) {
+        _lock.lock()
+        let oldChannel = _channel
+        _channel = channel
+        _didFinishReceive = false
+        _lastProgressNotifyDate = Date()
+        _lock.unlock()
+
+        oldChannel?.close()
+        channel.setNoDelay(false)
+        channel.delegate = self
+        channel.activateReceiveCallbacks()
         
         self._stopListening()
-        manager?.transferDidStart(self)
+        DispatchQueue.main.async {
+            self.manager?.transferDidStart(self)
+        }
         self._beginTransfer()
     }
     
-	override func tcpSocketConnectionFailed(_ tcpSocket: UMTCPSocket) {
+	override func channelDidFailToConnect(_ channel: MessageChannel) {
         warningLog("Transfer receive connection failed", module: .transfer)
-        self._receiverDataTransferFailed()
+        _lock.lock()
+        guard !_didFinishReceive else {
+            _lock.unlock()
+            return
+        }
+        _didFinishReceive = true
+        _lock.unlock()
+        DispatchQueue.main.async {
+            self._receiverDataTransferFailed()
+        }
     }
     
-    override func tcpSocketConnectionClosed(_ tcpSocket: UMTCPSocket) {
-        if _totalDataLength == 0 {
-            _totalDataLength = UInt64.max // Proxy for -1
+    override func channelDidDisconnect(_ channel: MessageChannel) {
+        _lock.lock()
+        guard !_didFinishReceive else {
+            _lock.unlock()
+            return
+        }
+        _didFinishReceive = true
+        let total = _totalDataLength
+        let received = _receivedDataLength
+        _lock.unlock()
+
+        if total == 0 {
+            DispatchQueue.main.async { [weak self] in
+                self?._notifyProgress(NSNumber(value: received))
+            }
+            _finalizeIncomingTransfer(succeeded: true)
+        } else if received >= total {
+            _finalizeIncomingTransfer(succeeded: true)
+        } else {
+            _finalizeIncomingTransfer(succeeded: false)
         }
     }
 }

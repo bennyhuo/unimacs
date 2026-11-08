@@ -5,7 +5,6 @@
 
 import AppKit
 
-@objc(BezelView)
 final class BezelView: NSVisualEffectView {
 	private enum Layout {
 		static let height: CGFloat = 110.0             // Refined height (2/3 of 164)
@@ -147,5 +146,5 @@ enum BezelViewMode {
 	case hidden
 	case controlling(host: RemoteHost, emergencyHint: String?)
 	case emergency(title: String, subtitle: String, count: Int, maxCount: Int)
-	case notification(title: String, subtitle: String, icon: TPNotificationIconType)
+	case notification(title: String, subtitle: String, icon: NotificationIconType)
 }

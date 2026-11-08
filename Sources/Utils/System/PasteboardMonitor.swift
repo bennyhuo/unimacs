@@ -17,7 +17,7 @@ struct PasteboardContentHash: Hashable {
 		let marker = Bundle.main.bundleIdentifier ?? "unimacs"
 		let types = (pasteboard.types ?? [])
 			.map(\.rawValue)
-			.filter { $0 != marker && !TPTypeNeedsIgnoring($0) }
+			.filter { $0 != marker && !pasteboardTypeNeedsIgnoring($0) }
 			.sorted()
 		return PasteboardContentHash(changeCount: pasteboard.changeCount, types: types)
 	}
@@ -600,8 +600,8 @@ struct ClipboardTransferPolicyState {
 // MARK: - Clipboard transfer optimization
 
 @objcMembers
-final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate {
-	static let shared = TPClipboardTransferCoordinator()
+final class ClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate {
+	static let shared = ClipboardTransferCoordinator()
 
 	private var policyState = ClipboardTransferPolicyState()
 	var isSwitchingControl: Bool = false
@@ -898,7 +898,7 @@ final class TPClipboardTransferCoordinator: NSObject, PasteboardMonitorDelegate 
 	) {
 		if !filePaths.isEmpty {
 			debugLog("Sending file pasteboard: \(filePaths.count) files", module: .clipboard)
-			let filePasteTransfer = TPOutgoingPasteboardFileTransfer.shared() as! TPOutgoingPasteboardFileTransfer
+			let filePasteTransfer = OutgoingPasteboardFileTransfer.shared() as! OutgoingPasteboardFileTransfer
 			filePasteTransfer.setFilePaths(filePaths)
 			TransfersManager.shared.beginTransfer(filePasteTransfer, using: connection)
 		} else {

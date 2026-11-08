@@ -6,7 +6,7 @@
 import Cocoa
 
 private struct TransferRequest {
-	let transfer: TPIncomingTransfer
+	let transfer: IncomingTransfer
 	let infoDict: [AnyHashable: Any]
 	let connection: NetworkConnection
 }
@@ -31,8 +31,8 @@ protocol TransfersManagerDelegate: NSObjectProtocol {
 @objcMembers
 class TransfersManager: NSObject {
     
-    private var _outgoingTransfers: [String: TPOutgoingTransfer] = [:]
-    private var _incomingTransfers: [String: TPIncomingTransfer] = [:]
+    private var _outgoingTransfers: [String: OutgoingTransfer] = [:]
+    private var _incomingTransfers: [String: IncomingTransfer] = [:]
     private var _outgoingConnections: [String: NetworkConnection] = [:]
     private var _transferRequests: [TransferRequest] = []
     
@@ -57,7 +57,7 @@ class TransfersManager: NSObject {
         _delegate = delegate
     }
     
-    func beginTransfer(_ transfer: TPOutgoingTransfer, using connection: NetworkConnection) {
+    func beginTransfer(_ transfer: OutgoingTransfer, using connection: NetworkConnection) {
         _lastTransferWasCancelled = false
 
 		transfer.manager = self
@@ -104,11 +104,13 @@ class TransfersManager: NSObject {
                 delegate.transfersManager(self, beginNewTransfer: transfer)
             }
             
-			if let host = connection.connectedHost,
-			   let socket = UMTCPSocket(delegate: transfer) {
-				socket.setNoDelay(false)
-				socket.connect(toHost: host.address, onPort: port)
-				transfer.setSocket(socket)
+			if let host = connection.connectedHost, let address = host.address {
+				let channel = MessageTransportFactory.makeChannel()
+				channel.setNoDelay(false)
+				transfer.setChannel(channel)
+				if !channel.connect(toHost: address, port: port) {
+					transfer._senderDataTransferFailed()
+				}
 			}
         }
     }
@@ -135,7 +137,7 @@ class TransfersManager: NSObject {
 			return
 		}
         
-		let transfer = TPIncomingTransfer.instance(withType: requestInfo.type, uid: requestInfo.uid)
+		let transfer = IncomingTransfer.instance(withType: requestInfo.type, uid: requestInfo.uid)
         
         if let transfer = transfer, let connectedHost = connection.connectedHost {
             if !isClient && transfer.requireTrustedHost && !AuthenticationManager.default.isHostTrusted(connectedHost) {

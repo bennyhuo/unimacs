@@ -217,7 +217,7 @@ final class DevicesViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
-        NotificationCenter.default.publisher(for: NSNotification.Name("TPConnectionStateDidChangeNotification"))
+        NotificationCenter.default.publisher(for: NSNotification.Name("UMConnectionStateDidChangeNotification"))
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.loadDevices()
@@ -239,14 +239,14 @@ final class DevicesViewModel: ObservableObject {
             }
             .store(in: &cancellables)
             
-        DistributedNotificationCenter.default().publisher(for: NSNotification.Name("TPDefaultsDidChangeNotification"))
+        DistributedNotificationCenter.default().publisher(for: .UMDefaultsDidChange)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.loadDevices()
             }
             .store(in: &cancellables)
         
-        NotificationCenter.default.publisher(for: .TPAccessibilityStatusDidChange)
+        NotificationCenter.default.publisher(for: .UMAccessibilityStatusDidChange)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self = self else { return }

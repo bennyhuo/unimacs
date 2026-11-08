@@ -22,13 +22,13 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
         didSet {
             if oldValue != _state {
                 NotificationCenter.default.post(
-                    name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+                    name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
                     object: nil
                 )
             }
         }
     }
-    private var _hotBorders = [String: TPHotBorder]()
+    private var _hotBorders = [String: HotBorder]()
     
     /// Pending control request info for when connection is being established
     private var _pendingControlRequestInfo: [AnyHashable: Any]?
@@ -44,16 +44,16 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		NotificationCenter.default.addObserver(
 			self,
 			selector: #selector(connectionStateDidChange(_:)),
-			name: NSNotification.Name("TPConnectionStateDidChangeNotification"),
+			name: NSNotification.Name("UMConnectionStateDidChangeNotification"),
 			object: nil
 		)
 		NotificationCenter.default.addObserver(
 			self,
 			selector: #selector(accessibilityStatusDidChange(_:)),
-			name: .TPAccessibilityStatusDidChange,
+			name: .UMAccessibilityStatusDidChange,
 			object: nil
 		)
-		TPClipboardTransferCoordinator.shared.start()
+		ClipboardTransferCoordinator.shared.start()
         
         // Register as delegate with DeviceConnectionManager
         DeviceConnectionManager.shared.addDelegate(self)
@@ -61,7 +61,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 
     
     @MainActor
-    override func currentHotBorder() -> TPHotBorder? {
+    override func currentHotBorder() -> HotBorder? {
         guard let currentConnection = self.currentConnection else { return nil }
         guard let host = currentConnection.connectedHost else { return nil }
         
@@ -116,7 +116,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 			}
 		} else if shouldEnableTriggers {
 			if hasValidRemotePlacement {
-				hotBorder = TPHotBorder(hostId: host.identifier, contentRect: host.adjustedHostDesktopRect, in: localDesktopFrame)
+				hotBorder = HotBorder(hostId: host.identifier, contentRect: host.adjustedHostDesktopRect, in: localDesktopFrame)
 				hotBorder?.setHotDelegate(self)
 				if let hb = hotBorder {
 					self.setupHotBorder(hb, forHost: host)
@@ -174,7 +174,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 	}
 	
 	@MainActor
-	override func hotBorder(_ hotBorder: TPHotBorder, canFireWithEvent event: NSEvent?) -> Bool {
+	override func hotBorder(_ hotBorder: HotBorder, canFireWithEvent event: NSEvent?) -> Bool {
 		if !MainController.shared().canControlHost(withIdentifier: hotBorder.hostId) {
 			return false
 		}
@@ -197,7 +197,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 	}
 	
 	@MainActor
-	override func hotBorder(_ hotBorder: TPHotBorder, firedAtLocation location: NSPoint) -> Bool {
+	override func hotBorder(_ hotBorder: HotBorder, firedAtLocation location: NSPoint) -> Bool {
 		guard let remoteHost = HostDevicesManager.shared.host(withIdentifier: hotBorder.hostId) else { return false }
 		
 		if DeviceConnectionManager.shared.isReachableForControl(remoteHost) {
@@ -282,7 +282,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 				_pendingControlRequestInfo = nil
 				_state = .idleState
 				self.currentConnection = existingConnection
-				TPClipboardTransferCoordinator.shared.clientWillRequestStartControl()
+				ClipboardTransferCoordinator.shared.clientWillRequestStartControl()
 				self.sendStartControlRequest(for: existingConnection, withInfoDict: pendingInfo)
 				return true
 			}
@@ -291,16 +291,16 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		}
 		
 		var infoDict: [AnyHashable: Any] = [
-			TPMousePositionKey: NSData.data(with: location)
+			MousePositionKey: NSData.data(with: location)
 		]
 		if let p = hotBorderRelativePoint {
-			infoDict[TPHotBorderRelativePointKey] = NSData.data(with: p)
+			infoDict[HotBorderRelativePointKey] = NSData.data(with: p)
 		}
 		
 		// Try to use existing connection from DeviceConnectionManager
 		if let existingConnection = DeviceConnectionManager.shared.connection(for: remoteHost) {
 			self.currentConnection = existingConnection
-			TPClipboardTransferCoordinator.shared.clientWillRequestStartControl()
+			ClipboardTransferCoordinator.shared.clientWillRequestStartControl()
 			self.sendStartControlRequest(for: existingConnection, withInfoDict: infoDict)
 			return true
 		}
@@ -308,7 +308,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		// Check if we have a current connection that's still valid
 		if let currentConnection = self.currentConnection {
 			if currentConnection.isValid(for: remoteHost) {
-				TPClipboardTransferCoordinator.shared.clientWillRequestStartControl()
+				ClipboardTransferCoordinator.shared.clientWillRequestStartControl()
 				self.sendStartControlRequest(for: currentConnection, withInfoDict: infoDict)
 				return true
 			} else {
@@ -320,7 +320,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		_pendingControlRequestInfo = infoDict
 		_state = .connectingState
 		
-		TPClipboardTransferCoordinator.shared.clientWillRequestStartControl()
+		ClipboardTransferCoordinator.shared.clientWillRequestStartControl()
 		DeviceConnectionManager.shared.connect(to: remoteHost)
 		
 		// Persistent TCP may already exist (connect() is a no-op); send control immediately.
@@ -356,7 +356,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 			return
 		}
 		
-		let mousePosition = (infoDict[TPMousePositionKey] as? NSData)?.pointValue ?? .zero
+		let mousePosition = (infoDict[MousePositionKey] as? NSData)?.pointValue ?? .zero
 		
 		self.currentConnection = connection
 		
@@ -379,7 +379,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 		screenPlacement.origin.y -= serverDesktopRect.minY
 		
 		let clientOptions = self._clientOptions(for: controlledHost)
-		let hotBorderRelativePoint = (infoDict[TPHotBorderRelativePointKey] as? NSData)?.pointValue
+		let hotBorderRelativePoint = (infoDict[HotBorderRelativePointKey] as? NSData)?.pointValue
 		let message = Message.controlRequestMessage(
 			screenPlacement: screenPlacement,
 			mousePosition: mousePosition,
@@ -456,7 +456,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 			BezelController.default().setMode(.controlling(host: controlledHost, emergencyHint: "⌃⌥⇧⎋ to release"))
 		}
 		
-		TPClipboardTransferCoordinator.shared.clientDidStartControl(using: currentConnection, remoteHost: controlledHost)
+		ClipboardTransferCoordinator.shared.clientDidStartControl(using: currentConnection, remoteHost: controlledHost)
 		
 		DisplaySleepAssertion.activate(reason: "startControl")
 		ServerController.shared.clearLastControlledEndTime()
@@ -502,14 +502,14 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 	func requestedStopControl(withInfoDict infoDict: [AnyHashable: Any]) {
 		guard let currentConnection = self.currentConnection, let controlledHost = currentConnection.connectedHost else { return }
 		
-        if let isSwitch = infoDict[TPSwitchControlKey] as? Bool, isSwitch {
+        if let isSwitch = infoDict[SwitchControlKey] as? Bool, isSwitch {
             debugLog("Stopping control due to SwitchControl request from remote host: \(controlledHost.computerName)", module: .control)
         }
         
 		// Fire and forget - control stop doesn't need to block
 		currentConnection.sendAsync(Message.create(with: .controlStop))
 		
-		let stopReason = infoDict[TPStopControlReasonKey] as? String
+		let stopReason = infoDict[StopControlReasonKey] as? String
 		let eventsController = self.eventsController
 		self.stopControl(withDisconnect: DISCONNECT_WHEN_STOP_CONTROL, notifyPeer: false)
 		
@@ -530,7 +530,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 			)
 		}
 		
-		if let relativeValue = infoDict[TPHotBorderRelativePointKey] as? NSData,
+		if let relativeValue = infoDict[HotBorderRelativePointKey] as? NSData,
 			let hotBorder = _hotBorders[controlledHost.identifier] {
 			// Preferred: normalized within the hot border window.
 			let rel = relativeValue.pointValue
@@ -545,8 +545,8 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 			} else {
 				eventsController?.warpMouse(toPosition: warpedPoint)
 			}
-		} else if let mouseValue = infoDict[TPMousePositionKey] as? NSData {
-			// Fallback (legacy): `TPMousePositionKey` is relative to the *local desktop bounding rect*.
+		} else if let mouseValue = infoDict[MousePositionKey] as? NSData {
+			// Fallback (legacy): `MousePositionKey` is relative to the *local desktop bounding rect*.
 			let localDesktopRect = LocalHost.shared.desktopFrame
 			let desktopRelative = mouseValue.pointValue
 			let localCocoaPoint = NSPoint(
@@ -597,7 +597,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 			if notifyPeer, let connection = self.currentConnection {
 				connection.sendAsync(Message.create(with: .controlStop))
 			}
-			TPClipboardTransferCoordinator.shared.clientDidStopControl()
+			ClipboardTransferCoordinator.shared.clientDidStopControl()
 			MainController.shared().leaveFrontmost()
 			BezelController.default().setMode(.hidden)
 			StatusItemController.default.update(with: .idle, host: nil)
@@ -754,8 +754,8 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
         case .controlFailure:
             guard shouldHandleControlMessage(from: host, on: connection) else { return false }
             _state = .idleState
-            let reason = message.infoDict[TPControlFailureReasonKey] as? String ?? "The remote Mac rejected the control request."
-            let isPermissionIssue = (message.infoDict[TPControlFailureIsPermissionIssueKey] as? Bool) ?? false
+            let reason = message.infoDict[ControlFailureReasonKey] as? String ?? "The remote Mac rejected the control request."
+            let isPermissionIssue = (message.infoDict[ControlFailureIsPermissionIssueKey] as? Bool) ?? false
             let hostName = connection.connectedHost?.computerName ?? host.computerName
             BezelController.default().setMode(.notification(
                 title: "Cannot Control \(hostName)",

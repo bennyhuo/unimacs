@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 Benny Huo
 // SPDX-License-Identifier: GPL-2.0-only
 
+import Foundation
 import IOKit.pwr_mgt
 
 @MainActor

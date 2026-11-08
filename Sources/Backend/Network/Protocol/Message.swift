@@ -5,7 +5,7 @@
 
 import Foundation
 
-/// Header length: sizeof(MsgType) + sizeof(TPDataLength) = 4 + 8 = 12 bytes
+/// Header length: sizeof(MsgType) + sizeof(DataLength) = 4 + 8 = 12 bytes
 let MessageHeaderLength: UInt = UInt(MemoryLayout<Int>.size + MemoryLayout<UInt64>.size)
 
 class Message: NSObject {
