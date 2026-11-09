@@ -1,0 +1,32 @@
+---
+description: Require a successful build after code changes in this Xcode project
+alwaysApply: true
+---
+
+# Build verification
+
+After making code changes in this repository, verify the project compiles successfully before finishing the task.
+
+## When to build
+
+Run a build after any change that could affect compilation, including:
+
+- New or modified Swift source files
+- New files added under `Sources/` (must also be listed in `Unimacs.xcodeproj/project.pbxproj` membership exceptions if not auto-included)
+- Xcode project or build setting changes
+
+Skip the build only for documentation-only edits or other changes that cannot affect compilation.
+
+## Build command
+
+From the repository root:
+
+```bash
+xcodebuild -scheme Unimacs -configuration Debug build
+```
+
+## If the build fails
+
+1. Read the compiler errors and fix them.
+2. Re-run the build until it succeeds.
+3. Do not report the task as complete while the build is failing.

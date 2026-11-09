@@ -5,6 +5,24 @@
    <BuildAction
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES">
+      <PreActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Ensure Development Certificate"
+               scriptText = "# Type a script or drag a script file from your workspace to insert its contents.&#10;&quot;${SRCROOT}/Scripts/ensure_development_certificate.sh&quot;&#10;">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "A7C9DEC8059F496500E67CB3"
+                     BuildableName = "unimacs-dev.app"
+                     BlueprintName = "Unimacs"
+                     ReferencedContainer = "container:Unimacs.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PreActions>
       <BuildActionEntries>
          <BuildActionEntry
             buildForTesting = "YES"

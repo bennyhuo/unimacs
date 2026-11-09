@@ -1,0 +1,14 @@
+---
+description: Ensure the app restart log marker is preserved and utilized for troubleshooting/log analysis
+alwaysApply: true
+---
+
+# Application Restart Log Marker
+
+ When the Unimacs application starts, it writes a specific marker to the log to indicate a new run:
+`=== Application Started/Restarted ===`
+
+## Guidelines for log analysis
+1. When analyzing log files (e.g., using `Scripts/unimacs-logs.sh`), look for the `=== Application Started/Restarted ===` marker.
+2. Ignore any log entries before the last occurrence of this marker if you only want to analyze the current run.
+3. If modifying the startup sequence, ensure this marker is still printed.

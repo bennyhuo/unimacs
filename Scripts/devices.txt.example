@@ -1,0 +1,8 @@
+# Device aliases for rebuild-and-deploy.sh, unimacs-logs.sh, and unimacs-crashes.sh
+# Format: <ALIAS> <user>@<host-or-ip>
+# Copy this file to Scripts/devices.txt and customize for your local environment.
+#
+# VM1 user@192.168.64.10
+# MINI user@mac-mini.local
+# MBP user@macbook-pro.local
+
