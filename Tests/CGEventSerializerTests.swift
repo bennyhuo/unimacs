@@ -325,6 +325,107 @@ struct CGEventSerializerTestRunner {
             }
         }
 
+        // MARK: - Test 5: System Cursor Effects (Shake-to-Locate PID=0 & Synthetic Flag Markup)
+        runTest("testMarkMouseMovedForSystemCursorEffects") {
+            let source = CGEventSource(stateID: .combinedSessionState)
+            let userDataTag: Int64 = 0x554D_4556
+
+            // 1. Normal .mouseMoved event after setSource and userData tagging
+            if let moveEvent = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: 400, y: 300), mouseButton: .left),
+               let data = CGEventSerializer.serialize(moveEvent, mode: .direct),
+               let restored = CGEventSerializer.deserialize(data, mode: .direct, eventSource: source, currentMouseLocation: CGPoint(x: 400, y: 300)) {
+                if let source = source {
+                    restored.setSource(source)
+                }
+                restored.setIntegerValueField(.eventSourceUserData, value: userDataTag)
+                // Before marking, setSource populates the current process's non-zero PID
+                assertEqual(restored.getIntegerValueField(.eventSourceUnixProcessID), Int64(ProcessInfo.processInfo.processIdentifier))
+
+                let flagsBefore = restored.getIntegerValueField(CGEventSerializer.syntheticEventFlagsField)
+                CGEventSerializer.markMouseMovedForSystemCursorEffects(restored)
+
+                assertEqual(restored.getIntegerValueField(.eventSourceUnixProcessID), 0)
+                let flagsAfter = restored.getIntegerValueField(CGEventSerializer.syntheticEventFlagsField)
+                assertEqual(flagsAfter, flagsBefore | CGEventSerializer.preserveEventSourcePIDFlag)
+                assertTrue((flagsAfter & CGEventSerializer.preserveEventSourcePIDFlag) != 0)
+                assertEqual(restored.getIntegerValueField(.eventSourceUserData), userDataTag)
+            } else {
+                assertTrue(false, "Failed to create or deserialize .mouseMoved event")
+            }
+
+            // 2. Preserves pre-existing bits in syntheticEventFlagsField
+            if let moveEvent = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: .zero, mouseButton: .left) {
+                moveEvent.setIntegerValueField(.eventSourceUnixProcessID, value: 9999)
+                moveEvent.setIntegerValueField(CGEventSerializer.syntheticEventFlagsField, value: 0x12)
+                CGEventSerializer.markMouseMovedForSystemCursorEffects(moveEvent)
+                assertEqual(moveEvent.getIntegerValueField(.eventSourceUnixProcessID), 0)
+                assertEqual(moveEvent.getIntegerValueField(CGEventSerializer.syntheticEventFlagsField), 0x12 | CGEventSerializer.preserveEventSourcePIDFlag)
+            } else {
+                assertTrue(false, "Failed to create .mouseMoved event for flag preservation check")
+            }
+
+            // 3. Non-.mouseMoved events (boundary/negative cases: mouseDown, mouseDragged, keyDown) must not be modified
+            if let clickEvent = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: CGPoint(x: 100, y: 100), mouseButton: .left) {
+                clickEvent.setIntegerValueField(.eventSourceUnixProcessID, value: 4242)
+                clickEvent.setIntegerValueField(CGEventSerializer.syntheticEventFlagsField, value: 0x10)
+                CGEventSerializer.markMouseMovedForSystemCursorEffects(clickEvent)
+                assertEqual(clickEvent.getIntegerValueField(.eventSourceUnixProcessID), 4242)
+                assertEqual(clickEvent.getIntegerValueField(CGEventSerializer.syntheticEventFlagsField), 0x10)
+            } else {
+                assertTrue(false, "Failed to create .leftMouseDown event")
+            }
+
+            if let dragEvent = CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: CGPoint(x: 120, y: 120), mouseButton: .left) {
+                dragEvent.setIntegerValueField(.eventSourceUnixProcessID, value: 4242)
+                dragEvent.setIntegerValueField(CGEventSerializer.syntheticEventFlagsField, value: 0x10)
+                CGEventSerializer.markMouseMovedForSystemCursorEffects(dragEvent)
+                assertEqual(dragEvent.getIntegerValueField(.eventSourceUnixProcessID), 4242)
+                assertEqual(dragEvent.getIntegerValueField(CGEventSerializer.syntheticEventFlagsField), 0x10)
+            } else {
+                assertTrue(false, "Failed to create .leftMouseDragged event")
+            }
+
+            if let keyEvent = CGEvent(keyboardEventSource: source, virtualKey: 0x00, keyDown: true) {
+                keyEvent.setIntegerValueField(.eventSourceUnixProcessID, value: 4242)
+                keyEvent.setIntegerValueField(CGEventSerializer.syntheticEventFlagsField, value: 0x10)
+                CGEventSerializer.markMouseMovedForSystemCursorEffects(keyEvent)
+                assertEqual(keyEvent.getIntegerValueField(.eventSourceUnixProcessID), 4242)
+                assertEqual(keyEvent.getIntegerValueField(CGEventSerializer.syntheticEventFlagsField), 0x10)
+            } else {
+                assertTrue(false, "Failed to create .keyDown event")
+            }
+        }
+
+        // MARK: - Test 6: MouseMoved Timestamp Pacing for Velocity Filter
+        runTest("testPacedMouseMovedTimestamp") {
+            let step = CGEventSerializer.minMouseMovedTimestampStep
+            let maxLead = CGEventSerializer.maxMouseMovedTimestampLead
+            let t0: CGEventTimestamp = 10_000_000_000
+
+            // 1. Initial event (lastTimestamp == 0) returns `now`
+            assertEqual(CGEventSerializer.pacedMouseMovedTimestamp(now: t0, lastTimestamp: 0), t0)
+
+            // 2. Normal spacing (dt > minMouseMovedTimestampStep and exact boundary dt == minMouseMovedTimestampStep)
+            assertEqual(CGEventSerializer.pacedMouseMovedTimestamp(now: t0 + 4_000_000, lastTimestamp: t0), t0 + 4_000_000)
+            assertEqual(CGEventSerializer.pacedMouseMovedTimestamp(now: t0 + step, lastTimestamp: t0), t0 + step)
+
+            // 3. Coalesced burst (dt == 0 and dt < 1.5ms, including when lastTimestamp leads `now`)
+            let t1 = CGEventSerializer.pacedMouseMovedTimestamp(now: t0, lastTimestamp: t0)
+            assertEqual(t1, t0 + step)
+            let t2 = CGEventSerializer.pacedMouseMovedTimestamp(now: t0 + 100_000, lastTimestamp: t1)
+            assertEqual(t2, t0 + 2 * step)
+            let t3 = CGEventSerializer.pacedMouseMovedTimestamp(now: t0 + 200_000, lastTimestamp: t2)
+            assertEqual(t3, t0 + 3 * step)
+
+            // 4. Lead cap boundary (clamps at now + maxMouseMovedTimestampLead)
+            let nearCapLast = t0 + maxLead - 500_000
+            assertEqual(CGEventSerializer.pacedMouseMovedTimestamp(now: t0, lastTimestamp: nearCapLast), t0 + maxLead)
+
+            // 5. Clock rollback / reset beyond maxLead re-anchors to `now`
+            let staleFutureLast = t0 + maxLead + 1
+            assertEqual(CGEventSerializer.pacedMouseMovedTimestamp(now: t0, lastTimestamp: staleFutureLast), t0)
+        }
+
         print("=== Test Summary: \(totalTestsRun) tests (\(totalAssertions) assertions), \(failedTests.count) failures ===")
         if !failedTests.isEmpty {
             exit(1)

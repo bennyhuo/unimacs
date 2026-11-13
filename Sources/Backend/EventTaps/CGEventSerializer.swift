@@ -29,8 +29,13 @@ enum CGEventSerializer {
     /// controlling Mac with a different primary screen height shifts popup menu hit-testing vertically
     /// by `senderMainScreenHeight - receiverMainScreenHeight`.
     static let windowNumberField = CGEventField(rawValue: 51)!
+    static let syntheticEventFlagsField = CGEventField(rawValue: 101)!
     static let cachedWindowHeightField = CGEventField(rawValue: 106)!
     static let cachedMainDisplayHeightField = CGEventField(rawValue: 107)!
+
+    static let preserveEventSourcePIDFlag: Int64 = 0x4
+    static let minMouseMovedTimestampStep: CGEventTimestamp = 1_500_000
+    static let maxMouseMovedTimestampLead: CGEventTimestamp = 50_000_000
     
     /// Clears sender-specific window and screen geometry cached inside a deserialized `SLSEventRecord`
     /// so the controlled Mac recomputes unflipped coordinates using its own display and window geometry.
@@ -40,6 +45,36 @@ enum CGEventSerializer {
         event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: 0)
         event.setIntegerValueField(cachedWindowHeightField, value: 0)
         event.setIntegerValueField(cachedMainDisplayHeightField, value: 0)
+    }
+
+    /// Marks a synthetic `.mouseMoved` event so WindowServer's `CGXMarkUpSyntheticEvent`
+    /// preserves `kCGEventSourceUnixProcessID == 0`, allowing `_PKGFindCursorEventObserver`
+    /// on the controlled Mac to detect the shake-to-locate cursor magnification gesture.
+    static func markMouseMovedForSystemCursorEffects(_ event: CGEvent) {
+        guard event.type == .mouseMoved else {
+            return
+        }
+        event.setIntegerValueField(.eventSourceUnixProcessID, value: 0)
+        let flags = event.getIntegerValueField(syntheticEventFlagsField)
+        event.setIntegerValueField(syntheticEventFlagsField, value: flags | preserveEventSourcePIDFlag)
+    }
+
+    /// Ensures consecutive `.mouseMoved` timestamps are spaced by at least `minMouseMovedTimestampStep` (1.5 ms)
+    /// so WindowServer's `PKG2DVelocityFilterAddPoint` (which drops samples with `dt <= 1.0 ms`) does not discard
+    /// coalesced network mouse movement packets.
+    static func pacedMouseMovedTimestamp(now: CGEventTimestamp, lastTimestamp: CGEventTimestamp) -> CGEventTimestamp {
+        guard lastTimestamp != 0 else {
+            return now
+        }
+        let maxAllowed = now &+ maxMouseMovedTimestampLead
+        if lastTimestamp > maxAllowed {
+            return now
+        }
+        let minNext = lastTimestamp &+ minMouseMovedTimestampStep
+        if now >= minNext {
+            return now
+        }
+        return min(minNext, maxAllowed)
     }
     
     static func serialize(_ e: Any, mode: SerializationMode) -> Data? {

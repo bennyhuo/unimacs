@@ -118,6 +118,7 @@ public protocol EventsListener: NSObjectProtocol {
     public var currentMouseLocation: CGPoint = .zero
     
     private var lastPostedEventDate: TimeInterval = 0.0
+    private var lastPostedMouseMovedTimestamp: CGEventTimestamp = 0
     
     private var eventSource: CGEventSource?
     
@@ -283,10 +284,12 @@ public protocol EventsListener: NSObjectProtocol {
     
     @objc public func startPostingEvents() {
         lastPostedEventDate = 0.0
+        lastPostedMouseMovedTimestamp = 0
         eventSource = CGEventSource(stateID: .combinedSessionState)
     }
     
     @objc public func stopPostingEvents() {
+        lastPostedMouseMovedTimestamp = 0
         eventSource = nil
     }
     
@@ -337,12 +340,22 @@ public protocol EventsListener: NSObjectProtocol {
     }
     
     @objc public func _postEvent(_ event: CGEvent) {
-        event.timestamp = CGSCurrentEventTimestamp()
+        let now = CGSCurrentEventTimestamp()
+        if event.type == .mouseMoved {
+            let paced = CGEventSerializer.pacedMouseMovedTimestamp(now: now, lastTimestamp: lastPostedMouseMovedTimestamp)
+            lastPostedMouseMovedTimestamp = paced
+            event.timestamp = paced
+        } else {
+            event.timestamp = now
+        }
         
         if let source = eventSource {
             event.setSource(source)
         }
         event.setIntegerValueField(.eventSourceUserData, value: Self.injectedEventUserDataTag)
+        if event.type == .mouseMoved {
+            CGEventSerializer.markMouseMovedForSystemCursorEffects(event)
+        }
         
         event.post(tap: .cgSessionEventTap)
     }
