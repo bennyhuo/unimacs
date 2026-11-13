@@ -1,9 +1,19 @@
-# Unimacs
-## A Modern Virtual KVM for macOS
+<p align="center">
+  <img src="Assets/icon.png" width="96" height="96" alt="Unimacs Icon" />
+</p>
 
-Use one keyboard and pointing device to control multiple Macs.
+<h1 align="center">Unimacs</h1>
+<p align="center"><strong>A Modern Virtual KVM for macOS</strong></p>
 
-Unimacs is a modernized, peer-to-peer virtual KVM that enables seamless cursor transitioning, clipboard synchronization, and audio/microphone streaming across Mac computers.
+<p align="center">
+  Use one keyboard and pointing device to control multiple Macs.<br/>
+  Unimacs is a modernized, peer-to-peer virtual KVM that enables seamless cursor transitioning, clipboard synchronization, and audio/microphone streaming across Mac computers.
+</p>
+
+<p align="center">
+  <img src="Assets/layout.png" width="49%" alt="Unimacs Display Layout" />
+  <img src="Assets/devices.png" width="49%" alt="Unimacs Connected Devices" />
+</p>
 
 ---
 
