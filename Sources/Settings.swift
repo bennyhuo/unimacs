@@ -65,6 +65,8 @@ class Settings {
     static let enableKeepAwakeKey: String = "enableKeepAwake"
     static let keepAwakeIntervalKey: String = "keepAwakeInterval"
     static let syncLockSleepKey: String = "syncLockSleep"
+    static let enableAutoUnlockKey: String = "enableAutoUnlock"
+    static let allowAutoUnlockKey: String = "allowAutoUnlock"
 
 
 	

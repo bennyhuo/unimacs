@@ -150,6 +150,28 @@ struct DeviceDetailView: View {
                     // Security
                     DetailSection(title: "Security") {
                         DetailRow(label: "Paired", value: displayDevice.isPaired ? "Yes" : "No")
+
+                        if displayDevice.isPaired {
+                            HStack {
+                                Text("Auto-Unlock")
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Toggle(
+                                    "",
+                                    isOn: Binding(
+                                        get: { displayDevice.allowAutoUnlock },
+                                        set: { viewModel.setAllowAutoUnlock($0, for: displayDevice) }
+                                    )
+                                )
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                            }
+
+                            DetailRow(
+                                label: "Auto-Unlock Security",
+                                value: autoUnlockSecurityStatusText(for: displayDevice)
+                            )
+                        }
                     }
                 }
                 .padding(20)
@@ -220,6 +242,16 @@ struct DeviceDetailView: View {
         }
         .frame(width: 400, height: 520)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func autoUnlockSecurityStatusText(for device: DeviceInfo) -> String {
+        if !device.supportsAutoUnlock {
+            return "Not Supported"
+        }
+        if device.hasAutoUnlockKey {
+            return "Paired"
+        }
+        return "Pending — unlock both Macs while connected"
     }
 }
 
@@ -392,6 +424,9 @@ extension DeviceInfo {
         shareInput: Bool = false,
         hasSpeakerHardware: Bool = true,
         hasMicHardware: Bool = true,
+        allowAutoUnlock: Bool = true,
+        hasAutoUnlockKey: Bool = false,
+        supportsAutoUnlock: Bool = true,
         remoteHost: RemoteHost?
     ) {
         self.id = id
@@ -417,6 +452,9 @@ extension DeviceInfo {
         self.shareInput = shareInput
         self.hasSpeakerHardware = hasSpeakerHardware
         self.hasMicHardware = hasMicHardware
+        self.allowAutoUnlock = allowAutoUnlock
+        self.hasAutoUnlockKey = hasAutoUnlockKey
+        self.supportsAutoUnlock = supportsAutoUnlock
         self.remoteHost = remoteHost
     }
 }

@@ -116,6 +116,7 @@ struct SettingsView: View {
 struct SettingsTabView: View {
     @ObservedObject var viewModel: SettingsViewModel
     @Binding var showingTrustedHosts: Bool
+    @State private var showingAutoUnlockPasswordSheet = false
     
     var body: some View {
         ScrollView {
@@ -190,6 +191,86 @@ struct SettingsTabView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.regular)
+                    }
+
+                    Divider()
+
+                    SettingsRow(
+                        title: "Automatic Screen Unlock",
+                        description: "Automatically unlock paired Macs when unlocking any one of them."
+                    ) {
+                        Toggle("", isOn: $viewModel.enableAutoUnlock)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+
+                    Divider()
+
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                Text("Local Login Password")
+                                    .font(.body)
+
+                                autoUnlockPasswordStatusBadge
+                            }
+
+                            Text("Account: \(viewModel.localAccountName) • Encrypted locally on disk")
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Spacer()
+
+                        HStack(spacing: 8) {
+                            if viewModel.hasSavedUnlockPassword {
+                                Button(role: .destructive) {
+                                    viewModel.removeUnlockPassword()
+                                } label: {
+                                    Text("Remove")
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.regular)
+                            }
+
+                            Button {
+                                showingAutoUnlockPasswordSheet = true
+                            } label: {
+                                Text(viewModel.hasSavedUnlockPassword ? "Update…" : "Set Password…")
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.regular)
+                        }
+                    }
+                    .padding(.vertical, 4)
+
+                    if viewModel.hasSavedUnlockPassword && !viewModel.isAccessibilityTrusted {
+                        Divider()
+                            .padding(.vertical, 4)
+
+                        HStack(spacing: 10) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+
+                            Text("Accessibility permission is required to enter your password on the Lock Screen during remote auto-unlock.")
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+
+                            Spacer()
+
+                            Button("Authorize...") {
+                                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        .padding(.vertical, 4)
                     }
                 }
                 
@@ -734,9 +815,194 @@ struct SettingsTabView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             viewModel.startPeriodicRefresh()
+            viewModel.refreshAutoUnlockState()
         }
         .onDisappear {
             viewModel.stopPeriodicRefresh()
+        }
+        .sheet(isPresented: $showingAutoUnlockPasswordSheet) {
+            AutoUnlockPasswordSheet(viewModel: viewModel)
+        }
+    }
+
+    @ViewBuilder
+    private var autoUnlockPasswordStatusBadge: some View {
+        if viewModel.isSavedUnlockPasswordInvalid {
+            Label("Needs Update", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(.orange)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Color.orange.opacity(0.15)))
+        } else if viewModel.hasSavedUnlockPassword {
+            Label("Saved", systemImage: "checkmark.shield.fill")
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(.green)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Color.green.opacity(0.15)))
+        } else {
+            Text("Not Set")
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Color.secondary.opacity(0.15)))
+        }
+    }
+}
+
+// MARK: - Auto-Unlock Password Sheet
+
+@available(macOS 13.0, *)
+struct AutoUnlockPasswordSheet: View {
+    @ObservedObject var viewModel: SettingsViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var password: String = ""
+    @State private var showPlaintext: Bool = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack(spacing: 12) {
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 28))
+                    .foregroundColor(.accentColor)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Local Login Password")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+
+                    Text("Account: \(viewModel.localAccountName)")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+            }
+            .padding(20)
+
+            Divider()
+
+            // Content
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Enter the macOS login password for this Mac. Unimacs verifies it locally with OpenDirectory before saving.")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 8) {
+                    Group {
+                        if showPlaintext {
+                            TextField("macOS Login Password", text: $password)
+                        } else {
+                            SecureField("macOS Login Password", text: $password)
+                        }
+                    }
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(viewModel.isVerifyingUnlockPassword)
+                    .onSubmit {
+                        submit()
+                    }
+
+                    Button {
+                        showPlaintext.toggle()
+                    } label: {
+                        Image(systemName: showPlaintext ? "eye.slash" : "eye")
+                            .foregroundColor(.secondary)
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .help(showPlaintext ? "Hide Password" : "Show Password")
+                }
+
+                if let errorMessage = errorMessage {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.red)
+                        Text(errorMessage)
+                            .font(.callout)
+                            .foregroundColor(.red)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "checkmark.shield")
+                            .foregroundColor(.accentColor)
+                        Text("Encrypted locally using AES-256-GCM bound to this Mac's hardware UUID and user account. Your password is never transmitted over the network.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "info.circle")
+                            .foregroundColor(.secondary)
+                        Text("After a full reboot or logout, macOS requires one manual login before background apps can run.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+            }
+            .padding(20)
+
+            Divider()
+
+            // Footer
+            HStack {
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+                .disabled(viewModel.isVerifyingUnlockPassword)
+
+                Spacer()
+
+                Button {
+                    submit()
+                } label: {
+                    if viewModel.isVerifyingUnlockPassword {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Verifying…")
+                        }
+                    } else {
+                        Text("Verify & Save")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(password.isEmpty || viewModel.isVerifyingUnlockPassword)
+            }
+            .padding(16)
+        }
+        .frame(width: 440)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func submit() {
+        guard !password.isEmpty, !viewModel.isVerifyingUnlockPassword else { return }
+        errorMessage = nil
+        let candidate = password
+        Task {
+            let result = await viewModel.saveUnlockPassword(candidate)
+            switch result {
+            case .success:
+                password = ""
+                dismiss()
+            case .failure(let error):
+                errorMessage = error.localizedDescription
+            }
         }
     }
 }

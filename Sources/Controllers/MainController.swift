@@ -144,6 +144,7 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
         _ = EventsController.shared
         _ = ClientController.shared
         _ = ServerController.shared
+        _ = AutoUnlockManager.shared
         _ = StatusItemController.default
         
         if PreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey) && AccessibilityManager.isTrusted {
@@ -336,6 +337,7 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     
     @objc func computerWillSleep(_ notification: Notification) {
         invalidateTimer()
+        AutoUnlockManager.shared.cancelAllPendingOperations(reason: "computerWillSleep")
         ActivityLogManager.shared.log(
             level: .info,
             category: .network,

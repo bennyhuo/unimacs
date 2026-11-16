@@ -439,6 +439,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
                 debugLog("Ignoring controlDeviceSleep because this machine is controlling a remote peer", module: .control)
                 return true
             }
+            AutoUnlockManager.shared.cancelActiveInboundUnlock(reason: "remotePowerOrLockCommand")
             MainController.shared().noteRemoteLockOrSleepReceived()
             SystemPowerManager.sleepTheSystem()
             return true
@@ -447,6 +448,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
                 debugLog("Ignoring controlScreenSleep because this machine is controlling a remote peer", module: .control)
                 return true
             }
+            AutoUnlockManager.shared.cancelActiveInboundUnlock(reason: "remotePowerOrLockCommand")
             MainController.shared().noteRemoteLockOrSleepReceived()
             SystemPowerManager.sleepScreen()
             return true
@@ -463,6 +465,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
                 debugLog("Ignoring controlLock because this machine is controlling a remote peer", module: .control)
                 return true
             }
+            AutoUnlockManager.shared.cancelActiveInboundUnlock(reason: "remotePowerOrLockCommand")
             MainController.shared().noteRemoteLockOrSleepReceived()
             SystemPowerManager.lockScreen()
             return true

@@ -52,6 +52,14 @@ enum MsgType: Int {
     case audioMicRouteUpdate
     case audioOutputRouteUpdate
     case audioHardwareStatusUpdate
+
+    // Auto-Unlock
+    case autoUnlockKeyExchangeInit
+    case autoUnlockKeyExchangeAck
+    case autoUnlockRequest
+    case autoUnlockChallenge
+    case autoUnlockResponse
+    case autoUnlockResult
 }
 
 public struct MouseDelta {

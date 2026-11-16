@@ -224,6 +224,12 @@ extension MsgType {
         case .audioMicRouteUpdate: return "AudioMicRouteUpdate"
         case .audioOutputRouteUpdate: return "AudioOutputRouteUpdate"
         case .audioHardwareStatusUpdate: return "AudioHardwareStatusUpdate"
+        case .autoUnlockKeyExchangeInit: return "AutoUnlockKeyExchangeInit"
+        case .autoUnlockKeyExchangeAck: return "AutoUnlockKeyExchangeAck"
+        case .autoUnlockRequest: return "AutoUnlockRequest"
+        case .autoUnlockChallenge: return "AutoUnlockChallenge"
+        case .autoUnlockResponse: return "AutoUnlockResponse"
+        case .autoUnlockResult: return "AutoUnlockResult"
         }
     }
 }

@@ -75,6 +75,7 @@ enum ActivityFixAction: Equatable, Hashable, Identifiable, Sendable {
     case pingHost(hostId: String, hostName: String, address: String)
     case openNetworkSettings
     case openAccessibilitySettings
+    case openAutoUnlockSettings
 
     var id: String {
         switch self {
@@ -90,6 +91,8 @@ enum ActivityFixAction: Equatable, Hashable, Identifiable, Sendable {
             return "openNetworkSettings"
         case .openAccessibilitySettings:
             return "openAccessibilitySettings"
+        case .openAutoUnlockSettings:
+            return "openAutoUnlockSettings"
         }
     }
 
@@ -107,6 +110,8 @@ enum ActivityFixAction: Equatable, Hashable, Identifiable, Sendable {
             return "Network Settings"
         case .openAccessibilitySettings:
             return "Authorize Accessibility"
+        case .openAutoUnlockSettings:
+            return "Auto-Unlock Settings"
         }
     }
 
@@ -124,12 +129,14 @@ enum ActivityFixAction: Equatable, Hashable, Identifiable, Sendable {
             return "network"
         case .openAccessibilitySettings:
             return "hand.raised.fill"
+        case .openAutoUnlockSettings:
+            return "lock.open.desktopcomputer"
         }
     }
 
     var isPrimary: Bool {
         switch self {
-        case .retryConnection, .repairDevice, .openAccessibilitySettings:
+        case .retryConnection, .repairDevice, .openAccessibilitySettings, .openAutoUnlockSettings:
             return true
         case .resetAllConnections, .pingHost, .openNetworkSettings:
             return false
@@ -1033,7 +1040,7 @@ final class ActivityLogManager: ObservableObject {
         case .pingHost(let hostId, let hostName, let address):
             runDiagnosticPing(hostId: hostId, hostName: hostName, address: address)
 
-        case .openNetworkSettings:
+        case .openNetworkSettings, .openAutoUnlockSettings:
             onNavigateToSettingsTab?()
 
         case .openAccessibilitySettings:

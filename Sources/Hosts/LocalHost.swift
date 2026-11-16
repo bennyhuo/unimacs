@@ -138,6 +138,8 @@ class LocalHost: HostDevice {
 				SystemInfo.isLaptop
 			case .audioSync:
 				true
+			case .autoUnlock:
+				true
 			default:
 				false
 			}

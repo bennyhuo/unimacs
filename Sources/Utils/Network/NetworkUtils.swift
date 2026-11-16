@@ -19,9 +19,20 @@ public struct NetworkInterfaceInfo {
         return (ifIP & mask) == (target & mask)
     }
 
+    /// Computes the IPv4 directed broadcast address for this interface, or nil if invalid.
+    public var broadcastAddress: String? {
+        guard let ifIP = Self.ipToUInt32(ipAddress),
+              let mask = Self.ipToUInt32(subnetMask),
+              mask != 0 else {
+            return nil
+        }
+        let bcast = (ifIP & mask) | ~mask
+        return "\( (bcast >> 24) & 0xFF ).\( (bcast >> 16) & 0xFF ).\( (bcast >> 8) & 0xFF ).\( bcast & 0xFF )"
+    }
+
     private static func ipToUInt32(_ ip: String) -> UInt32? {
         let parts = ip.split(separator: ".").compactMap { UInt32($0) }
-        guard parts.count == 4 else { return nil }
+        guard parts.count == 4, parts.allSatisfy({ $0 <= 255 }) else { return nil }
         return (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]
     }
 }

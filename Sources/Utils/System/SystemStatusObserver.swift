@@ -40,14 +40,17 @@ final class SystemStatusObserver: NSObject {
 
 	@objc private func onScreenLocked() {
         self.isLocked = true
+        AutoUnlockManager.shared.handleLocalScreenLocked()
     }
 
 	@objc private func onScreenUnlocked() {
+        let wasLocked = self.isLocked
         self.isLocked = false
         MainController.shared().resetAllConnectionsIfNotInControl()
+        AutoUnlockManager.shared.handleLocalScreenUnlocked(wasPreviouslyLocked: wasLocked)
     }
 
-    private static func isScreenLocked() -> Bool {
+    static func isScreenLocked() -> Bool {
         guard let sessionInfo = CGSessionCopyCurrentDictionary() as? [String: Any] else {
             return false
         }

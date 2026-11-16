@@ -117,6 +117,7 @@ class AuthenticationManager: NSObject, ClientConnectionsDelegate, NetworkConnect
                 self.host(host, setTrusted: true)
                 DeviceConnectionManager.shared.adoptConnection(authConnection)
                 host.hostState = .peeredOnline
+                AutoUnlockManager.shared.ensurePeerKeyExchanged(with: host, on: authConnection)
                 ActivityLogManager.shared.log(
                     level: .success,
                     category: .control,
@@ -203,6 +204,9 @@ class AuthenticationManager: NSObject, ClientConnectionsDelegate, NetworkConnect
                 }
                 // Fire and forget - success response
                 connection.sendAsync(Message.create(with: .authenticationSuccess))
+                Task { @MainActor in
+                    AutoUnlockManager.shared.ensurePeerKeyExchanged(with: host, on: connection)
+                }
                 
             default: // TRUST_REQUEST_ASK
                 // Fire and forget - in progress response
@@ -251,6 +255,7 @@ class AuthenticationManager: NSObject, ClientConnectionsDelegate, NetworkConnect
             }
             // Fire and forget - success response
             connection.sendAsync(Message.create(with: .authenticationSuccess))
+            AutoUnlockManager.shared.ensurePeerKeyExchanged(with: host, on: connection)
             
         case .rejected:
             let host = authRequest.demandingHost
@@ -293,10 +298,12 @@ class AuthenticationManager: NSObject, ClientConnectionsDelegate, NetworkConnect
                 let online = DeviceConnectionManager.shared.isConnected(to: remoteHost)
                 remoteHost.hostState = online ? .peeredOnline : .peeredOffline
                 HostDevicesManager.shared.addTrustedHostToHosts(remoteHost)
+                AutoUnlockManager.shared.ensurePeerKeyExchanged(with: remoteHost)
             }
         } else {
             Task { @MainActor in
                 HostDevicesManager.shared.removeTrustedHostFromHosts(remoteHost)
+                AutoUnlockManager.shared.removePeerState(forHostId: remoteHost.identifier)
             }
         }
         

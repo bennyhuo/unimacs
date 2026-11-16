@@ -14,6 +14,26 @@ enum BlackHoleStatus {
     case missing
 }
 
+enum UnlockPasswordSetupError: Error, LocalizedError, Equatable {
+    case empty
+    case invalidCredentials
+    case verificationUnavailable(String)
+    case storageFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .empty:
+            return "Password cannot be empty."
+        case .invalidCredentials:
+            return "The password does not match the current macOS account password."
+        case .verificationUnavailable(let message):
+            return "Could not verify password with macOS OpenDirectory: \(message)"
+        case .storageFailed(let message):
+            return "Could not save encrypted password locally: \(message)"
+        }
+    }
+}
+
 @MainActor
 final class SettingsViewModel: ObservableObject {
     
@@ -93,6 +113,26 @@ final class SettingsViewModel: ObservableObject {
     
     @Published var syncLockSleep: Bool {
         didSet { prefs.setValue(syncLockSleep, forKey: Settings.syncLockSleepKey) }
+    }
+
+    // MARK: - Auto-Unlock Settings
+
+    @Published var enableAutoUnlock: Bool {
+        didSet {
+            prefs.setValue(enableAutoUnlock, forKey: Settings.enableAutoUnlockKey)
+            if enableAutoUnlock {
+                AutoUnlockManager.shared.ensurePeerKeysWithConnectedHosts()
+            }
+        }
+    }
+
+    @Published private(set) var hasSavedUnlockPassword: Bool = false
+    @Published private(set) var isSavedUnlockPasswordInvalid: Bool = false
+    @Published var isVerifyingUnlockPassword: Bool = false
+    @Published private(set) var isAccessibilityTrusted: Bool = AccessibilityManager.isTrusted
+
+    var localAccountName: String {
+        NSUserName()
     }
     
     // MARK: - Network
@@ -368,6 +408,12 @@ final class SettingsViewModel: ObservableObject {
         let interval = Double(prefs.float(forPref: Settings.keepAwakeIntervalKey))
         keepAwakeInterval = interval > 0 ? interval : 30.0
         syncLockSleep = prefs.bool(forPref: Settings.syncLockSleepKey)
+
+        if prefs.value(forPref: Settings.enableAutoUnlockKey) != nil {
+            enableAutoUnlock = prefs.bool(forPref: Settings.enableAutoUnlockKey)
+        } else {
+            enableAutoUnlock = true
+        }
         
         disconnectOnNetworkChange = prefs.bool(forPref: Settings.disconnectOnNetworkConfigChangeKey)
         
@@ -424,6 +470,70 @@ final class SettingsViewModel: ObservableObject {
         checkBlackHoleStatus()
         loadIPAddresses()
         calculateCacheSize()
+        refreshAutoUnlockState()
+
+        NotificationCenter.default.publisher(for: .UMAutoUnlockCredentialStateDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshAutoUnlockState()
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .UMAccessibilityStatusDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshAutoUnlockState()
+            }
+            .store(in: &cancellables)
+    }
+
+    // MARK: - Auto-Unlock Actions
+
+    func refreshAutoUnlockState() {
+        hasSavedUnlockPassword = UnlockCredentialStore.shared.hasSavedPassword
+        isSavedUnlockPasswordInvalid = UnlockCredentialStore.shared.isPasswordInvalid
+        isAccessibilityTrusted = AccessibilityManager.isTrusted
+    }
+
+    func saveUnlockPassword(_ password: String) async -> Result<Void, UnlockPasswordSetupError> {
+        guard !password.isEmpty else {
+            return .failure(.empty)
+        }
+
+        isVerifyingUnlockPassword = true
+        defer { isVerifyingUnlockPassword = false }
+
+        let account = localAccountName
+        let verificationResult = await Task.detached(priority: .userInitiated) {
+            OpenDirectoryPasswordVerifier().verify(password: password, username: account)
+        }.value
+
+        switch verificationResult {
+        case .valid:
+            do {
+                try UnlockCredentialStore.shared.savePassword(password)
+                AutoUnlockManager.shared.resetFailureCircuitBreaker()
+                if enableAutoUnlock {
+                    AutoUnlockManager.shared.ensurePeerKeysWithConnectedHosts()
+                }
+                refreshAutoUnlockState()
+                return .success(())
+            } catch {
+                return .failure(.storageFailed(error.localizedDescription))
+            }
+
+        case .invalidCredentials:
+            return .failure(.invalidCredentials)
+
+        case .unavailable(let message):
+            return .failure(.verificationUnavailable(message))
+        }
+    }
+
+    func removeUnlockPassword() {
+        UnlockCredentialStore.shared.deletePassword()
+        AutoUnlockManager.shared.resetFailureCircuitBreaker()
+        refreshAutoUnlockState()
     }
     
     // MARK: - Actions

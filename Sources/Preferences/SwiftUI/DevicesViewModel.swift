@@ -30,6 +30,9 @@ struct DeviceInfo: Identifiable, Equatable {
     let shareInput: Bool
     let hasSpeakerHardware: Bool
     let hasMicHardware: Bool
+    let allowAutoUnlock: Bool
+    let hasAutoUnlockKey: Bool
+    let supportsAutoUnlock: Bool
     
     // Reference to the actual remote host
     weak var remoteHost: RemoteHost?
@@ -49,6 +52,9 @@ struct DeviceInfo: Identifiable, Equatable {
         self.shareInput = host.shareInput
         self.hasSpeakerHardware = host.hasSpeakerHardware
         self.hasMicHardware = host.hasMicHardware
+        self.allowAutoUnlock = host.allowAutoUnlock
+        self.hasAutoUnlockKey = AutoUnlockManager.shared.hasPeerKey(forHostId: host.identifier)
+        self.supportsAutoUnlock = host.hasCapability(.autoUnlock)
 
         let manager = DeviceConnectionManager.shared
         let isBonjourOnline = host.isInState(.peeredOnline)
@@ -166,7 +172,10 @@ struct DeviceInfo: Identifiable, Equatable {
         lhs.shareOutput == rhs.shareOutput &&
         lhs.shareInput == rhs.shareInput &&
         lhs.hasSpeakerHardware == rhs.hasSpeakerHardware &&
-        lhs.hasMicHardware == rhs.hasMicHardware
+        lhs.hasMicHardware == rhs.hasMicHardware &&
+        lhs.allowAutoUnlock == rhs.allowAutoUnlock &&
+        lhs.hasAutoUnlockKey == rhs.hasAutoUnlockKey &&
+        lhs.supportsAutoUnlock == rhs.supportsAutoUnlock
     }
 }
 
@@ -253,6 +262,13 @@ final class DevicesViewModel: ObservableObject {
                 self.isAccessibilityTrusted = AccessibilityManager.shared.isTrustedState
                 self.accessibilityIssueKind = AccessibilityManager.shared.issueKind
                 self.loadDevices()
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .UMAutoUnlockCredentialStateDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.loadDevices()
             }
             .store(in: &cancellables)
         
@@ -414,6 +430,16 @@ final class DevicesViewModel: ObservableObject {
     
     func updateAudioSharingState(for host: RemoteHost) {
         ClientController.shared.updateAudioSharingState(for: host)
+        loadDevices()
+    }
+
+    func setAllowAutoUnlock(_ enabled: Bool, for device: DeviceInfo) {
+        guard let host = device.remoteHost ?? findHost(by: device.id) else { return }
+        host.allowAutoUnlock = enabled
+        HostDevicesManager.shared.saveHosts()
+        if enabled && DeviceConnectionManager.shared.isConnected(to: host) {
+            AutoUnlockManager.shared.ensurePeerKeyExchanged(with: host)
+        }
         loadDevices()
     }
     

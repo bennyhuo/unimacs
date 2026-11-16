@@ -100,6 +100,16 @@ final class RemoteHost: HostDevice, NSCopying {
 			}
 		}
 	}
+
+	var allowAutoUnlock: Bool {
+		get {
+			return (options.value(forKey: Settings.allowAutoUnlockKey) as? NSNumber)?.boolValue ?? true
+		}
+		set {
+			options.setValue(NSNumber(value: newValue), forKey: Settings.allowAutoUnlockKey)
+			self.notifyChange()
+		}
+	}
 	
     // MARK: - Initializers
 
