@@ -159,16 +159,24 @@ final class UnlockCredentialStore: @unchecked Sendable {
     }
 
     func markPasswordInvalid() {
+        setPasswordInvalidatedLocked(true)
+    }
+
+    func clearPasswordInvalidFlag() {
+        setPasswordInvalidatedLocked(false)
+    }
+
+    private func setPasswordInvalidatedLocked(_ invalidated: Bool) {
         lock.lock()
         defer { lock.unlock() }
 
-        guard var payload = try? loadCredentialPayloadLocked(), !payload.invalidated else {
+        guard var payload = try? loadCredentialPayloadLocked(), payload.invalidated != invalidated else {
             return
         }
         guard let masterKey = try? loadExistingMasterKeyLocked() else {
             return
         }
-        payload.invalidated = true
+        payload.invalidated = invalidated
         try? writeEncryptedPayloadLocked(
             payload,
             to: credentialFileURL,

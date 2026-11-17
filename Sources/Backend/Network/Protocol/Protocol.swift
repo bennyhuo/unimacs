@@ -60,6 +60,7 @@ enum MsgType: Int {
     case autoUnlockChallenge
     case autoUnlockResponse
     case autoUnlockResult
+    case autoUnlockStatusUpdate
 }
 
 public struct MouseDelta {

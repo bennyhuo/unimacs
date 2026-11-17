@@ -36,6 +36,11 @@ final class SystemStatusObserver: NSObject {
 
 	@objc private func didWake() {
         MainController.shared().resetAllConnectionsIfNotInControl()
+        let lockedNow = Self.isScreenLocked()
+        if lockedNow != self.isLocked {
+            self.isLocked = lockedNow
+            AutoUnlockManager.shared.broadcastLocalStatusToConnectedPeers()
+        }
     }
 
 	@objc private func onScreenLocked() {

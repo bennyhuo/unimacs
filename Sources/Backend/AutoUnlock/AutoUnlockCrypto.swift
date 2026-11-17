@@ -89,7 +89,8 @@ enum AutoUnlockCrypto {
         requestId: String,
         nonce: Data,
         requesterHostId: String,
-        targetHostId: String
+        targetHostId: String,
+        isManual: Bool = false
     ) -> Data {
         var data = Data()
         appendLengthPrefixed(challengeDomainTag, to: &data)
@@ -97,6 +98,7 @@ enum AutoUnlockCrypto {
         appendLengthPrefixed(nonce, to: &data)
         appendLengthPrefixed(Data(requesterHostId.utf8), to: &data)
         appendLengthPrefixed(Data(targetHostId.utf8), to: &data)
+        appendLengthPrefixed(Data([isManual ? 1 : 0]), to: &data)
         return data
     }
 
@@ -105,7 +107,8 @@ enum AutoUnlockCrypto {
         requestId: String,
         nonce: Data,
         requesterHostId: String,
-        targetHostId: String
+        targetHostId: String,
+        isManual: Bool = false
     ) throws -> Data {
         guard secret.count == expectedKeyLength else {
             throw AutoUnlockCryptoError.invalidSecretLength
@@ -115,7 +118,8 @@ enum AutoUnlockCrypto {
             requestId: requestId,
             nonce: nonce,
             requesterHostId: requesterHostId,
-            targetHostId: targetHostId
+            targetHostId: targetHostId,
+            isManual: isManual
         )
         let mac = HMAC<SHA256>.authenticationCode(for: transcript, using: key)
         return Data(mac)
@@ -127,7 +131,8 @@ enum AutoUnlockCrypto {
         requestId: String,
         nonce: Data,
         requesterHostId: String,
-        targetHostId: String
+        targetHostId: String,
+        isManual: Bool = false
     ) -> Bool {
         guard secret.count == expectedKeyLength, hmac.count == expectedKeyLength else {
             return false
@@ -137,7 +142,8 @@ enum AutoUnlockCrypto {
             requestId: requestId,
             nonce: nonce,
             requesterHostId: requesterHostId,
-            targetHostId: targetHostId
+            targetHostId: targetHostId,
+            isManual: isManual
         )
         return HMAC<SHA256>.isValidAuthenticationCode(hmac, authenticating: transcript, using: key)
     }

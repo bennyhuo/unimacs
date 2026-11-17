@@ -4,16 +4,72 @@
 import Foundation
 import CryptoKit
 
+extension Notification.Name {
+    static let UMAutoUnlockPeerStatusDidChange = Notification.Name("UMAutoUnlockPeerStatusDidChangeNotification")
+}
+
 enum AutoUnlockWireKey {
     static let requestId = "requestId"
     static let keyId = "keyId"
     static let pubKey = "pubKey"
     static let nonce = "nonce"
     static let hmac = "hmac"
+    static let manual = "manual"
     static let success = "success"
     static let alreadyUnlocked = "alreadyUnlocked"
     static let keyMismatch = "keyMismatch"
     static let reason = "reason"
+    static let isLocked = "isLocked"
+    static let autoUnlockEnabled = "autoUnlockEnabled"
+    static let hasSavedPassword = "hasSavedPassword"
+}
+
+struct PeerAutoUnlockStatus: Equatable, Sendable {
+    var isLocked: Bool
+    var isAutoUnlockEnabled: Bool
+    var hasSavedPassword: Bool
+
+    var isAutoUnlockConfigured: Bool {
+        isAutoUnlockEnabled && hasSavedPassword
+    }
+}
+
+enum ControlLockDecision: Equatable, Sendable {
+    case ignoreUnpairedPeer
+    case ignorePassiveWhileControlling
+    case performLock(stopClientControl: Bool, stopServerControl: Bool)
+}
+
+enum ControlLockPolicy {
+    static func makeManualLockInfoDict() -> [AnyHashable: Any] {
+        [AutoUnlockWireKey.manual: true]
+    }
+
+    static func evaluate(
+        infoDict: [AnyHashable: Any],
+        isPeerPaired: Bool,
+        isClientControlling: Bool,
+        isServerControlled: Bool
+    ) -> ControlLockDecision {
+        let isManualRequest = (infoDict[AutoUnlockWireKey.manual] as? Bool) == true
+        if isManualRequest {
+            guard isPeerPaired else {
+                return .ignoreUnpairedPeer
+            }
+            return .performLock(
+                stopClientControl: isClientControlling,
+                stopServerControl: isServerControlled
+            )
+        } else {
+            guard !isClientControlling else {
+                return .ignorePassiveWhileControlling
+            }
+            return .performLock(
+                stopClientControl: false,
+                stopServerControl: isServerControlled
+            )
+        }
+    }
 }
 
 enum AutoUnlockLogLevel {
@@ -33,16 +89,19 @@ protocol AutoUnlockCoordinatorDelegate: AnyObject {
     var localHostId: String { get }
     func isLocalScreenLocked() -> Bool
     func isAutoUnlockEnabled() -> Bool
+    func hasLocalSavedPassword() -> Bool
     func isAccessibilityTrusted() -> Bool
     func isPeerTrustedAndPaired(_ hostId: String) -> Bool
     func isAutoUnlockAllowedFromPeer(_ hostId: String) -> Bool
     func isHostConnected(_ hostId: String) -> Bool
     func peerDisplayName(_ hostId: String) -> String
     func sendAutoUnlockMessage(_ type: MsgType, infoDict: [AnyHashable: Any], to hostId: String)
+    func sendRemoteLockCommand(to hostId: String)
     func requestWakeAndReconnect(to hostId: String)
     func verifyLocalPassword(_ password: String, completion: @escaping @MainActor @Sendable (PasswordVerificationResult) -> Void)
     func performScreenUnlock(password: String, completion: @escaping @MainActor @Sendable (ScreenUnlockOutcome) -> Void)
     func cancelActiveScreenUnlock()
+    func notifyPeerAutoUnlockStatusChanged(for hostId: String)
     func logAutoUnlockEvent(
         level: AutoUnlockLogLevel,
         title: String,
@@ -63,6 +122,9 @@ final class AutoUnlockProtocolCoordinator {
     static let unlockIntentTTL: TimeInterval = 15.0
     static let keyExchangeTTL: TimeInterval = 10.0
     static let loopSuppressionCooldown: TimeInterval = 10.0
+    static let manualAttemptCooldown: TimeInterval = 2.0
+    static let manualLockTransitionTTL: TimeInterval = 5.0
+    static let manualUnlockTransitionTTL: TimeInterval = 10.0
     static let maxActiveChallenges = 16
 
     private struct PendingKeyExchange {
@@ -74,6 +136,7 @@ final class AutoUnlockProtocolCoordinator {
         let requestId: String
         let targetHostId: String
         let keyId: String
+        let isManual: Bool
         let createdAt: TimeInterval
     }
 
@@ -81,12 +144,18 @@ final class AutoUnlockProtocolCoordinator {
         let requestId: String
         let requesterHostId: String
         let nonce: Data
+        let isManual: Bool
         let createdAt: TimeInterval
         let expiresAt: TimeInterval
     }
 
     private struct PendingUnlockIntent {
         let hostId: String
+        let expiresAt: TimeInterval
+    }
+
+    private struct LockTransitionState {
+        let targetLocked: Bool
         let expiresAt: TimeInterval
     }
 
@@ -98,11 +167,14 @@ final class AutoUnlockProtocolCoordinator {
     private var outboundRequests: [String: OutboundUnlockRequest] = [:]
     private var activeChallenges: [String: ActiveChallenge] = [:]
     private var pendingUnlockIntents: [String: PendingUnlockIntent] = [:]
+    private(set) var peerStatuses: [String: PeerAutoUnlockStatus] = [:]
+    private var lockTransitions: [String: LockTransitionState] = [:]
 
     private(set) var consecutiveFailures: Int = 0
     private(set) var isPerformingInboundUnlock: Bool = false
     private var activeInboundAttemptId: UUID?
     private(set) var lastRemoteTriggeredUnlockAt: TimeInterval = Date.distantPast.timeIntervalSinceReferenceDate
+    private var lastManualAttemptAt: TimeInterval = Date.distantPast.timeIntervalSinceReferenceDate
 
     init(
         credentialStore: UnlockCredentialStore,
@@ -113,6 +185,19 @@ final class AutoUnlockProtocolCoordinator {
     }
 
     // MARK: - State Inspection & Circuit Breaker
+
+    func peerStatus(for hostId: String) -> PeerAutoUnlockStatus? {
+        peerStatuses[hostId]
+    }
+
+    func isTransitionInFlight(for hostId: String) -> Bool {
+        guard let transition = lockTransitions[hostId] else { return false }
+        if clock() > transition.expiresAt {
+            lockTransitions.removeValue(forKey: hostId)
+            return false
+        }
+        return true
+    }
 
     func resetFailureCircuitBreaker() {
         consecutiveFailures = 0
@@ -131,8 +216,21 @@ final class AutoUnlockProtocolCoordinator {
         credentialStore.removePeerSecret(for: hostId)
         pendingKeyExchanges.removeValue(forKey: hostId)
         pendingUnlockIntents.removeValue(forKey: hostId)
+        peerStatuses.removeValue(forKey: hostId)
+        lockTransitions.removeValue(forKey: hostId)
         outboundRequests = outboundRequests.filter { $0.value.targetHostId != hostId }
         activeChallenges = activeChallenges.filter { $0.value.requesterHostId != hostId }
+        delegate?.notifyPeerAutoUnlockStatusChanged(for: hostId)
+    }
+
+    func handlePeerDisconnected(_ hostId: String) {
+        let hadState = peerStatuses.removeValue(forKey: hostId) != nil
+            || lockTransitions.removeValue(forKey: hostId) != nil
+        pendingKeyExchanges.removeValue(forKey: hostId)
+        outboundRequests = outboundRequests.filter { $0.value.targetHostId != hostId }
+        if hadState {
+            delegate?.notifyPeerAutoUnlockStatusChanged(for: hostId)
+        }
     }
 
     func cancelActiveInboundUnlock(reason: String) {
@@ -155,26 +253,136 @@ final class AutoUnlockProtocolCoordinator {
         outboundRequests.removeAll()
         activeChallenges.removeAll()
         pendingUnlockIntents.removeAll()
+        lockTransitions.removeAll()
         cancelActiveInboundUnlock(reason: reason)
+    }
+
+    // MARK: - Status Synchronization & Manual Lock/Unlock
+
+    func sendLocalStatus(to hostId: String, lockedOverride: Bool? = nil) {
+        guard let delegate = delegate else { return }
+        guard !hostId.isEmpty,
+              hostId != delegate.localHostId,
+              delegate.isPeerTrustedAndPaired(hostId),
+              delegate.isHostConnected(hostId) else {
+            return
+        }
+        let infoDict: [AnyHashable: Any] = [
+            AutoUnlockWireKey.isLocked: lockedOverride ?? delegate.isLocalScreenLocked(),
+            AutoUnlockWireKey.autoUnlockEnabled: delegate.isAutoUnlockEnabled(),
+            AutoUnlockWireKey.hasSavedPassword: delegate.hasLocalSavedPassword()
+        ]
+        delegate.sendAutoUnlockMessage(.autoUnlockStatusUpdate, infoDict: infoDict, to: hostId)
+    }
+
+    func broadcastLocalStatus(to connectedCapableHostIds: [String], lockedOverride: Bool? = nil) {
+        for hostId in connectedCapableHostIds {
+            sendLocalStatus(to: hostId, lockedOverride: lockedOverride)
+        }
+    }
+
+    @discardableResult
+    func toggleRemoteLockState(for hostId: String) -> Bool {
+        guard let delegate = delegate else { return false }
+        guard delegate.isHostConnected(hostId),
+              delegate.isPeerTrustedAndPaired(hostId),
+              delegate.isAutoUnlockAllowedFromPeer(hostId) else {
+            return false
+        }
+        guard !isTransitionInFlight(for: hostId) else {
+            return false
+        }
+        let currentlyLocked = peerStatuses[hostId]?.isLocked ?? false
+        if currentlyLocked {
+            return requestManualUnlock(to: hostId)
+        } else {
+            return requestManualLock(to: hostId)
+        }
+    }
+
+    @discardableResult
+    func requestManualLock(to hostId: String) -> Bool {
+        guard let delegate = delegate else { return false }
+        guard delegate.isHostConnected(hostId),
+              delegate.isPeerTrustedAndPaired(hostId),
+              delegate.isAutoUnlockAllowedFromPeer(hostId) else {
+            return false
+        }
+        guard !isTransitionInFlight(for: hostId) else {
+            return false
+        }
+        lockTransitions[hostId] = LockTransitionState(
+            targetLocked: true,
+            expiresAt: clock() + Self.manualLockTransitionTTL
+        )
+        delegate.sendRemoteLockCommand(to: hostId)
+        delegate.notifyPeerAutoUnlockStatusChanged(for: hostId)
+        return true
+    }
+
+    @discardableResult
+    func requestManualUnlock(to hostId: String) -> Bool {
+        guard let delegate = delegate else { return false }
+        guard delegate.isHostConnected(hostId),
+              delegate.isPeerTrustedAndPaired(hostId),
+              delegate.isAutoUnlockAllowedFromPeer(hostId) else {
+            return false
+        }
+        guard !delegate.isLocalScreenLocked() else {
+            return false
+        }
+        guard !isTransitionInFlight(for: hostId) else {
+            return false
+        }
+
+        guard let secret = credentialStore.loadPeerSecret(for: hostId) else {
+            let peerName = delegate.peerDisplayName(hostId)
+            delegate.logAutoUnlockEvent(
+                level: .warning,
+                title: "Cannot manually unlock \(peerName) — Auto-Unlock keys not synced yet",
+                detail: "No shared Auto-Unlock key has been established with \(peerName).",
+                howToFix: "Ensure both Macs are unlocked and connected for a few seconds so Auto-Unlock keys can sync.",
+                hostId: hostId,
+                action: nil
+            )
+            if delegate.isAutoUnlockEnabled() {
+                initiateKeyExchange(with: hostId)
+            }
+            return false
+        }
+
+        lockTransitions[hostId] = LockTransitionState(
+            targetLocked: false,
+            expiresAt: clock() + Self.manualUnlockTransitionTTL
+        )
+        sendAutoUnlockRequest(to: hostId, secret: secret, isManual: true)
+        delegate.notifyPeerAutoUnlockStatusChanged(for: hostId)
+        return true
     }
 
     // MARK: - Lifecycle Events
 
-    func handleLocalScreenLocked() {
+    func handleLocalScreenLocked(connectedCapableHostIds: [String] = []) {
         pendingKeyExchanges.removeAll()
         outboundRequests.removeAll()
         pendingUnlockIntents.removeAll()
+        lockTransitions.removeAll()
+        broadcastLocalStatus(to: connectedCapableHostIds, lockedOverride: true)
     }
 
     func handleLocalScreenUnlocked(
         wasPreviouslyLocked: Bool,
         connectedEligibleHostIds: [String],
-        disconnectedEligibleHostIds: [String]
+        disconnectedEligibleHostIds: [String],
+        allConnectedCapableHostIds: [String] = []
     ) {
         guard let delegate = delegate else { return }
 
         // A manual local unlock always clears the failure circuit breaker.
         consecutiveFailures = 0
+
+        let statusTargetIds = allConnectedCapableHostIds.isEmpty ? connectedEligibleHostIds : allConnectedCapableHostIds
+        broadcastLocalStatus(to: statusTargetIds, lockedOverride: false)
 
         let now = clock()
         let inLoopCooldown = isPerformingInboundUnlock || (now - lastRemoteTriggeredUnlockAt) < Self.loopSuppressionCooldown
@@ -201,7 +409,7 @@ final class AutoUnlockProtocolCoordinator {
                   let secret = credentialStore.loadPeerSecret(for: hostId) else {
                 continue
             }
-            sendAutoUnlockRequest(to: hostId, secret: secret)
+            sendAutoUnlockRequest(to: hostId, secret: secret, isManual: false)
         }
 
         for hostId in disconnectedEligibleHostIds {
@@ -238,7 +446,7 @@ final class AutoUnlockProtocolCoordinator {
            !isPerformingInboundUnlock,
            (now - lastRemoteTriggeredUnlockAt) >= Self.loopSuppressionCooldown,
            let secret = credentialStore.loadPeerSecret(for: hostId) {
-            sendAutoUnlockRequest(to: hostId, secret: secret)
+            sendAutoUnlockRequest(to: hostId, secret: secret, isManual: false)
         }
     }
 
@@ -397,14 +605,42 @@ final class AutoUnlockProtocolCoordinator {
         case .autoUnlockResult:
             handleAutoUnlockResult(from: hostId, infoDict: infoDict)
             return true
+        case .autoUnlockStatusUpdate:
+            handleStatusUpdate(from: hostId, infoDict: infoDict)
+            return true
         default:
             return false
         }
     }
 
+    // MARK: - Status Synchronization Handler
+
+    private func handleStatusUpdate(from hostId: String, infoDict: [AnyHashable: Any]) {
+        guard let delegate = delegate else { return }
+        guard delegate.isPeerTrustedAndPaired(hostId) else { return }
+
+        let isLocked = (infoDict[AutoUnlockWireKey.isLocked] as? Bool) ?? false
+        let isAutoUnlockEnabled = (infoDict[AutoUnlockWireKey.autoUnlockEnabled] as? Bool) ?? false
+        let hasSavedPassword = (infoDict[AutoUnlockWireKey.hasSavedPassword] as? Bool) ?? false
+
+        let newStatus = PeerAutoUnlockStatus(
+            isLocked: isLocked,
+            isAutoUnlockEnabled: isAutoUnlockEnabled,
+            hasSavedPassword: hasSavedPassword
+        )
+        peerStatuses[hostId] = newStatus
+
+        if let transition = lockTransitions[hostId],
+           transition.targetLocked == isLocked || !newStatus.isAutoUnlockConfigured {
+            lockTransitions.removeValue(forKey: hostId)
+        }
+
+        delegate.notifyPeerAutoUnlockStatusChanged(for: hostId)
+    }
+
     // MARK: - Unlock Handshake (Requester & Target)
 
-    private func sendAutoUnlockRequest(to hostId: String, secret: Data) {
+    private func sendAutoUnlockRequest(to hostId: String, secret: Data, isManual: Bool = false) {
         guard let delegate = delegate else { return }
         let now = clock()
         pruneExpiredOutboundRequests(now: now)
@@ -415,6 +651,7 @@ final class AutoUnlockProtocolCoordinator {
             requestId: requestId,
             targetHostId: hostId,
             keyId: keyId,
+            isManual: isManual,
             createdAt: now
         )
 
@@ -422,7 +659,8 @@ final class AutoUnlockProtocolCoordinator {
             .autoUnlockRequest,
             infoDict: [
                 AutoUnlockWireKey.requestId: requestId,
-                AutoUnlockWireKey.keyId: keyId
+                AutoUnlockWireKey.keyId: keyId,
+                AutoUnlockWireKey.manual: isManual
             ],
             to: hostId
         )
@@ -436,6 +674,7 @@ final class AutoUnlockProtocolCoordinator {
             return
         }
 
+        let isManual = (infoDict[AutoUnlockWireKey.manual] as? Bool) ?? false
         let peerName = delegate.peerDisplayName(hostId)
 
         guard delegate.isAutoUnlockEnabled(), delegate.isAutoUnlockAllowedFromPeer(hostId) else {
@@ -448,21 +687,32 @@ final class AutoUnlockProtocolCoordinator {
             return
         }
 
-        guard consecutiveFailures < Self.maxConsecutiveFailures else {
-            let reason = "Auto-unlock paused after \(Self.maxConsecutiveFailures) consecutive failed attempts. Unlock this Mac manually to reset."
-            sendResult(requestId: requestId, success: false, reason: reason, to: hostId)
-            delegate.logAutoUnlockEvent(
-                level: .warning,
-                title: "Auto-unlock paused on \(delegate.localHostId)",
-                detail: reason,
-                howToFix: "Unlock \(delegate.localHostId) manually and verify the saved login password in Settings → Security.",
-                hostId: hostId,
-                action: .openAutoUnlockSettings
-            )
-            return
+        let now = clock()
+        if isManual {
+            guard now - lastManualAttemptAt >= Self.manualAttemptCooldown else {
+                sendResult(requestId: requestId, success: false, reason: "Please wait a moment before trying manual unlock again.", to: hostId)
+                return
+            }
+        } else {
+            guard consecutiveFailures < Self.maxConsecutiveFailures else {
+                let reason = "Auto-unlock paused after \(Self.maxConsecutiveFailures) consecutive failed attempts. Unlock this Mac manually to reset."
+                sendResult(requestId: requestId, success: false, reason: reason, to: hostId)
+                delegate.logAutoUnlockEvent(
+                    level: .warning,
+                    title: "Auto-unlock paused on \(delegate.localHostId)",
+                    detail: reason,
+                    howToFix: "Unlock \(delegate.localHostId) manually and verify the saved login password in Settings → Security.",
+                    hostId: hostId,
+                    action: .openAutoUnlockSettings
+                )
+                return
+            }
         }
 
-        guard credentialStore.hasSavedPassword, !credentialStore.isPasswordInvalid else {
+        let hasUsableCredential = isManual
+            ? credentialStore.hasSavedPassword
+            : (credentialStore.hasSavedPassword && !credentialStore.isPasswordInvalid)
+        guard hasUsableCredential else {
             let reason = credentialStore.isPasswordInvalid
                 ? "Saved login password needs to be updated on \(delegate.localHostId)."
                 : "No login password is saved on \(delegate.localHostId)."
@@ -509,7 +759,6 @@ final class AutoUnlockProtocolCoordinator {
             return
         }
 
-        let now = clock()
         pruneExpiredChallenges(now: now)
         if activeChallenges.count >= Self.maxActiveChallenges,
            let oldestKey = activeChallenges.min(by: { $0.value.createdAt < $1.value.createdAt })?.key {
@@ -522,6 +771,7 @@ final class AutoUnlockProtocolCoordinator {
                 requestId: requestId,
                 requesterHostId: hostId,
                 nonce: nonce,
+                isManual: isManual,
                 createdAt: now,
                 expiresAt: now + Self.challengeTTL
             )
@@ -556,11 +806,17 @@ final class AutoUnlockProtocolCoordinator {
               delegate.isAutoUnlockEnabled(),
               delegate.isPeerTrustedAndPaired(hostId),
               delegate.isAutoUnlockAllowedFromPeer(hostId) else {
+            if lockTransitions.removeValue(forKey: hostId) != nil {
+                delegate.notifyPeerAutoUnlockStatusChanged(for: hostId)
+            }
             return
         }
 
         guard let secret = credentialStore.loadPeerSecret(for: hostId),
               AutoUnlockCrypto.keyId(for: secret) == pendingReq.keyId else {
+            if lockTransitions.removeValue(forKey: hostId) != nil {
+                delegate.notifyPeerAutoUnlockStatusChanged(for: hostId)
+            }
             return
         }
 
@@ -570,7 +826,8 @@ final class AutoUnlockProtocolCoordinator {
                 requestId: requestId,
                 nonce: nonce,
                 requesterHostId: delegate.localHostId,
-                targetHostId: hostId
+                targetHostId: hostId,
+                isManual: pendingReq.isManual
             )
             delegate.sendAutoUnlockMessage(
                 .autoUnlockResponse,
@@ -581,6 +838,9 @@ final class AutoUnlockProtocolCoordinator {
                 to: hostId
             )
         } catch {
+            if lockTransitions.removeValue(forKey: hostId) != nil {
+                delegate.notifyPeerAutoUnlockStatusChanged(for: hostId)
+            }
             delegate.logAutoUnlockEvent(
                 level: .warning,
                 title: "Failed to sign auto-unlock challenge for \(delegate.peerDisplayName(hostId))",
@@ -623,9 +883,17 @@ final class AutoUnlockProtocolCoordinator {
             return
         }
 
-        guard consecutiveFailures < Self.maxConsecutiveFailures else {
-            sendResult(requestId: requestId, success: false, reason: "Auto-unlock paused after consecutive failures.", to: hostId)
-            return
+        let isManual = challenge.isManual
+        if isManual {
+            guard now - lastManualAttemptAt >= Self.manualAttemptCooldown else {
+                sendResult(requestId: requestId, success: false, reason: "Please wait a moment before trying manual unlock again.", to: hostId)
+                return
+            }
+        } else {
+            guard consecutiveFailures < Self.maxConsecutiveFailures else {
+                sendResult(requestId: requestId, success: false, reason: "Auto-unlock paused after consecutive failures.", to: hostId)
+                return
+            }
         }
 
         guard delegate.isAccessibilityTrusted() else {
@@ -645,7 +913,8 @@ final class AutoUnlockProtocolCoordinator {
                   requestId: requestId,
                   nonce: challenge.nonce,
                   requesterHostId: hostId,
-                  targetHostId: delegate.localHostId
+                  targetHostId: delegate.localHostId,
+                  isManual: isManual
               ) else {
             let peerName = delegate.peerDisplayName(hostId)
             sendResult(requestId: requestId, success: false, reason: "Challenge HMAC verification failed.", to: hostId)
@@ -665,7 +934,8 @@ final class AutoUnlockProtocolCoordinator {
             return
         }
 
-        guard !credentialStore.isPasswordInvalid,
+        let canUseStoredPassword = isManual || !credentialStore.isPasswordInvalid
+        guard canUseStoredPassword,
               let password = try? credentialStore.loadPassword(),
               !password.isEmpty else {
             sendResult(requestId: requestId, success: false, reason: "No valid saved login password available.", to: hostId)
@@ -678,6 +948,10 @@ final class AutoUnlockProtocolCoordinator {
                 action: .openAutoUnlockSettings
             )
             return
+        }
+
+        if isManual {
+            lastManualAttemptAt = now
         }
 
         let attemptId = UUID()
@@ -726,7 +1000,9 @@ final class AutoUnlockProtocolCoordinator {
                 return
 
             case .valid:
-                break
+                if self.credentialStore.isPasswordInvalid {
+                    self.credentialStore.clearPasswordInvalidFlag()
+                }
             }
 
             guard delegate.isLocalScreenLocked() else {
@@ -815,12 +1091,24 @@ final class AutoUnlockProtocolCoordinator {
             outboundRequests.removeValue(forKey: requestId)
         }
         pendingUnlockIntents.removeValue(forKey: hostId)
+        let wasTransitioning = lockTransitions.removeValue(forKey: hostId) != nil
 
         let success = (infoDict[AutoUnlockWireKey.success] as? Bool) ?? false
         let alreadyUnlocked = (infoDict[AutoUnlockWireKey.alreadyUnlocked] as? Bool) ?? false
         let keyMismatch = (infoDict[AutoUnlockWireKey.keyMismatch] as? Bool) ?? false
         let reason = infoDict[AutoUnlockWireKey.reason] as? String
         let peerName = delegate.peerDisplayName(hostId)
+
+        if success || alreadyUnlocked {
+            if var status = peerStatuses[hostId] {
+                status.isLocked = false
+                peerStatuses[hostId] = status
+            }
+        }
+
+        if wasTransitioning || success || alreadyUnlocked {
+            delegate.notifyPeerAutoUnlockStatusChanged(for: hostId)
+        }
 
         if keyMismatch {
             credentialStore.removePeerSecret(for: hostId)
@@ -899,6 +1187,7 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
     private let typingQueue = DispatchQueue(label: "com.unimacs.autounlock.typing", qos: .userInteractive)
     private var activeCancellationToken: ScreenUnlockCancellationToken?
     private var reconnectRetryWorkItems: [String: [DispatchWorkItem]] = [:]
+    private var transitionExpiryWorkItems: [String: DispatchWorkItem] = [:]
 
     private override init() {
         self.coordinator = AutoUnlockProtocolCoordinator(credentialStore: UnlockCredentialStore.shared)
@@ -906,29 +1195,83 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
         super.init()
         self.coordinator.delegate = self
         DeviceConnectionManager.shared.addDelegate(self)
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(credentialStateDidChange(_:)),
+            name: .UMAutoUnlockCredentialStateDidChange,
+            object: nil
+        )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(defaultsDidChange(_:)),
+            name: .UMDefaultsDidChange,
+            object: nil
+        )
+    }
+
+    @objc private func credentialStateDidChange(_ notification: Notification) {
+        broadcastLocalStatusToConnectedPeers()
+    }
+
+    @objc private func defaultsDidChange(_ notification: Notification) {
+        if let key = notification.object as? String, key != Settings.enableAutoUnlockKey {
+            return
+        }
+        broadcastLocalStatusToConnectedPeers()
     }
 
     // MARK: - Public Lifecycle & Settings Hooks
 
+    func peerStatus(forHostId hostId: String) -> PeerAutoUnlockStatus? {
+        coordinator.peerStatus(for: hostId)
+    }
+
+    func isLockTransitionInFlight(forHostId hostId: String) -> Bool {
+        coordinator.isTransitionInFlight(for: hostId)
+    }
+
+    @discardableResult
+    func toggleRemoteLockState(forHostId hostId: String) -> Bool {
+        let wasLocked = coordinator.peerStatus(for: hostId)?.isLocked ?? false
+        let started = coordinator.toggleRemoteLockState(for: hostId)
+        if started {
+            let delay = wasLocked
+                ? AutoUnlockProtocolCoordinator.manualUnlockTransitionTTL
+                : AutoUnlockProtocolCoordinator.manualLockTransitionTTL
+            scheduleTransitionExpiryRefresh(for: hostId, after: delay)
+        }
+        return started
+    }
+
+    func broadcastLocalStatusToConnectedPeers(lockedOverride: Bool? = nil) {
+        coordinator.broadcastLocalStatus(to: connectedCapablePairedHostIds(), lockedOverride: lockedOverride)
+    }
+
     func handleLocalScreenLocked() {
         cancelReconnectRetryTimers()
-        coordinator.handleLocalScreenLocked()
+        cancelTransitionExpiryTimers()
+        coordinator.handleLocalScreenLocked(connectedCapableHostIds: connectedCapablePairedHostIds())
     }
 
     func handleLocalScreenUnlocked(wasPreviouslyLocked: Bool) {
         let peeredHosts = HostDevicesManager.shared.hosts(with: .peered) as? [RemoteHost] ?? []
         var connectedEligibleIds: [String] = []
         var disconnectedEligibleIds: [String] = []
+        var allConnectedCapableIds: [String] = []
 
         for host in peeredHosts {
             guard host.identifier != LocalHost.shared.identifier else { continue }
-            guard host.allowAutoUnlock, HostDevicesManager.shared.isPaired(with: host) else { continue }
+            guard HostDevicesManager.shared.isPaired(with: host) else { continue }
 
             if DeviceConnectionManager.shared.isConnected(to: host) {
                 if host.hasCapability(.autoUnlock) {
-                    connectedEligibleIds.append(host.identifier)
+                    allConnectedCapableIds.append(host.identifier)
+                    if host.allowAutoUnlock {
+                        connectedEligibleIds.append(host.identifier)
+                    }
                 }
-            } else {
+            } else if host.allowAutoUnlock {
                 disconnectedEligibleIds.append(host.identifier)
             }
         }
@@ -936,8 +1279,22 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
         coordinator.handleLocalScreenUnlocked(
             wasPreviouslyLocked: wasPreviouslyLocked,
             connectedEligibleHostIds: connectedEligibleIds,
-            disconnectedEligibleHostIds: disconnectedEligibleIds
+            disconnectedEligibleHostIds: disconnectedEligibleIds,
+            allConnectedCapableHostIds: allConnectedCapableIds
         )
+    }
+
+    private func connectedCapablePairedHostIds() -> [String] {
+        let peeredHosts = HostDevicesManager.shared.hosts(with: .peered) as? [RemoteHost] ?? []
+        return peeredHosts.compactMap { host in
+            guard host.identifier != LocalHost.shared.identifier,
+                  HostDevicesManager.shared.isPaired(with: host),
+                  DeviceConnectionManager.shared.isConnected(to: host),
+                  host.hasCapability(.autoUnlock) else {
+                return nil
+            }
+            return host.identifier
+        }
     }
 
     func cancelActiveInboundUnlock(reason: String) {
@@ -946,11 +1303,13 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
 
     func cancelAllPendingOperations(reason: String) {
         cancelReconnectRetryTimers()
+        cancelTransitionExpiryTimers()
         coordinator.cancelAllPendingOperations(reason: reason)
     }
 
     func removePeerState(forHostId hostId: String) {
         cancelReconnectRetryTimers(for: hostId)
+        cancelTransitionExpiryTimers(for: hostId)
         coordinator.removePeerState(for: hostId)
     }
 
@@ -987,10 +1346,18 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
 
     func connectionDidEstablish(to host: RemoteHost, connection: NetworkConnection) {
         cancelReconnectRetryTimers(for: host.identifier)
-        let eligible = host.hasCapability(.autoUnlock)
-            && host.allowAutoUnlock
-            && HostDevicesManager.shared.isPaired(with: host)
+        let isCapableAndPaired = host.hasCapability(.autoUnlock) && HostDevicesManager.shared.isPaired(with: host)
+        if isCapableAndPaired {
+            coordinator.sendLocalStatus(to: host.identifier)
+        }
+        let eligible = isCapableAndPaired && host.allowAutoUnlock
         coordinator.handleConnectionEstablished(to: host.identifier, isEligible: eligible)
+    }
+
+    func connectionDidDisconnect(from host: RemoteHost) {
+        guard !DeviceConnectionManager.shared.isConnected(to: host) else { return }
+        cancelTransitionExpiryTimers(for: host.identifier)
+        coordinator.handlePeerDisconnected(host.identifier)
     }
 
     func handleMessage(_ message: Message, from host: RemoteHost, connection: NetworkConnection) -> Bool {
@@ -1009,6 +1376,10 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
 
     func isAutoUnlockEnabled() -> Bool {
         PreferencesManager.shared().bool(forPref: Settings.enableAutoUnlockKey)
+    }
+
+    func hasLocalSavedPassword() -> Bool {
+        UnlockCredentialStore.shared.hasSavedPassword
     }
 
     func isAccessibilityTrusted() -> Bool {
@@ -1043,6 +1414,19 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
 
     func sendAutoUnlockMessage(_ type: MsgType, infoDict: [AnyHashable: Any], to hostId: String) {
         let message = Message.create(with: type, andInfoDict: infoDict)
+        _ = DeviceConnectionManager.shared.sendMessage(message, toHost: hostId)
+    }
+
+    func sendRemoteLockCommand(to hostId: String) {
+        if ClientController.shared.isControlling,
+           ClientController.shared.currentConnection?.connectedHost?.identifier == hostId {
+            ClientController.shared.stopControl()
+        }
+        if ServerController.shared.isControlled,
+           ServerController.shared.currentConnection?.connectedHost?.identifier == hostId {
+            ServerController.shared.stopControl()
+        }
+        let message = Message.create(with: .controlLock, andInfoDict: ControlLockPolicy.makeManualLockInfoDict())
         _ = DeviceConnectionManager.shared.sendMessage(message, toHost: hostId)
     }
 
@@ -1112,6 +1496,13 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
         activeCancellationToken = nil
     }
 
+    func notifyPeerAutoUnlockStatusChanged(for hostId: String) {
+        if !coordinator.isTransitionInFlight(for: hostId) {
+            cancelTransitionExpiryTimers(for: hostId)
+        }
+        NotificationCenter.default.post(name: .UMAutoUnlockPeerStatusDidChange, object: hostId)
+    }
+
     func logAutoUnlockEvent(
         level: AutoUnlockLogLevel,
         title: String,
@@ -1151,7 +1542,32 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
         )
     }
 
-    // MARK: - Retry Timer Cleanup
+    // MARK: - Retry & Transition Timer Cleanup
+
+    private func scheduleTransitionExpiryRefresh(for hostId: String, after delay: TimeInterval) {
+        cancelTransitionExpiryTimers(for: hostId)
+        let item = DispatchWorkItem { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                self.transitionExpiryWorkItems.removeValue(forKey: hostId)
+                _ = self.coordinator.isTransitionInFlight(for: hostId)
+                NotificationCenter.default.post(name: .UMAutoUnlockPeerStatusDidChange, object: hostId)
+            }
+        }
+        transitionExpiryWorkItems[hostId] = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay + 0.05, execute: item)
+    }
+
+    private func cancelTransitionExpiryTimers(for hostId: String? = nil) {
+        if let hostId = hostId {
+            transitionExpiryWorkItems.removeValue(forKey: hostId)?.cancel()
+        } else {
+            for item in transitionExpiryWorkItems.values {
+                item.cancel()
+            }
+            transitionExpiryWorkItems.removeAll()
+        }
+    }
 
     private func cancelReconnectRetryTimers(for hostId: String? = nil) {
         if let hostId = hostId {

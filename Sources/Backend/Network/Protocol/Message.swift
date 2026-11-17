@@ -230,6 +230,7 @@ extension MsgType {
         case .autoUnlockChallenge: return "AutoUnlockChallenge"
         case .autoUnlockResponse: return "AutoUnlockResponse"
         case .autoUnlockResult: return "AutoUnlockResult"
+        case .autoUnlockStatusUpdate: return "AutoUnlockStatusUpdate"
         }
     }
 }

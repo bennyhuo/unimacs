@@ -171,6 +171,13 @@ struct DeviceDetailView: View {
                                 label: "Auto-Unlock Security",
                                 value: autoUnlockSecurityStatusText(for: displayDevice)
                             )
+
+                            if displayDevice.isConnected && displayDevice.supportsAutoUnlock {
+                                DetailRow(
+                                    label: "Screen Status",
+                                    value: displayDevice.isRemoteLocked ? "Locked" : "Unlocked"
+                                )
+                            }
                         }
                     }
                 }
@@ -427,6 +434,9 @@ extension DeviceInfo {
         allowAutoUnlock: Bool = true,
         hasAutoUnlockKey: Bool = false,
         supportsAutoUnlock: Bool = true,
+        isRemoteLocked: Bool = false,
+        isRemoteAutoUnlockConfigured: Bool = false,
+        isLockTransitioning: Bool = false,
         remoteHost: RemoteHost?
     ) {
         self.id = id
@@ -455,6 +465,9 @@ extension DeviceInfo {
         self.allowAutoUnlock = allowAutoUnlock
         self.hasAutoUnlockKey = hasAutoUnlockKey
         self.supportsAutoUnlock = supportsAutoUnlock
+        self.isRemoteLocked = isRemoteLocked
+        self.isRemoteAutoUnlockConfigured = isRemoteAutoUnlockConfigured
+        self.isLockTransitioning = isLockTransitioning
         self.remoteHost = remoteHost
     }
 }

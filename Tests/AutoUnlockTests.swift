@@ -194,6 +194,7 @@ private final class MockScreenUnlockDriver: ScreenUnlockingDriver, @unchecked Se
 @MainActor
 private final class MockAutoUnlockPeerNode: AutoUnlockCoordinatorDelegate {
     let hostId: String
+    let store: UnlockCredentialStore
     let coordinator: AutoUnlockProtocolCoordinator
     var isLocked = false
     var autoUnlockEnabled = true
@@ -205,6 +206,8 @@ private final class MockAutoUnlockPeerNode: AutoUnlockCoordinatorDelegate {
     var unlockOutcome: ScreenUnlockOutcome = .unlocked
 
     var sentMessages: [(target: String, type: MsgType, infoDict: [AnyHashable: Any])] = []
+    var remoteLockCommands: [String] = []
+    var statusChangeNotifications: [String] = []
     var wakeRequests: [String] = []
     var verifyCallCount = 0
     var performUnlockCallCount = 0
@@ -213,9 +216,11 @@ private final class MockAutoUnlockPeerNode: AutoUnlockCoordinatorDelegate {
 
     /// Optional message interceptor for replay/tamper/drop testing.
     var routeHandler: ((_ from: String, _ to: String, _ type: MsgType, _ infoDict: [AnyHashable: Any]) -> Void)?
+    var remoteLockHandler: ((_ targetHostId: String) -> Void)?
 
     init(hostId: String, store: UnlockCredentialStore, clock: @escaping () -> TimeInterval) {
         self.hostId = hostId
+        self.store = store
         self.coordinator = AutoUnlockProtocolCoordinator(credentialStore: store, clock: clock)
         self.coordinator.delegate = self
     }
@@ -223,6 +228,7 @@ private final class MockAutoUnlockPeerNode: AutoUnlockCoordinatorDelegate {
     var localHostId: String { hostId }
     func isLocalScreenLocked() -> Bool { isLocked }
     func isAutoUnlockEnabled() -> Bool { autoUnlockEnabled }
+    func hasLocalSavedPassword() -> Bool { store.hasSavedPassword }
     func isAccessibilityTrusted() -> Bool { accessibilityTrusted }
     func isPeerTrustedAndPaired(_ hostId: String) -> Bool { trustedPairedHosts.contains(hostId) }
     func isAutoUnlockAllowedFromPeer(_ hostId: String) -> Bool { allowedFromPeerHosts.contains(hostId) }
@@ -232,6 +238,11 @@ private final class MockAutoUnlockPeerNode: AutoUnlockCoordinatorDelegate {
     func sendAutoUnlockMessage(_ type: MsgType, infoDict: [AnyHashable: Any], to targetHostId: String) {
         sentMessages.append((targetHostId, type, infoDict))
         routeHandler?(hostId, targetHostId, type, infoDict)
+    }
+
+    func sendRemoteLockCommand(to targetHostId: String) {
+        remoteLockCommands.append(targetHostId)
+        remoteLockHandler?(targetHostId)
     }
 
     func requestWakeAndReconnect(to hostId: String) {
@@ -253,6 +264,10 @@ private final class MockAutoUnlockPeerNode: AutoUnlockCoordinatorDelegate {
 
     func cancelActiveScreenUnlock() {
         cancelledUnlockCount += 1
+    }
+
+    func notifyPeerAutoUnlockStatusChanged(for hostId: String) {
+        statusChangeNotifications.append(hostId)
     }
 
     func logAutoUnlockEvent(
@@ -495,6 +510,18 @@ struct AutoUnlockTestRunner {
             // Swapped sender/target reflection check
             assertFalse(AutoUnlockCrypto.verifyChallengeHMAC(hmac, secret: secretBA, requestId: "req-123", nonce: nonce1, requesterHostId: "Beta-Mac", targetHostId: "Alpha-Mac"))
             assertFalse(AutoUnlockCrypto.verifyChallengeHMAC(Data(), secret: secretBA, requestId: "req-123", nonce: nonce1, requesterHostId: "Alpha-Mac", targetHostId: "Beta-Mac"))
+            // Tampered isManual flag must fail verification
+            assertFalse(AutoUnlockCrypto.verifyChallengeHMAC(hmac, secret: secretBA, requestId: "req-123", nonce: nonce1, requesterHostId: "Alpha-Mac", targetHostId: "Beta-Mac", isManual: true))
+            let manualHMAC = try AutoUnlockCrypto.computeChallengeHMAC(
+                secret: secretAB,
+                requestId: "req-123",
+                nonce: nonce1,
+                requesterHostId: "Alpha-Mac",
+                targetHostId: "Beta-Mac",
+                isManual: true
+            )
+            assertTrue(AutoUnlockCrypto.verifyChallengeHMAC(manualHMAC, secret: secretBA, requestId: "req-123", nonce: nonce1, requesterHostId: "Alpha-Mac", targetHostId: "Beta-Mac", isManual: true))
+            assertFalse(AutoUnlockCrypto.verifyChallengeHMAC(manualHMAC, secret: secretBA, requestId: "req-123", nonce: nonce1, requesterHostId: "Alpha-Mac", targetHostId: "Beta-Mac", isManual: false))
         }
 
         // 3. AutoUnlockProtocolCoordinator tests
@@ -770,6 +797,327 @@ struct AutoUnlockTestRunner {
             nodeA.coordinator.initiateKeyExchange(with: "Beta-Mac", force: true)
             assertTrue(storeA.hasPeerSecret(for: "Beta-Mac"))
             assertEqual(storeA.loadPeerSecret(for: "Beta-Mac"), storeB.loadPeerSecret(for: "Alpha-Mac"))
+        }
+
+        runTest("testCoordinatorStatusSyncAndManualLockUnlockRecovery") {
+            let dirA = try makeTempDir("nodeA-manual")
+            let dirB = try makeTempDir("nodeB-manual")
+            defer {
+                try? FileManager.default.removeItem(at: dirA)
+                try? FileManager.default.removeItem(at: dirB)
+            }
+
+            let storeA = UnlockCredentialStore(directoryURL: dirA, platformUUIDProvider: { "UUID-A" }, postNotifications: false)
+            let storeB = UnlockCredentialStore(directoryURL: dirB, platformUUIDProvider: { "UUID-B" }, postNotifications: false)
+
+            var currentTime: TimeInterval = 8000.0
+            let nodeA = MockAutoUnlockPeerNode(hostId: "Alpha-Mac", store: storeA, clock: { currentTime })
+            let nodeB = MockAutoUnlockPeerNode(hostId: "Beta-Mac", store: storeB, clock: { currentTime })
+
+            nodeA.trustedPairedHosts = ["Beta-Mac"]
+            nodeA.allowedFromPeerHosts = ["Beta-Mac"]
+            nodeA.connectedHosts = ["Beta-Mac"]
+
+            nodeB.trustedPairedHosts = ["Alpha-Mac"]
+            nodeB.allowedFromPeerHosts = ["Alpha-Mac"]
+            nodeB.connectedHosts = ["Alpha-Mac"]
+
+            nodeA.routeHandler = { from, _, type, info in
+                nodeB.coordinator.handleMessage(type, infoDict: info, from: from)
+            }
+            nodeB.routeHandler = { from, _, type, info in
+                nodeA.coordinator.handleMessage(type, infoDict: info, from: from)
+            }
+            nodeA.remoteLockHandler = { _ in
+                nodeB.isLocked = true
+                nodeB.coordinator.handleLocalScreenLocked(connectedCapableHostIds: ["Alpha-Mac"])
+            }
+
+            // 1. Initial status sync reflects missing password on B -> isAutoUnlockConfigured == false
+            nodeB.coordinator.sendLocalStatus(to: "Alpha-Mac")
+            assertEqual(
+                nodeA.coordinator.peerStatus(for: "Beta-Mac"),
+                PeerAutoUnlockStatus(isLocked: false, isAutoUnlockEnabled: true, hasSavedPassword: false)
+            )
+            assertFalse(nodeA.coordinator.peerStatus(for: "Beta-Mac")?.isAutoUnlockConfigured ?? true)
+
+            // Saving password on B + broadcasting updates A
+            try storeB.savePassword("ManualSecret!99")
+            nodeB.coordinator.broadcastLocalStatus(to: ["Alpha-Mac"])
+            assertEqual(
+                nodeA.coordinator.peerStatus(for: "Beta-Mac"),
+                PeerAutoUnlockStatus(isLocked: false, isAutoUnlockEnabled: true, hasSavedPassword: true)
+            )
+            assertTrue(nodeA.coordinator.peerStatus(for: "Beta-Mac")?.isAutoUnlockConfigured ?? false)
+
+            // Deleting password updates A back to not configured
+            storeB.deletePassword()
+            nodeB.coordinator.broadcastLocalStatus(to: ["Alpha-Mac"])
+            assertFalse(nodeA.coordinator.peerStatus(for: "Beta-Mac")?.isAutoUnlockConfigured ?? true)
+            try storeB.savePassword("ManualSecret!99")
+            nodeB.coordinator.broadcastLocalStatus(to: ["Alpha-Mac"])
+
+            // 2. Manual lock when unlocked -> sends remote lock command and updates status via ScreenLocked
+            nodeA.coordinator.initiateKeyExchange(with: "Beta-Mac")
+            assertTrue(storeA.hasPeerSecret(for: "Beta-Mac"))
+
+            // Capture transition state while lock command hasn't completed yet
+            var deferRemoteLock = true
+            nodeA.remoteLockHandler = { _ in
+                if !deferRemoteLock {
+                    nodeB.isLocked = true
+                    nodeB.coordinator.handleLocalScreenLocked(connectedCapableHostIds: ["Alpha-Mac"])
+                }
+            }
+            assertTrue(nodeA.coordinator.toggleRemoteLockState(for: "Beta-Mac"))
+            assertEqual(nodeA.remoteLockCommands, ["Beta-Mac"])
+            assertTrue(nodeA.coordinator.isTransitionInFlight(for: "Beta-Mac"))
+            assertFalse(nodeA.coordinator.toggleRemoteLockState(for: "Beta-Mac"), "Duplicate toggle during transition must be ignored")
+
+            // Complete lock notification from B -> clears transition and flips status to locked
+            deferRemoteLock = false
+            nodeB.isLocked = true
+            nodeB.coordinator.handleLocalScreenLocked(connectedCapableHostIds: ["Alpha-Mac"])
+            assertFalse(nodeA.coordinator.isTransitionInFlight(for: "Beta-Mac"))
+            assertEqual(nodeA.coordinator.peerStatus(for: "Beta-Mac")?.isLocked, true)
+
+            // 3. Manual unlock when locked -> unlocks B, clears transition, updates isLocked == false
+            assertTrue(nodeA.coordinator.toggleRemoteLockState(for: "Beta-Mac"))
+            assertFalse(nodeB.isLocked)
+            assertFalse(nodeA.coordinator.isTransitionInFlight(for: "Beta-Mac"))
+            assertEqual(nodeA.coordinator.peerStatus(for: "Beta-Mac")?.isLocked, false)
+
+            // 4. Manual unlock recovery when automatic circuit breaker tripped and password was marked invalid
+            nodeB.isLocked = true
+            nodeB.coordinator.handleLocalScreenLocked(connectedCapableHostIds: ["Alpha-Mac"])
+            nodeB.unlockOutcome = .timedOutStillLocked
+            currentTime += 20.0
+            for _ in 0..<2 {
+                nodeA.isLocked = false
+                nodeA.coordinator.handleLocalScreenUnlocked(
+                    wasPreviouslyLocked: true,
+                    connectedEligibleHostIds: ["Beta-Mac"],
+                    disconnectedEligibleHostIds: []
+                )
+            }
+            assertEqual(nodeB.coordinator.consecutiveFailures, 2)
+            storeB.markPasswordInvalid()
+            assertTrue(storeB.isPasswordInvalid)
+
+            // Automatic unlock must remain blocked
+            let callsBeforeAutoBlocked = nodeB.performUnlockCallCount
+            nodeA.coordinator.handleLocalScreenUnlocked(
+                wasPreviouslyLocked: true,
+                connectedEligibleHostIds: ["Beta-Mac"],
+                disconnectedEligibleHostIds: []
+            )
+            assertEqual(nodeB.performUnlockCallCount, callsBeforeAutoBlocked)
+
+            // Manual unlock overrides circuit breaker & stale invalid flag after OpenDirectory re-verifies .valid
+            currentTime += 5.0
+            nodeB.unlockOutcome = .unlocked
+            assertTrue(nodeA.coordinator.toggleRemoteLockState(for: "Beta-Mac"))
+            assertFalse(nodeB.isLocked, "Manual unlock must recover even when auto-unlock circuit breaker tripped")
+            assertFalse(storeB.isPasswordInvalid, "Valid OD verification during manual unlock must clear invalid flag")
+            assertEqual(nodeB.coordinator.consecutiveFailures, 0)
+
+            // 5. Manual unlock rate-limiting cooldown (< 2.0s)
+            nodeB.isLocked = true
+            nodeB.coordinator.handleLocalScreenLocked(connectedCapableHostIds: ["Alpha-Mac"])
+            currentTime += 0.5
+            let callsBeforeCooldown = nodeB.performUnlockCallCount
+            assertTrue(nodeA.coordinator.toggleRemoteLockState(for: "Beta-Mac"))
+            assertEqual(nodeB.performUnlockCallCount, callsBeforeCooldown, "Manual unlock within 2s cooldown must be rejected")
+            assertTrue(nodeB.isLocked)
+
+            // After cooldown elapses, manual unlock succeeds
+            currentTime += 3.0
+            assertTrue(nodeA.coordinator.toggleRemoteLockState(for: "Beta-Mac"))
+            assertFalse(nodeB.isLocked)
+
+            // 6. Missing peer key warning when manually unlocking without key
+            storeA.removePeerSecret(for: "Beta-Mac")
+            nodeA.autoUnlockEnabled = false
+            nodeB.isLocked = true
+            nodeB.coordinator.handleLocalScreenLocked(connectedCapableHostIds: ["Alpha-Mac"])
+            let logsBeforeMissingKey = nodeA.loggedEvents.count
+            assertFalse(nodeA.coordinator.toggleRemoteLockState(for: "Beta-Mac"))
+            assertEqual(nodeA.loggedEvents.count, logsBeforeMissingKey + 1)
+
+            // 7. Disconnect cleanup removes cached peer status
+            nodeA.coordinator.handlePeerDisconnected("Beta-Mac")
+            assertNil(nodeA.coordinator.peerStatus(for: "Beta-Mac"))
+            assertFalse(nodeA.coordinator.isTransitionInFlight(for: "Beta-Mac"))
+        }
+
+        runTest("testControlLockPolicyAndManualLockWhileControlled") {
+            // 1. makeManualLockInfoDict sets manual key to true
+            let manualInfo = ControlLockPolicy.makeManualLockInfoDict()
+            assertEqual(manualInfo[AutoUnlockWireKey.manual] as? Bool, true)
+
+            // 2. Passive controlLock while client is controlling must be ignored (fd9ee95 invariant)
+            assertEqual(
+                ControlLockPolicy.evaluate(
+                    infoDict: [:],
+                    isPeerPaired: true,
+                    isClientControlling: true,
+                    isServerControlled: false
+                ),
+                .ignorePassiveWhileControlling
+            )
+
+            // 3. Passive controlLock when controlled (not controlling) tears down server control and locks
+            assertEqual(
+                ControlLockPolicy.evaluate(
+                    infoDict: [:],
+                    isPeerPaired: true,
+                    isClientControlling: false,
+                    isServerControlled: true
+                ),
+                .performLock(stopClientControl: false, stopServerControl: true)
+            )
+
+            // 4. Passive controlLock when idle performs lock without stopping either controller
+            assertEqual(
+                ControlLockPolicy.evaluate(
+                    infoDict: [:],
+                    isPeerPaired: true,
+                    isClientControlling: false,
+                    isServerControlled: false
+                ),
+                .performLock(stopClientControl: false, stopServerControl: false)
+            )
+
+            // 5. Explicit manual controlLock from paired peer while controlling A->B tears down client control and locks A
+            assertEqual(
+                ControlLockPolicy.evaluate(
+                    infoDict: manualInfo,
+                    isPeerPaired: true,
+                    isClientControlling: true,
+                    isServerControlled: false
+                ),
+                .performLock(stopClientControl: true, stopServerControl: false)
+            )
+
+            // 6. Explicit manual controlLock from paired peer while being controlled tears down server control and locks
+            assertEqual(
+                ControlLockPolicy.evaluate(
+                    infoDict: manualInfo,
+                    isPeerPaired: true,
+                    isClientControlling: false,
+                    isServerControlled: true
+                ),
+                .performLock(stopClientControl: false, stopServerControl: true)
+            )
+
+            // 7. Explicit manual controlLock from unpaired peer must be rejected
+            assertEqual(
+                ControlLockPolicy.evaluate(
+                    infoDict: manualInfo,
+                    isPeerPaired: false,
+                    isClientControlling: true,
+                    isServerControlled: false
+                ),
+                .ignoreUnpairedPeer
+            )
+
+            // 8. Non-true/malformed manual flags while controlling are treated as passive and ignored
+            assertEqual(
+                ControlLockPolicy.evaluate(
+                    infoDict: [AutoUnlockWireKey.manual: false],
+                    isPeerPaired: true,
+                    isClientControlling: true,
+                    isServerControlled: false
+                ),
+                .ignorePassiveWhileControlling
+            )
+            assertEqual(
+                ControlLockPolicy.evaluate(
+                    infoDict: [AutoUnlockWireKey.manual: "true"],
+                    isPeerPaired: true,
+                    isClientControlling: true,
+                    isServerControlled: false
+                ),
+                .ignorePassiveWhileControlling
+            )
+
+            // 9. End-to-end 2-node simulation: A controls B, user clicks Lock A on B
+            let dirA = try makeTempDir("nodeA-ctrl-lock")
+            let dirB = try makeTempDir("nodeB-ctrl-lock")
+            defer {
+                try? FileManager.default.removeItem(at: dirA)
+                try? FileManager.default.removeItem(at: dirB)
+            }
+
+            let storeA = UnlockCredentialStore(directoryURL: dirA, platformUUIDProvider: { "UUID-A" }, postNotifications: false)
+            let storeB = UnlockCredentialStore(directoryURL: dirB, platformUUIDProvider: { "UUID-B" }, postNotifications: false)
+            try storeA.savePassword("AlphaSecret!1")
+            try storeB.savePassword("BetaSecret!2")
+
+            let currentTime: TimeInterval = 9000.0
+            let nodeA = MockAutoUnlockPeerNode(hostId: "Alpha-Mac", store: storeA, clock: { currentTime })
+            let nodeB = MockAutoUnlockPeerNode(hostId: "Beta-Mac", store: storeB, clock: { currentTime })
+
+            nodeA.trustedPairedHosts = ["Beta-Mac"]
+            nodeA.allowedFromPeerHosts = ["Beta-Mac"]
+            nodeA.connectedHosts = ["Beta-Mac"]
+
+            nodeB.trustedPairedHosts = ["Alpha-Mac"]
+            nodeB.allowedFromPeerHosts = ["Alpha-Mac"]
+            nodeB.connectedHosts = ["Alpha-Mac"]
+
+            nodeA.routeHandler = { from, _, type, info in
+                nodeB.coordinator.handleMessage(type, infoDict: info, from: from)
+            }
+            nodeB.routeHandler = { from, _, type, info in
+                nodeA.coordinator.handleMessage(type, infoDict: info, from: from)
+            }
+
+            var nodeAIsClientControlling = true
+            var nodeBIsServerControlled = true
+            var bounceBackTriggered = false
+
+            nodeA.coordinator.sendLocalStatus(to: "Beta-Mac")
+            nodeB.coordinator.sendLocalStatus(to: "Alpha-Mac")
+            assertEqual(nodeB.coordinator.peerStatus(for: "Alpha-Mac")?.isLocked, false)
+
+            nodeB.remoteLockHandler = { targetHostId in
+                assertEqual(targetHostId, "Alpha-Mac")
+                if nodeBIsServerControlled {
+                    nodeBIsServerControlled = false
+                }
+                let wireInfo = ControlLockPolicy.makeManualLockInfoDict()
+                let decision = ControlLockPolicy.evaluate(
+                    infoDict: wireInfo,
+                    isPeerPaired: nodeA.isPeerTrustedAndPaired("Beta-Mac"),
+                    isClientControlling: nodeAIsClientControlling,
+                    isServerControlled: false
+                )
+                assertEqual(decision, .performLock(stopClientControl: true, stopServerControl: false))
+                if case .performLock(let stopClient, _) = decision {
+                    // Simulated noteRemoteLockOrSleepReceived() prevents bouncing controlLock back to B.
+                    let noteRemoteLockTime = currentTime
+                    if stopClient {
+                        nodeAIsClientControlling = false
+                    }
+                    nodeA.isLocked = true
+                    nodeA.coordinator.handleLocalScreenLocked(connectedCapableHostIds: ["Beta-Mac"])
+                    let shouldBounce = (currentTime - noteRemoteLockTime) >= 5.0
+                    if shouldBounce {
+                        bounceBackTriggered = true
+                        nodeB.isLocked = true
+                    }
+                }
+            }
+
+            assertTrue(nodeB.coordinator.toggleRemoteLockState(for: "Alpha-Mac"))
+            assertFalse(nodeAIsClientControlling, "Controlling node A must stop client control when manually locked")
+            assertFalse(nodeBIsServerControlled, "Controlled node B must stop server control when manually locking A")
+            assertTrue(nodeA.isLocked, "Controlling node A must transition to locked")
+            assertFalse(nodeB.isLocked, "Controlled node B must stay unlocked without bounce-back")
+            assertFalse(bounceBackTriggered, "Remote lock suppression must prevent bouncing controlLock back to B")
+            assertFalse(nodeB.coordinator.isTransitionInFlight(for: "Alpha-Mac"))
+            assertEqual(nodeB.coordinator.peerStatus(for: "Alpha-Mac")?.isLocked, true)
         }
 
         // 4. ScreenUnlocker tests

@@ -461,14 +461,32 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
             SystemPowerManager.wakeUpScreen()
             return true
         case .controlLock:
-            guard !ClientController.shared.isControlling else {
+            let decision = ControlLockPolicy.evaluate(
+                infoDict: message.infoDict,
+                isPeerPaired: HostDevicesManager.shared.isPaired(with: host),
+                isClientControlling: ClientController.shared.isControlling,
+                isServerControlled: self.isControlled
+            )
+            switch decision {
+            case .ignoreUnpairedPeer:
+                warningLog("Ignoring manual controlLock from unpaired host \(host.computerName)", module: .control)
+                return true
+            case .ignorePassiveWhileControlling:
                 debugLog("Ignoring controlLock because this machine is controlling a remote peer", module: .control)
                 return true
+            case .performLock(let stopClientControl, let stopServerControl):
+                AutoUnlockManager.shared.cancelActiveInboundUnlock(reason: "remotePowerOrLockCommand")
+                // Mark remote-initiated lock before teardown/locking so screenDidLock does not bounce controlLock back to peers.
+                MainController.shared().noteRemoteLockOrSleepReceived()
+                if stopClientControl {
+                    ClientController.shared.stopControl()
+                }
+                if stopServerControl {
+                    self.stopControl(withDisconnect: false, notifyPeer: true, reason: nil)
+                }
+                SystemPowerManager.lockScreen()
+                return true
             }
-            AutoUnlockManager.shared.cancelActiveInboundUnlock(reason: "remotePowerOrLockCommand")
-            MainController.shared().noteRemoteLockOrSleepReceived()
-            SystemPowerManager.lockScreen()
-            return true
         case .controlRequest:
             self.requestedStartControl(by: host, on: connection, with: message.controlRequestBody)
             return true

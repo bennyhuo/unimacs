@@ -345,6 +345,32 @@ struct PairedDeviceRow: View {
                 }
                 
                 if device.isConnected {
+                    if device.showsLockToggleButton {
+                        Button {
+                            viewModel.toggleRemoteLock(for: device)
+                        } label: {
+                            Group {
+                                if device.isLockTransitioning {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .scaleEffect(0.7)
+                                } else {
+                                    Image(systemName: device.isRemoteLocked ? "lock.fill" : "lock.open")
+                                        .font(.system(size: 15))
+                                        .foregroundColor(device.isRemoteLocked ? .orange : .secondary)
+                                }
+                            }
+                            .frame(width: 28, height: 28)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(device.isRemoteLocked ? Color.orange.opacity(0.15) : Color.clear)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(device.isLockTransitioning)
+                        .help(device.isRemoteLocked ? "Locked — Click to unlock \(device.name)" : "Unlocked — Click to lock \(device.name)")
+                    }
+
                     // Share Output Button
                     Button {
                         let newValue = !device.shareOutput
@@ -413,6 +439,12 @@ struct PairedDeviceRow: View {
                 } else {
                     Button("Connect") { onConnect() }
                 }
+            }
+            if device.showsLockToggleButton {
+                Button(device.isRemoteLocked ? "Unlock Screen" : "Lock Screen") {
+                    viewModel.toggleRemoteLock(for: device)
+                }
+                .disabled(device.isLockTransitioning)
             }
             if device.lastError != nil {
                 Button("Clear Error") {

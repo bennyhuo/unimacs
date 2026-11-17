@@ -33,6 +33,9 @@ struct DeviceInfo: Identifiable, Equatable {
     let allowAutoUnlock: Bool
     let hasAutoUnlockKey: Bool
     let supportsAutoUnlock: Bool
+    let isRemoteLocked: Bool
+    let isRemoteAutoUnlockConfigured: Bool
+    let isLockTransitioning: Bool
     
     // Reference to the actual remote host
     weak var remoteHost: RemoteHost?
@@ -55,6 +58,10 @@ struct DeviceInfo: Identifiable, Equatable {
         self.allowAutoUnlock = host.allowAutoUnlock
         self.hasAutoUnlockKey = AutoUnlockManager.shared.hasPeerKey(forHostId: host.identifier)
         self.supportsAutoUnlock = host.hasCapability(.autoUnlock)
+        let peerStatus = AutoUnlockManager.shared.peerStatus(forHostId: host.identifier)
+        self.isRemoteLocked = peerStatus?.isLocked ?? false
+        self.isRemoteAutoUnlockConfigured = peerStatus?.isAutoUnlockConfigured ?? false
+        self.isLockTransitioning = AutoUnlockManager.shared.isLockTransitionInFlight(forHostId: host.identifier)
 
         let manager = DeviceConnectionManager.shared
         let isBonjourOnline = host.isInState(.peeredOnline)
@@ -158,6 +165,10 @@ struct DeviceInfo: Identifiable, Equatable {
     var showsRetryAction: Bool {
         linkPhase == .reconnecting
     }
+
+    var showsLockToggleButton: Bool {
+        isConnected && supportsAutoUnlock && allowAutoUnlock && isRemoteAutoUnlockConfigured
+    }
     
     static func == (lhs: DeviceInfo, rhs: DeviceInfo) -> Bool {
         lhs.id == rhs.id &&
@@ -175,7 +186,10 @@ struct DeviceInfo: Identifiable, Equatable {
         lhs.hasMicHardware == rhs.hasMicHardware &&
         lhs.allowAutoUnlock == rhs.allowAutoUnlock &&
         lhs.hasAutoUnlockKey == rhs.hasAutoUnlockKey &&
-        lhs.supportsAutoUnlock == rhs.supportsAutoUnlock
+        lhs.supportsAutoUnlock == rhs.supportsAutoUnlock &&
+        lhs.isRemoteLocked == rhs.isRemoteLocked &&
+        lhs.isRemoteAutoUnlockConfigured == rhs.isRemoteAutoUnlockConfigured &&
+        lhs.isLockTransitioning == rhs.isLockTransitioning
     }
 }
 
@@ -266,6 +280,13 @@ final class DevicesViewModel: ObservableObject {
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .UMAutoUnlockCredentialStateDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.loadDevices()
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .UMAutoUnlockPeerStatusDidChange)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.loadDevices()
@@ -440,6 +461,11 @@ final class DevicesViewModel: ObservableObject {
         if enabled && DeviceConnectionManager.shared.isConnected(to: host) {
             AutoUnlockManager.shared.ensurePeerKeyExchanged(with: host)
         }
+        loadDevices()
+    }
+
+    func toggleRemoteLock(for device: DeviceInfo) {
+        _ = AutoUnlockManager.shared.toggleRemoteLockState(forHostId: device.id)
         loadDevices()
     }
     
