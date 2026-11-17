@@ -41,13 +41,19 @@ Because Unimacs intercepts and simulates low-level user input and streams audio,
 
 ### Getting Started
 
-1. **Build & Run**:
-   * By default, [Signing.xcconfig](Signing.xcconfig) configures ad-hoc signing (`-`) so Unimacs builds out of the box with zero Apple Developer account setup.
-   * Open [Unimacs.xcodeproj](Unimacs.xcodeproj) in Xcode and run the `Unimacs` target, or compile via command line:
+1. **Install (Pre-built Release or Build from Source)**:
+   * **Download Pre-built Release**: Download `unimacs-<tag>-macos-universal.zip` from [GitHub Releases](https://github.com/bennyhuo/unimacs/releases), unzip `unimacs.app` into `/Applications`, and clear macOS Gatekeeper quarantine before the first launch (release builds are currently ad-hoc signed without an Apple Developer certificate):
      ```bash
-     ./Scripts/build-debug.sh
+     xattr -cr /Applications/unimacs.app
      ```
-   * *(Optional)* To sign local builds with your own `Apple Development` certificate so macOS Accessibility/TCC permissions persist across rebuilds, create an untracked `Local.xcconfig` in the repository root (see [Signing.xcconfig](Signing.xcconfig) for template settings).
+     Then open `/Applications/unimacs.app` and grant **Accessibility** permission in **System Settings → Privacy & Security → Accessibility**.
+   * **Build from Source**:
+     * By default, [Signing.xcconfig](Signing.xcconfig) configures ad-hoc signing (`-`) so Unimacs builds out of the box with zero Apple Developer account setup.
+     * Open [Unimacs.xcodeproj](Unimacs.xcodeproj) in Xcode and run the `Unimacs` target, or compile via command line:
+       ```bash
+       ./Scripts/build-debug.sh
+       ```
+     * *(Optional)* To sign local builds with your own `Apple Development` certificate so macOS Accessibility/TCC permissions persist across rebuilds, create an untracked `Local.xcconfig` in the repository root (see [Signing.xcconfig](Signing.xcconfig) for template settings).
 2. **Pairing**:
    * Open Unimacs on both Mac computers.
    * Navigate to the **Devices** tab in the sidebar.
@@ -65,7 +71,8 @@ Because Unimacs intercepts and simulates low-level user input and streams audio,
 Unimacs includes a suite of helper scripts in the [Scripts](Scripts) directory to streamline development and multi-Mac troubleshooting:
 
 * **[build-debug.sh](Scripts/build-debug.sh)**: Compiles the Debug build of Unimacs from the command line.
-* **[package-distribute.sh](Scripts/package-distribute.sh)**: Builds an ad-hoc signed Universal Binary (`arm64` + `x86_64`) using the `Distribute` configuration and packages `unimacs.app` into a `.zip` archive.
+* **[package-distribute.sh](Scripts/package-distribute.sh)**: Builds an ad-hoc signed Universal Binary (`arm64` + `x86_64`) using the `Distribute` configuration (under the `Unimacs` scheme) and packages `unimacs.app` into a `.zip` archive.
+* **[generate-release-notes.sh](Scripts/generate-release-notes.sh)**: Generates GitHub Release notes (including ad-hoc Gatekeeper bypass instructions and SHA-256 checksums) for CI release workflows.
 * **[setup-ssh-peer.sh](Scripts/setup-ssh-peer.sh)**: Configures passwordless SSH keys with a remote Mac (e.g., test machine or VM) for deployment and log collection.
 * **[rebuild-and-deploy.sh](Scripts/rebuild-and-deploy.sh)**: Rebuilds Unimacs, clears logs, and restarts the app locally; when given remote targets (or `--all` with `Scripts/devices.txt`, see [devices.txt.example](Scripts/devices.txt.example)), also syncs and restarts builds on remote Macs/VMs.
 * **[unimacs-logs.sh](Scripts/unimacs-logs.sh)**: Fetches and merges log files from local and remote hosts over SSH into a single chronological timeline (tagged `[L]` and `[<alias>]`) for diagnosing cursor handoffs and network state transitions.

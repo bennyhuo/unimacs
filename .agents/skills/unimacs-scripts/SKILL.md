@@ -167,7 +167,7 @@ If no arguments are provided, it **only** rebuilds, cleans logs, and restarts Un
 ## 7. package-distribute.sh
 
 **Path**: [package-distribute.sh](Scripts/package-distribute.sh)  
-**Purpose**: Builds Unimacs using the `Distribute` configuration (Universal Binary `arm64` + `x86_64`, Ad-hoc signed with `-` and no Apple Developer Team requirement), verifies the code signature and architectures, and packages `unimacs.app` into a redistributable `.zip` archive.
+**Purpose**: Builds Unimacs using the `Unimacs` scheme and `Distribute` configuration (Universal Binary `arm64` + `x86_64`, Ad-hoc signed with `-` and no Apple Developer Team requirement), verifies the code signature and architectures, and packages `unimacs.app` into a redistributable `.zip` archive.
 
 ### Usage
 ```bash
@@ -176,6 +176,7 @@ If no arguments are provided, it **only** rebuilds, cleans logs, and restarts Un
 
 - **Options**:
   - `-o, --out <path>`: Output `.zip` file path or destination directory (default: `Build/Products/Distribute/unimacs.zip`).
+  - `-v, --version <ver>`: Set `CURRENT_PROJECT_VERSION` (`CFBundleShortVersionString` / `CFBundleVersion`), stripping a leading `v`/`V` when followed by a digit.
   - `-c, --clean`: Run `xcodebuild clean` before building.
   - `-h, --help`: Show help text.
 
@@ -184,6 +185,46 @@ If no arguments are provided, it **only** rebuilds, cleans logs, and restarts Un
 # Build and package to default path (Build/Products/Distribute/unimacs.zip)
 ./Scripts/package-distribute.sh
 
-# Clean build and output zip to Desktop
-./Scripts/package-distribute.sh -c -o ~/Desktop/unimacs.zip
+# Clean build with release version and output zip to Desktop
+./Scripts/package-distribute.sh -c -v v1.4.0 -o ~/Desktop/unimacs.zip
+```
+
+---
+
+## 8. generate-release-notes.sh
+
+**Path**: [generate-release-notes.sh](Scripts/generate-release-notes.sh)  
+**Purpose**: Generates GitHub Release markdown notes for ad-hoc signed `Distribute` builds (including Gatekeeper quarantine removal instructions in English and Chinese, Accessibility setup notes, and optional SHA-256 checksums), and provides tag version normalization and prerelease detection helpers used by `.github/workflows/release.yml`.
+
+### Usage
+```bash
+./Scripts/generate-release-notes.sh --tag <tag> [options]
+./Scripts/generate-release-notes.sh --normalize-version <tag>
+./Scripts/generate-release-notes.sh --is-prerelease <tag>
+```
+
+- **Options**:
+  - `-t, --tag <tag>`: Release tag (required when generating release notes).
+  - `-a, --asset <filename>`: Zip asset filename (default: `unimacs-<tag>-macos-universal.zip`).
+  - `-s, --sha256 <hash>`: SHA-256 checksum of the zip asset.
+  - `-c, --changelog-file <path>`: Auto-generated changelog markdown file to append.
+  - `-e, --existing-notes-file <path>`: Existing release body markdown file for idempotent updates.
+  - `-o, --out <path>`: Output markdown file path (default: stdout).
+  - `--normalize-version <tag>`: Strip leading `v`/`V` before digits and print normalized version.
+  - `--is-prerelease <tag>`: Print `true` or `false` based on tag prerelease suffix.
+  - `-h, --help`: Show help text.
+
+### Examples
+```bash
+# Generate release notes with checksum and changelog
+./Scripts/generate-release-notes.sh \
+  --tag v1.4.0 \
+  --asset unimacs-v1.4.0-macos-universal.zip \
+  --sha256 abc123... \
+  --changelog-file /tmp/changelog.md \
+  --out /tmp/release-notes.md
+
+# Normalize version / check prerelease status
+./Scripts/generate-release-notes.sh --normalize-version v1.4.0
+./Scripts/generate-release-notes.sh --is-prerelease v1.4.0-rc.1
 ```

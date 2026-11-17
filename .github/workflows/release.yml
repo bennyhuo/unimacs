@@ -1,0 +1,175 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to build and release (e.g. v1.4.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release (auto-detected from tag suffix if false)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & Publish Ad-Hoc Release
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Prepare release metadata
+        id: meta
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          RAW_TAG="${INPUT_TAG:-${REF_NAME}}"
+          TAG="${RAW_TAG#"${RAW_TAG%%[![:space:]]*}"}"
+          TAG="${TAG%"${TAG##*[![:space:]]}"}"
+
+          if [[ -z "${TAG}" ]]; then
+            echo "error: Release tag cannot be empty." >&2
+            exit 1
+          fi
+
+          VERSION="$(./Scripts/generate-release-notes.sh --normalize-version "${TAG}")"
+          AUTO_PRERELEASE="$(./Scripts/generate-release-notes.sh --is-prerelease "${TAG}")"
+
+          if [[ "${INPUT_PRERELEASE}" == "true" || "${AUTO_PRERELEASE}" == "true" ]]; then
+            IS_PRERELEASE="true"
+          else
+            IS_PRERELEASE="false"
+          fi
+
+          ASSET_NAME="unimacs-${TAG}-macos-universal.zip"
+          ASSET_PATH="dist/${ASSET_NAME}"
+
+          {
+            echo "tag=${TAG}"
+            echo "version=${VERSION}"
+            echo "is_prerelease=${IS_PRERELEASE}"
+            echo "asset_name=${ASSET_NAME}"
+            echo "asset_path=${ASSET_PATH}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "Release Tag   : ${TAG}"
+          echo "App Version   : ${VERSION}"
+          echo "Pre-release   : ${IS_PRERELEASE}"
+          echo "Asset Path    : ${ASSET_PATH}"
+          xcodebuild -version
+          swift --version
+
+      - name: Build & package Universal ad-hoc app
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          ASSET_PATH: ${{ steps.meta.outputs.asset_path }}
+        run: |
+          set -euo pipefail
+          ./Scripts/package-distribute.sh \
+            --clean \
+            --version "${VERSION}" \
+            --out "${ASSET_PATH}"
+
+      - name: Generate SHA-256 checksum
+        id: checksum
+        env:
+          ASSET_NAME: ${{ steps.meta.outputs.asset_name }}
+          ASSET_PATH: ${{ steps.meta.outputs.asset_path }}
+        run: |
+          set -euo pipefail
+          SHA256="$(shasum -a 256 "${ASSET_PATH}" | awk '{print $1}')"
+          (
+            cd dist
+            shasum -a 256 "${ASSET_NAME}" > "${ASSET_NAME}.sha256"
+          )
+          echo "sha256=${SHA256}" >> "${GITHUB_OUTPUT}"
+          cat "${ASSET_PATH}.sha256"
+
+      - name: Upload workflow build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: unimacs-${{ steps.meta.outputs.tag }}-macos-universal
+          path: |
+            dist/${{ steps.meta.outputs.asset_name }}
+            dist/${{ steps.meta.outputs.asset_name }}.sha256
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          IS_PRERELEASE: ${{ steps.meta.outputs.is_prerelease }}
+          ASSET_NAME: ${{ steps.meta.outputs.asset_name }}
+          ASSET_PATH: ${{ steps.meta.outputs.asset_path }}
+          SHA256: ${{ steps.checksum.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+
+          WORK_DIR="$(mktemp -d)"
+          trap 'rm -rf "${WORK_DIR}"' EXIT
+
+          NOTES_FILE="${WORK_DIR}/release-notes.md"
+          EXISTING_FILE="${WORK_DIR}/existing-notes.md"
+          CHANGELOG_FILE="${WORK_DIR}/changelog.md"
+
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json body --jq '.body // ""' > "${EXISTING_FILE}"
+            ./Scripts/generate-release-notes.sh \
+              --tag "${TAG}" \
+              --asset "${ASSET_NAME}" \
+              --sha256 "${SHA256}" \
+              --existing-notes-file "${EXISTING_FILE}" \
+              --out "${NOTES_FILE}"
+
+            gh release upload "${TAG}" "${ASSET_PATH}" "${ASSET_PATH}.sha256" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+            gh release edit "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --notes-file "${NOTES_FILE}"
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="${TAG}" \
+              --jq '.body // ""' > "${CHANGELOG_FILE}" || true
+
+            ./Scripts/generate-release-notes.sh \
+              --tag "${TAG}" \
+              --asset "${ASSET_NAME}" \
+              --sha256 "${SHA256}" \
+              --changelog-file "${CHANGELOG_FILE}" \
+              --out "${NOTES_FILE}"
+
+            CREATE_ARGS=(
+              "${TAG}"
+              "${ASSET_PATH}"
+              "${ASSET_PATH}.sha256"
+              --repo "${GITHUB_REPOSITORY}"
+              --title "Unimacs ${TAG}"
+              --notes-file "${NOTES_FILE}"
+            )
+            if [[ "${IS_PRERELEASE}" == "true" ]]; then
+              CREATE_ARGS+=(--prerelease)
+            fi
+
+            gh release create "${CREATE_ARGS[@]}"
+          fi
