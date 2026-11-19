@@ -18,6 +18,14 @@ enum ScreenUnlockOutcome: Equatable, Sendable {
     case failed(String)
 }
 
+enum PromptAutofillOutcome: Equatable, Sendable {
+    case typedAndSubmitted
+    case abortedPromptClosed
+    case abortedScreenLocked
+    case cancelled
+    case failed(String)
+}
+
 final class ScreenUnlockCancellationToken: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
@@ -39,6 +47,7 @@ protocol ScreenUnlockingDriver: Sendable {
     func wakeUpScreen()
     func isDisplayAsleep() -> Bool
     func isScreenLockedLive() -> Bool
+    func isPasswordPromptActiveLive(_ kind: PasswordPromptKind) -> Bool
     func sleep(milliseconds: UInt64)
     @discardableResult
     func postKeyCode(_ keyCode: CGKeyCode, keyDown: Bool, flags: CGEventFlags, unicodeChars: [UniChar]?) -> Bool
@@ -63,6 +72,14 @@ final class SystemScreenUnlockDriver: ScreenUnlockingDriver, @unchecked Sendable
 
     func isScreenLockedLive() -> Bool {
         ScreenUnlocker.isScreenLockedLive()
+    }
+
+    func isPasswordPromptActiveLive(_ kind: PasswordPromptKind) -> Bool {
+        #if !STANDALONE_UNIT_TEST
+        return SystemPasswordPromptInspector.isPromptKindStillActiveLive(kind)
+        #else
+        return true
+        #endif
     }
 
     func sleep(milliseconds: UInt64) {
@@ -207,6 +224,42 @@ enum ScreenUnlocker {
         return map
     }
 
+    private enum TypingAbortReason {
+        case cancelled
+        case screenUnlocked
+        case screenLocked
+        case promptClosed
+        case failed(String)
+
+        func asScreenUnlockOutcome() -> ScreenUnlockOutcome {
+            switch self {
+            case .cancelled:
+                return .cancelled
+            case .screenUnlocked:
+                return .alreadyUnlocked
+            case .screenLocked, .promptClosed:
+                return .cancelled
+            case .failed(let message):
+                return .failed(message)
+            }
+        }
+
+        func asPromptAutofillOutcome() -> PromptAutofillOutcome {
+            switch self {
+            case .cancelled:
+                return .cancelled
+            case .screenUnlocked:
+                return .cancelled
+            case .screenLocked:
+                return .abortedScreenLocked
+            case .promptClosed:
+                return .abortedPromptClosed
+            case .failed(let message):
+                return .failed(message)
+            }
+        }
+    }
+
     static func performUnlock(
         keyStrokes: [KeyStrokeSpec],
         cancellationToken: ScreenUnlockCancellationToken,
@@ -216,11 +269,18 @@ enum ScreenUnlocker {
             return .failed("Password keystroke sequence is empty.")
         }
 
-        if cancellationToken.isCancelled {
-            return .cancelled
+        let guardState: () -> TypingAbortReason? = {
+            if cancellationToken.isCancelled {
+                return .cancelled
+            }
+            if !driver.isScreenLockedLive() {
+                return .screenUnlocked
+            }
+            return nil
         }
-        if !driver.isScreenLockedLive() {
-            return .alreadyUnlocked
+
+        if let abort = guardState() {
+            return abort.asScreenUnlockOutcome()
         }
 
         let wasDisplayAsleep = driver.isDisplayAsleep()
@@ -228,11 +288,8 @@ enum ScreenUnlocker {
 
         var waitedDisplayMs: UInt64 = 0
         while driver.isDisplayAsleep() && waitedDisplayMs < 2500 {
-            if cancellationToken.isCancelled {
-                return .cancelled
-            }
-            if !driver.isScreenLockedLive() {
-                return .alreadyUnlocked
+            if let abort = guardState() {
+                return abort.asScreenUnlockOutcome()
             }
             driver.sleep(milliseconds: 80)
             waitedDisplayMs += 80
@@ -240,109 +297,62 @@ enum ScreenUnlocker {
 
         driver.sleep(milliseconds: wasDisplayAsleep ? 350 : 120)
 
-        if cancellationToken.isCancelled {
-            return .cancelled
-        }
-        if !driver.isScreenLockedLive() {
-            return .alreadyUnlocked
+        if let abort = guardState() {
+            return abort.asScreenUnlockOutcome()
         }
 
         // Clear any stray characters in the Lock Screen password field before typing.
-        if let earlyOutcome = postKeyPress(
+        if let abort = postKeyPress(
             keyCode: keyCodeDelete,
             flags: [],
             unicodeChars: [0x08],
-            cancellationToken: cancellationToken,
+            guardState: guardState,
             driver: driver
         ) {
-            return earlyOutcome
+            return abort.asScreenUnlockOutcome()
         }
         driver.sleep(milliseconds: 80)
 
-        if let earlyOutcome = postKeyPress(
+        if let abort = postKeyPress(
             keyCode: keyCodeA,
             flags: .maskCommand,
             unicodeChars: [0x61],
-            cancellationToken: cancellationToken,
+            guardState: guardState,
             driver: driver
         ) {
-            return earlyOutcome
+            return abort.asScreenUnlockOutcome()
         }
         driver.sleep(milliseconds: 15)
 
-        if let earlyOutcome = postKeyPress(
+        if let abort = postKeyPress(
             keyCode: keyCodeDelete,
             flags: [],
             unicodeChars: [0x08],
-            cancellationToken: cancellationToken,
+            guardState: guardState,
             driver: driver
         ) {
-            return earlyOutcome
+            return abort.asScreenUnlockOutcome()
         }
         driver.sleep(milliseconds: 40)
 
-        for stroke in keyStrokes {
-            if cancellationToken.isCancelled {
-                return .cancelled
-            }
-            if !driver.isScreenLockedLive() {
-                return .alreadyUnlocked
-            }
-
-            switch stroke {
-            case .keyCode(let code, let flags, let char):
-                if let earlyOutcome = postKeyPress(
-                    keyCode: code,
-                    flags: flags,
-                    unicodeChars: [char],
-                    cancellationToken: cancellationToken,
-                    driver: driver
-                ) {
-                    return earlyOutcome
-                }
-            case .unicode(let chars):
-                if cancellationToken.isCancelled {
-                    return .cancelled
-                }
-                if !driver.isScreenLockedLive() {
-                    return .alreadyUnlocked
-                }
-                guard driver.postUnicodeKey(chars, keyDown: true) else {
-                    return .failed("Failed to create Unicode key-down event.")
-                }
-                driver.sleep(milliseconds: 12)
-                if cancellationToken.isCancelled {
-                    _ = driver.postUnicodeKey(chars, keyDown: false)
-                    return .cancelled
-                }
-                if !driver.isScreenLockedLive() {
-                    return .alreadyUnlocked
-                }
-                guard driver.postUnicodeKey(chars, keyDown: false) else {
-                    return .failed("Failed to create Unicode key-up event.")
-                }
-            }
-
-            driver.sleep(milliseconds: 18)
+        if let abort = typeKeyStrokes(keyStrokes, guardState: guardState, driver: driver) {
+            return abort.asScreenUnlockOutcome()
         }
 
-        if cancellationToken.isCancelled {
-            return .cancelled
-        }
-        if !driver.isScreenLockedLive() {
-            return .alreadyUnlocked
+        if let abort = guardState() {
+            return abort.asScreenUnlockOutcome()
         }
 
         driver.sleep(milliseconds: 30)
 
-        if let earlyOutcome = postKeyPress(
+        if let abort = postKeyPress(
             keyCode: keyCodeReturn,
             flags: [],
             unicodeChars: [0x0D],
-            cancellationToken: cancellationToken,
+            guardState: guardState,
             driver: driver
         ) {
-            return earlyOutcome
+            return abort.asScreenUnlockOutcome()
         }
 
         var waitedUnlockMs: UInt64 = 0
@@ -360,18 +370,143 @@ enum ScreenUnlocker {
         return driver.isScreenLockedLive() ? .timedOutStillLocked : .unlocked
     }
 
+    static func performPromptAutofill(
+        keyStrokes: [KeyStrokeSpec],
+        promptKind: PasswordPromptKind,
+        cancellationToken: ScreenUnlockCancellationToken,
+        driver: ScreenUnlockingDriver = SystemScreenUnlockDriver()
+    ) -> PromptAutofillOutcome {
+        guard !keyStrokes.isEmpty else {
+            return .failed("Password keystroke sequence is empty.")
+        }
+
+        let guardState: () -> TypingAbortReason? = {
+            if cancellationToken.isCancelled {
+                return .cancelled
+            }
+            if driver.isScreenLockedLive() {
+                return .screenLocked
+            }
+            if !driver.isPasswordPromptActiveLive(promptKind) {
+                return .promptClosed
+            }
+            return nil
+        }
+
+        if let abort = guardState() {
+            return abort.asPromptAutofillOutcome()
+        }
+
+        // Clear any modifier flags possibly lingering from the manual shortcut chord.
+        _ = driver.postFlagsChanged([])
+        driver.sleep(milliseconds: 25)
+
+        if let abort = guardState() {
+            return abort.asPromptAutofillOutcome()
+        }
+
+        // Never send Cmd+A / Delete in a terminal prompt where Cmd+A selects scrollback.
+        if promptKind == .systemDialog || promptKind == .secureTextField {
+            if let abort = postKeyPress(
+                keyCode: keyCodeA,
+                flags: .maskCommand,
+                unicodeChars: [0x61],
+                guardState: guardState,
+                driver: driver
+            ) {
+                return abort.asPromptAutofillOutcome()
+            }
+            driver.sleep(milliseconds: 15)
+
+            if let abort = postKeyPress(
+                keyCode: keyCodeDelete,
+                flags: [],
+                unicodeChars: [0x08],
+                guardState: guardState,
+                driver: driver
+            ) {
+                return abort.asPromptAutofillOutcome()
+            }
+            driver.sleep(milliseconds: 30)
+        }
+
+        if let abort = typeKeyStrokes(keyStrokes, guardState: guardState, driver: driver) {
+            return abort.asPromptAutofillOutcome()
+        }
+
+        driver.sleep(milliseconds: 25)
+
+        if let abort = guardState() {
+            return abort.asPromptAutofillOutcome()
+        }
+
+        if let abort = postKeyPress(
+            keyCode: keyCodeReturn,
+            flags: [],
+            unicodeChars: [0x0D],
+            guardState: guardState,
+            driver: driver
+        ) {
+            return abort.asPromptAutofillOutcome()
+        }
+
+        return .typedAndSubmitted
+    }
+
+    private static func typeKeyStrokes(
+        _ keyStrokes: [KeyStrokeSpec],
+        guardState: () -> TypingAbortReason?,
+        driver: ScreenUnlockingDriver
+    ) -> TypingAbortReason? {
+        for stroke in keyStrokes {
+            if let abort = guardState() {
+                return abort
+            }
+
+            switch stroke {
+            case .keyCode(let code, let flags, let char):
+                if let abort = postKeyPress(
+                    keyCode: code,
+                    flags: flags,
+                    unicodeChars: [char],
+                    guardState: guardState,
+                    driver: driver
+                ) {
+                    return abort
+                }
+            case .unicode(let chars):
+                if let abort = guardState() {
+                    return abort
+                }
+                guard driver.postUnicodeKey(chars, keyDown: true) else {
+                    return .failed("Failed to create Unicode key-down event.")
+                }
+                driver.sleep(milliseconds: 12)
+                if let abort = guardState() {
+                    if case .cancelled = abort {
+                        _ = driver.postUnicodeKey(chars, keyDown: false)
+                    }
+                    return abort
+                }
+                guard driver.postUnicodeKey(chars, keyDown: false) else {
+                    return .failed("Failed to create Unicode key-up event.")
+                }
+            }
+
+            driver.sleep(milliseconds: 18)
+        }
+        return nil
+    }
+
     private static func postKeyPress(
         keyCode: CGKeyCode,
         flags: CGEventFlags,
         unicodeChars: [UniChar]?,
-        cancellationToken: ScreenUnlockCancellationToken,
+        guardState: () -> TypingAbortReason?,
         driver: ScreenUnlockingDriver
-    ) -> ScreenUnlockOutcome? {
-        if cancellationToken.isCancelled {
-            return .cancelled
-        }
-        if !driver.isScreenLockedLive() {
-            return .alreadyUnlocked
+    ) -> TypingAbortReason? {
+        if let abort = guardState() {
+            return abort
         }
 
         let hasModifiers = !flags.isEmpty
@@ -388,15 +523,12 @@ enum ScreenUnlocker {
 
         driver.sleep(milliseconds: 12)
 
-        if cancellationToken.isCancelled {
-            _ = driver.postKeyCode(keyCode, keyDown: false, flags: flags, unicodeChars: unicodeChars)
+        if let abort = guardState() {
+            if case .cancelled = abort {
+                _ = driver.postKeyCode(keyCode, keyDown: false, flags: flags, unicodeChars: unicodeChars)
+            }
             if hasModifiers { _ = driver.postFlagsChanged([]) }
-            return .cancelled
-        }
-        if !driver.isScreenLockedLive() {
-            // Release held modifiers cleanly without emitting further keystrokes.
-            if hasModifiers { _ = driver.postFlagsChanged([]) }
-            return .alreadyUnlocked
+            return abort
         }
 
         guard driver.postKeyCode(keyCode, keyDown: false, flags: flags, unicodeChars: unicodeChars) else {

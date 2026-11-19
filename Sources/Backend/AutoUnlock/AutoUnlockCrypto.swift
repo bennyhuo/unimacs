@@ -5,6 +5,18 @@ import Foundation
 import CryptoKit
 import Security
 
+enum AutoUnlockLogLevel {
+    case info
+    case success
+    case warning
+    case error
+}
+
+enum AutoUnlockLogAction {
+    case openAutoUnlockSettings
+    case openAccessibilitySettings
+}
+
 enum AutoUnlockCryptoError: Error, LocalizedError, Equatable {
     case invalidPublicKey
     case invalidSecretLength
@@ -26,6 +38,7 @@ enum AutoUnlockCrypto {
 
     private static let peerSecretInfo = Data("unimacs-autounlock-peer-secret-v1".utf8)
     private static let challengeDomainTag = Data("unimacs-autounlock-v1".utf8)
+    private static let biometricChallengeDomainTag = Data("unimacs-biometric-auth-v1".utf8)
     static let expectedKeyLength = 32
 
     static func generateKeyPair() -> Curve25519.KeyAgreement.PrivateKey {
@@ -110,10 +123,6 @@ enum AutoUnlockCrypto {
         targetHostId: String,
         isManual: Bool = false
     ) throws -> Data {
-        guard secret.count == expectedKeyLength else {
-            throw AutoUnlockCryptoError.invalidSecretLength
-        }
-        let key = SymmetricKey(data: secret)
         let transcript = challengeTranscript(
             requestId: requestId,
             nonce: nonce,
@@ -121,8 +130,7 @@ enum AutoUnlockCrypto {
             targetHostId: targetHostId,
             isManual: isManual
         )
-        let mac = HMAC<SHA256>.authenticationCode(for: transcript, using: key)
-        return Data(mac)
+        return try computeHMAC(secret: secret, transcript: transcript)
     }
 
     static func verifyChallengeHMAC(
@@ -134,10 +142,6 @@ enum AutoUnlockCrypto {
         targetHostId: String,
         isManual: Bool = false
     ) -> Bool {
-        guard secret.count == expectedKeyLength, hmac.count == expectedKeyLength else {
-            return false
-        }
-        let key = SymmetricKey(data: secret)
         let transcript = challengeTranscript(
             requestId: requestId,
             nonce: nonce,
@@ -145,6 +149,83 @@ enum AutoUnlockCrypto {
             targetHostId: targetHostId,
             isManual: isManual
         )
+        return verifyHMAC(hmac, secret: secret, transcript: transcript)
+    }
+
+    static func biometricChallengeTranscript(
+        requestId: String,
+        nonce: Data,
+        controllerHostId: String,
+        targetHostId: String,
+        promptKindRaw: String,
+        isManual: Bool
+    ) -> Data {
+        var data = Data()
+        appendLengthPrefixed(biometricChallengeDomainTag, to: &data)
+        appendLengthPrefixed(Data(requestId.utf8), to: &data)
+        appendLengthPrefixed(nonce, to: &data)
+        appendLengthPrefixed(Data(controllerHostId.utf8), to: &data)
+        appendLengthPrefixed(Data(targetHostId.utf8), to: &data)
+        appendLengthPrefixed(Data(promptKindRaw.utf8), to: &data)
+        appendLengthPrefixed(Data([isManual ? 1 : 0]), to: &data)
+        return data
+    }
+
+    static func computeBiometricChallengeHMAC(
+        secret: Data,
+        requestId: String,
+        nonce: Data,
+        controllerHostId: String,
+        targetHostId: String,
+        promptKindRaw: String,
+        isManual: Bool
+    ) throws -> Data {
+        let transcript = biometricChallengeTranscript(
+            requestId: requestId,
+            nonce: nonce,
+            controllerHostId: controllerHostId,
+            targetHostId: targetHostId,
+            promptKindRaw: promptKindRaw,
+            isManual: isManual
+        )
+        return try computeHMAC(secret: secret, transcript: transcript)
+    }
+
+    static func verifyBiometricChallengeHMAC(
+        _ hmac: Data,
+        secret: Data,
+        requestId: String,
+        nonce: Data,
+        controllerHostId: String,
+        targetHostId: String,
+        promptKindRaw: String,
+        isManual: Bool
+    ) -> Bool {
+        let transcript = biometricChallengeTranscript(
+            requestId: requestId,
+            nonce: nonce,
+            controllerHostId: controllerHostId,
+            targetHostId: targetHostId,
+            promptKindRaw: promptKindRaw,
+            isManual: isManual
+        )
+        return verifyHMAC(hmac, secret: secret, transcript: transcript)
+    }
+
+    private static func computeHMAC(secret: Data, transcript: Data) throws -> Data {
+        guard secret.count == expectedKeyLength else {
+            throw AutoUnlockCryptoError.invalidSecretLength
+        }
+        let key = SymmetricKey(data: secret)
+        let mac = HMAC<SHA256>.authenticationCode(for: transcript, using: key)
+        return Data(mac)
+    }
+
+    private static func verifyHMAC(_ hmac: Data, secret: Data, transcript: Data) -> Bool {
+        guard secret.count == expectedKeyLength, hmac.count == expectedKeyLength else {
+            return false
+        }
+        let key = SymmetricKey(data: secret)
         return HMAC<SHA256>.isValidAuthenticationCode(hmac, authenticating: transcript, using: key)
     }
 

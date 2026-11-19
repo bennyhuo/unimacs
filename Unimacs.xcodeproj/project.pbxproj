@@ -56,6 +56,8 @@
 				Backend/Audio/ScreenCaptureKitAudioEngine.swift,
 				Backend/AutoUnlock/AutoUnlockCrypto.swift,
 				Backend/AutoUnlock/AutoUnlockManager.swift,
+				Backend/AutoUnlock/PasswordPromptDetector.swift,
+				Backend/AutoUnlock/RemoteBiometricAuth.swift,
 				Backend/AutoUnlock/ScreenUnlocker.swift,
 				Backend/AutoUnlock/UnlockCredentialStore.swift,
 				Backend/AutoUnlock/UnlockPasswordVerifier.swift,

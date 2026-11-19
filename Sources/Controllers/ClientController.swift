@@ -594,6 +594,7 @@ class ClientController: ConnectionController, EventsListener, DeviceConnectionDe
 	func stopControl(withDisconnect disconnect: Bool, notifyPeer: Bool) {
 		let wasControlling = _state == .controllingState
 		if wasControlling {
+			RemoteBiometricAuthManager.shared.handleClientControlDidStop(reason: "clientStoppedControl")
 			if notifyPeer, let connection = self.currentConnection {
 				connection.sendAsync(Message.create(with: .controlStop))
 			}

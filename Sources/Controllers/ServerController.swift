@@ -260,6 +260,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
         }
         
         SystemPowerManager.wakeUpScreen()
+        RemoteBiometricAuthManager.shared.handleServerControlDidStart(by: host.identifier)
     }
     
     // MARK: - Stop control
@@ -347,6 +348,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
 		stopControlFallbackWorkItem = nil
 		if state == .controlled {
 			lastControlledEndTime = Date.timeIntervalSinceReferenceDate
+			RemoteBiometricAuthManager.shared.handleServerControlDidStop(reason: reason ?? "serverStoppedControl")
 		}
 		if state == .controlled, let connection = self.currentConnection {
 			ClipboardTransferCoordinator.shared.serverWillStopBeingControlled(using: connection)
@@ -440,6 +442,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
                 return true
             }
             AutoUnlockManager.shared.cancelActiveInboundUnlock(reason: "remotePowerOrLockCommand")
+            RemoteBiometricAuthManager.shared.handleServerControlDidStop(reason: "remotePowerOrLockCommand")
             MainController.shared().noteRemoteLockOrSleepReceived()
             SystemPowerManager.sleepTheSystem()
             return true
@@ -449,6 +452,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
                 return true
             }
             AutoUnlockManager.shared.cancelActiveInboundUnlock(reason: "remotePowerOrLockCommand")
+            RemoteBiometricAuthManager.shared.handleServerControlDidStop(reason: "remotePowerOrLockCommand")
             MainController.shared().noteRemoteLockOrSleepReceived()
             SystemPowerManager.sleepScreen()
             return true
@@ -476,6 +480,7 @@ class ServerController: ConnectionController, DeviceConnectionDelegate {
                 return true
             case .performLock(let stopClientControl, let stopServerControl):
                 AutoUnlockManager.shared.cancelActiveInboundUnlock(reason: "remotePowerOrLockCommand")
+                RemoteBiometricAuthManager.shared.handleServerControlDidStop(reason: "remotePowerOrLockCommand")
                 // Mark remote-initiated lock before teardown/locking so screenDidLock does not bounce controlLock back to peers.
                 MainController.shared().noteRemoteLockOrSleepReceived()
                 if stopClientControl {

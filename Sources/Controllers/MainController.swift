@@ -145,6 +145,7 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
         _ = ClientController.shared
         _ = ServerController.shared
         _ = AutoUnlockManager.shared
+        _ = RemoteBiometricAuthManager.shared
         _ = StatusItemController.default
         
         if PreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey) && AccessibilityManager.isTrusted {
@@ -254,7 +255,9 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     }
     
     func applicationWillResignActive(_ aNotification: Notification) {
-        if ClientController.shared.isControlling {
+        if ClientController.shared.isControlling,
+           !RemoteBiometricAuthManager.shared.shouldSuppressControllerAutoRefocus,
+           !CursorVisibilityController.shared.isSuspendedForSystemPrompt {
             NSApp.activate(ignoringOtherApps: true)
         }
     }
@@ -338,6 +341,7 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     @objc func computerWillSleep(_ notification: Notification) {
         invalidateTimer()
         AutoUnlockManager.shared.cancelAllPendingOperations(reason: "computerWillSleep")
+        RemoteBiometricAuthManager.shared.cancelAllPendingOperations(reason: "computerWillSleep")
         ActivityLogManager.shared.log(
             level: .info,
             category: .network,
@@ -640,6 +644,9 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
         } else if prefKey == Settings.enableKeepAwakeKey || prefKey == Settings.keepAwakeIntervalKey {
             invalidateTimer()
             setupTimer()
+        } else if prefKey == Settings.remoteBiometricAuthShortcutKey {
+            let serialized = PreferencesManager.shared().value(forPref: Settings.remoteBiometricAuthShortcutKey) as? String
+            EventsController.shared.updateBiometricShortcut(RemoteBiometricShortcut(serialized: serialized))
         }
     }
     
@@ -657,6 +664,11 @@ class MainController: NSObject, NSApplicationDelegate, NetworkConfigurationWatch
     // MARK: - UI
     
     @objc func goFrontmost() {
+        if RemoteBiometricAuthManager.shared.shouldSuppressControllerAutoRefocus
+            || CursorVisibilityController.shared.isSuspendedForSystemPrompt {
+            return
+        }
+
         let frontApp = NSWorkspace.shared.frontmostApplication
         if frontApp?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
             previousFrontApp = frontApp

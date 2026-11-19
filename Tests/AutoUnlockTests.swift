@@ -159,6 +159,10 @@ private final class MockScreenUnlockDriver: ScreenUnlockingDriver, @unchecked Se
         locked
     }
 
+    func isPasswordPromptActiveLive(_ kind: PasswordPromptKind) -> Bool {
+        true
+    }
+
     func sleep(milliseconds: UInt64) {
         // No real wall-clock sleep in unit tests.
     }
@@ -198,6 +202,7 @@ private final class MockAutoUnlockPeerNode: AutoUnlockCoordinatorDelegate {
     let coordinator: AutoUnlockProtocolCoordinator
     var isLocked = false
     var autoUnlockEnabled = true
+    var remoteBiometricAuthEnabled = true
     var accessibilityTrusted = true
     var trustedPairedHosts: Set<String> = []
     var allowedFromPeerHosts: Set<String> = []
@@ -228,6 +233,7 @@ private final class MockAutoUnlockPeerNode: AutoUnlockCoordinatorDelegate {
     var localHostId: String { hostId }
     func isLocalScreenLocked() -> Bool { isLocked }
     func isAutoUnlockEnabled() -> Bool { autoUnlockEnabled }
+    func isRemoteBiometricAuthEnabled() -> Bool { remoteBiometricAuthEnabled }
     func hasLocalSavedPassword() -> Bool { store.hasSavedPassword }
     func isAccessibilityTrusted() -> Bool { accessibilityTrusted }
     func isPeerTrustedAndPaired(_ hostId: String) -> Bool { trustedPairedHosts.contains(hostId) }
@@ -1206,6 +1212,76 @@ struct AutoUnlockTestRunner {
 
             let invalidIP = NetworkInterfaceInfo(name: "en0", ipAddress: "999.168.1.42", subnetMask: "255.255.255.0")
             assertNil(invalidIP.broadcastAddress)
+        }
+
+        // 6. Key-exchange eligibility when Auto-Unlock is disabled but Touch ID for Password Prompts is enabled
+        runTest("testKeyExchangeRunsWhenOnlyRemoteBiometricAuthEnabled") {
+            let dirA = try makeTempDir("biometric-only-A")
+            let dirB = try makeTempDir("biometric-only-B")
+            defer {
+                try? FileManager.default.removeItem(at: dirA)
+                try? FileManager.default.removeItem(at: dirB)
+            }
+
+            let storeA = UnlockCredentialStore(
+                directoryURL: dirA,
+                platformUUIDProvider: { "UUID-A" },
+                uidProvider: { 501 },
+                usernameProvider: { "userA" },
+                postNotifications: false
+            )
+            let storeB = UnlockCredentialStore(
+                directoryURL: dirB,
+                platformUUIDProvider: { "UUID-B" },
+                uidProvider: { 501 },
+                usernameProvider: { "userB" },
+                postNotifications: false
+            )
+            try storeB.savePassword("SecretB!")
+
+            let now: TimeInterval = 5000.0
+            let nodeA = MockAutoUnlockPeerNode(hostId: "Alpha-Mac", store: storeA, clock: { now })
+            let nodeB = MockAutoUnlockPeerNode(hostId: "Beta-Mac", store: storeB, clock: { now })
+
+            nodeA.autoUnlockEnabled = false
+            nodeA.remoteBiometricAuthEnabled = true
+            nodeB.autoUnlockEnabled = false
+            nodeB.remoteBiometricAuthEnabled = true
+
+            nodeA.trustedPairedHosts = ["Beta-Mac"]
+            nodeA.allowedFromPeerHosts = ["Beta-Mac"]
+            nodeA.connectedHosts = ["Beta-Mac"]
+
+            nodeB.trustedPairedHosts = ["Alpha-Mac"]
+            nodeB.allowedFromPeerHosts = ["Alpha-Mac"]
+            nodeB.connectedHosts = ["Alpha-Mac"]
+
+            let router: (String, String, MsgType, [AnyHashable: Any]) -> Void = { sender, target, type, info in
+                if target == "Beta-Mac" {
+                    nodeB.coordinator.handleMessage(type, infoDict: info, from: sender)
+                } else if target == "Alpha-Mac" {
+                    nodeA.coordinator.handleMessage(type, infoDict: info, from: sender)
+                }
+            }
+            nodeA.routeHandler = router
+            nodeB.routeHandler = router
+
+            // Establishing connection should still negotiate Curve25519 peer secret
+            nodeA.coordinator.handleConnectionEstablished(to: "Beta-Mac", isEligible: true)
+            assertNotNil(storeA.loadPeerSecret(for: "Beta-Mac"))
+            assertEqual(storeA.loadPeerSecret(for: "Beta-Mac"), storeB.loadPeerSecret(for: "Alpha-Mac"))
+
+            // Local unlock must NOT automatically unlock Beta-Mac when autoUnlockEnabled == false
+            nodeB.isLocked = true
+            nodeA.isLocked = true
+            nodeA.isLocked = false
+            nodeA.coordinator.handleLocalScreenUnlocked(
+                wasPreviouslyLocked: true,
+                connectedEligibleHostIds: ["Beta-Mac"],
+                disconnectedEligibleHostIds: []
+            )
+            assertTrue(nodeB.isLocked, "Screen unlock must stay off when autoUnlockEnabled is false")
+            assertEqual(nodeB.performUnlockCallCount, 0)
         }
 
         print("=== Test Summary: \(totalTestsRun) tests (\(totalAssertions) assertions), \(failedTests.count) failures ===")

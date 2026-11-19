@@ -46,6 +46,7 @@ final class SystemStatusObserver: NSObject {
 	@objc private func onScreenLocked() {
         self.isLocked = true
         AutoUnlockManager.shared.handleLocalScreenLocked()
+        RemoteBiometricAuthManager.shared.handleLocalScreenLocked()
     }
 
 	@objc private func onScreenUnlocked() {

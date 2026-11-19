@@ -140,6 +140,8 @@ class LocalHost: HostDevice {
 				true
 			case .autoUnlock:
 				true
+			case .biometricAuth:
+				true
 			default:
 				false
 			}

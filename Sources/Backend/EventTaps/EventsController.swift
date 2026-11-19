@@ -136,6 +136,8 @@ public protocol EventsListener: NSObjectProtocol {
             }
         }
     )
+
+    private let biometricShortcutFilter = BiometricShortcutFilter()
     
     /// Snapshot of the controlling state, written on the main thread and read
     /// on the event tap thread.  A plain Bool store/load is atomic on ARM64
@@ -157,7 +159,13 @@ public protocol EventsListener: NSObjectProtocol {
     
     private override init() {
         super.init()
+        let savedShortcut = PreferencesManager.shared().value(forPref: Settings.remoteBiometricAuthShortcutKey) as? String
+        biometricShortcutFilter.setShortcut(RemoteBiometricShortcut(serialized: savedShortcut))
         EventTapListener.shared.addDelegate(self.emergencyStopDetector)
+    }
+
+    func updateBiometricShortcut(_ shortcut: RemoteBiometricShortcut?) {
+        biometricShortcutFilter.setShortcut(shortcut)
     }
     
     @objc public static var shared: EventsController {
@@ -206,6 +214,7 @@ public protocol EventsListener: NSObjectProtocol {
     
     @objc public func cleanupGettingEvents() {
         _isControllingSnapshot = false
+        biometricShortcutFilter.reset()
         
         let listener = EventTapListener.shared
         listener.removeDelegate(self)
@@ -232,6 +241,7 @@ public protocol EventsListener: NSObjectProtocol {
         
         _isControllingSnapshot = true
         emergencyStopDetector.reset()
+        biometricShortcutFilter.reset()
         
         if IsSecureEventInputEnabled() {
             DispatchQueue.main.async {
@@ -266,6 +276,7 @@ public protocol EventsListener: NSObjectProtocol {
     
     @objc public func _stopGettingEvents() {
         _isControllingSnapshot = false
+        biometricShortcutFilter.reset()
         let listener = EventTapListener.shared
         listener.removeDelegate(self)
         let alwaysObserve = PreferencesManager.shared().bool(forPref: Settings.alwaysObserveEventsKey)
@@ -582,7 +593,36 @@ extension EventsController: EventTapListenerDelegate {
         guard _isControllingSnapshot else {
             return Unmanaged.passUnretained(event)
         }
-        
+
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let isAutorepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        let userData = event.getIntegerValueField(.eventSourceUserData)
+        let shortcutAction = biometricShortcutFilter.processEvent(
+            type: type,
+            keyCode: keyCode,
+            flags: event.flags,
+            isAutorepeat: isAutorepeat,
+            userData: userData,
+            isControlling: _isControllingSnapshot,
+            isBiometricEvaluationActive: RemoteBiometricAuthManager.isEvaluatingSnapshot
+        )
+        switch shortcutAction {
+        case .passThrough:
+            break
+        case .swallowOnly:
+            return nil
+        case .triggerBiometricAuthAndSwallow:
+            DispatchQueue.main.async {
+                RemoteBiometricAuthManager.shared.triggerManualBiometricAuth()
+            }
+            return nil
+        case .cancelBiometricAuthAndSwallow:
+            DispatchQueue.main.async {
+                RemoteBiometricAuthManager.shared.cancelControllerEvaluationByUser()
+            }
+            return nil
+        }
+
         if !emergencyStopDetector.isEmergencyStopEvent(event) {
             _sendEvent(toListener: event)
         }

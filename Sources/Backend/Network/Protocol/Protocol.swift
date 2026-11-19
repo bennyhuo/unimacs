@@ -61,6 +61,13 @@ enum MsgType: Int {
     case autoUnlockResponse
     case autoUnlockResult
     case autoUnlockStatusUpdate
+
+    // Remote Biometric Auth (Touch ID for Password Prompts)
+    case biometricAuthRequest
+    case biometricAuthChallenge
+    case biometricAuthResponse
+    case biometricAuthCancel
+    case biometricAuthResult
 }
 
 public struct MouseDelta {

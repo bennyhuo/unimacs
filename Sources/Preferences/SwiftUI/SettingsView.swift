@@ -206,6 +206,28 @@ struct SettingsTabView: View {
 
                     Divider()
 
+                    SettingsRow(
+                        title: "Touch ID for Password Prompts",
+                        description: "Automatically authenticate system password dialogs on a controlled Mac using Touch ID, or use an optional shortcut for masked password fields and terminal sudo."
+                    ) {
+                        Toggle("", isOn: $viewModel.enableRemoteBiometricAuth)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+
+                    if viewModel.enableRemoteBiometricAuth {
+                        Divider()
+
+                        SettingsRow(
+                            title: "Touch ID Shortcut",
+                            description: "Optional shortcut while controlling to trigger Touch ID on focused password fields or terminal sudo prompts."
+                        ) {
+                            RemoteBiometricShortcutRecorder(shortcut: $viewModel.remoteBiometricAuthShortcut)
+                        }
+                    }
+
+                    Divider()
+
                     HStack(alignment: .center, spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 8) {
@@ -256,7 +278,7 @@ struct SettingsTabView: View {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundColor(.orange)
 
-                            Text("Accessibility permission is required to enter your password on the Lock Screen during remote auto-unlock.")
+                            Text("Accessibility permission is required to enter your password on the Lock Screen or during remote Touch ID authentication.")
                                 .font(.callout)
                                 .foregroundColor(.secondary)
 
@@ -1605,6 +1627,122 @@ enum TransferThresholdOption {
         case Int.max: return "Never"
         case 1024...: return "\(threshold / 1024) MB"
         default: return "\(threshold) KB"
+        }
+    }
+}
+
+// MARK: - Remote Biometric Shortcut Recorder
+
+@available(macOS 13.0, *)
+private struct RemoteBiometricShortcutRecorder: View {
+    @Binding var shortcut: RemoteBiometricShortcut?
+
+    @State private var isRecording = false
+    @State private var keyMonitor: Any?
+    @State private var validationHint: String?
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            HStack(spacing: 6) {
+                Button {
+                    if isRecording {
+                        stopRecording()
+                    } else {
+                        startRecording()
+                    }
+                } label: {
+                    Text(buttonTitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(isRecording ? .accentColor : (shortcut == nil ? .secondary : .primary))
+                        .frame(minWidth: 108)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(isRecording ? Color.accentColor.opacity(0.14) : Color(nsColor: .controlBackgroundColor))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(isRecording ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: isRecording ? 1.5 : 0.5)
+                        )
+                }
+                .buttonStyle(.plain)
+
+                if shortcut != nil && !isRecording {
+                    Button {
+                        shortcut = nil
+                        validationHint = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear shortcut")
+                }
+            }
+
+            if let hint = validationHint {
+                Text(hint)
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            }
+        }
+        .onDisappear {
+            stopRecording()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            stopRecording()
+        }
+    }
+
+    private var buttonTitle: String {
+        if isRecording {
+            return "Press Shortcut…"
+        }
+        return shortcut?.displayString ?? "None"
+    }
+
+    private func startRecording() {
+        stopRecording()
+        validationHint = nil
+        isRecording = true
+
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+            let relevantModifiers: NSEvent.ModifierFlags = [.control, .option, .shift, .command]
+            let pressedModifiers = event.modifierFlags.intersection(relevantModifiers)
+            let keyCode = Int64(event.keyCode)
+
+            // Plain Escape cancels recording without changing the stored shortcut.
+            if keyCode == BiometricShortcutFilter.keyCodeEscape && pressedModifiers.isEmpty {
+                stopRecording()
+                return nil
+            }
+
+            // Plain Delete / Forward Delete clears the stored shortcut back to None.
+            if (keyCode == 0x33 || keyCode == 0x75) && pressedModifiers.isEmpty {
+                shortcut = nil
+                stopRecording()
+                return nil
+            }
+
+            let cgFlags = RemoteBiometricShortcut.cgEventFlags(from: pressedModifiers)
+            if let recorded = RemoteBiometricShortcut(keyCode: keyCode, modifiers: cgFlags) {
+                shortcut = recorded
+                stopRecording()
+            } else {
+                validationHint = "Use ⌃, ⌥, or ⌘"
+            }
+            return nil
+        }
+    }
+
+    private func stopRecording() {
+        isRecording = false
+        validationHint = nil
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
         }
     }
 }

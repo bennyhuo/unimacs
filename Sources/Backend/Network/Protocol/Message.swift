@@ -231,6 +231,11 @@ extension MsgType {
         case .autoUnlockResponse: return "AutoUnlockResponse"
         case .autoUnlockResult: return "AutoUnlockResult"
         case .autoUnlockStatusUpdate: return "AutoUnlockStatusUpdate"
+        case .biometricAuthRequest: return "BiometricAuthRequest"
+        case .biometricAuthChallenge: return "BiometricAuthChallenge"
+        case .biometricAuthResponse: return "BiometricAuthResponse"
+        case .biometricAuthCancel: return "BiometricAuthCancel"
+        case .biometricAuthResult: return "BiometricAuthResult"
         }
     }
 }

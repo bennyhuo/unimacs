@@ -44,6 +44,8 @@ let KEEP_AWAKE_INTERVAL = Settings.keepAwakeIntervalKey
 let SYNC_LOCK_SLEEP = Settings.syncLockSleepKey
 let ENABLE_AUTO_UNLOCK = Settings.enableAutoUnlockKey
 let ALLOW_AUTO_UNLOCK = Settings.allowAutoUnlockKey
+let ENABLE_REMOTE_BIOMETRIC_AUTH = Settings.enableRemoteBiometricAuthKey
+let REMOTE_BIOMETRIC_AUTH_SHORTCUT = Settings.remoteBiometricAuthShortcutKey
 let SKIP_CLIPBOARD_AFTER_LOCAL_PASTE = Settings.skipClipboardAfterLocalPasteKey
 let ENABLE_CLIPBOARD_TIMEOUT = Settings.enableClipboardTimeoutKey
 let CLIPBOARD_TIMEOUT_INTERVAL = Settings.clipboardTimeoutIntervalKey
@@ -165,6 +167,8 @@ class PreferencesManager: NSObject {
             SYNC_LOCK_SLEEP: true,
             ENABLE_AUTO_UNLOCK: true,
             ALLOW_AUTO_UNLOCK: true,
+            ENABLE_REMOTE_BIOMETRIC_AUTH: true,
+            REMOTE_BIOMETRIC_AUTH_SHORTCUT: "",
             SKIP_CLIPBOARD_AFTER_LOCAL_PASTE: true,
             ENABLE_CLIPBOARD_TIMEOUT: true,
             CLIPBOARD_TIMEOUT_INTERVAL: Settings.clipboardTimeoutIntervalDefault

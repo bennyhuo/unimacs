@@ -304,6 +304,7 @@ class AuthenticationManager: NSObject, ClientConnectionsDelegate, NetworkConnect
             Task { @MainActor in
                 HostDevicesManager.shared.removeTrustedHostFromHosts(remoteHost)
                 AutoUnlockManager.shared.removePeerState(forHostId: remoteHost.identifier)
+                RemoteBiometricAuthManager.shared.removePeerState(forHostId: remoteHost.identifier)
             }
         }
         

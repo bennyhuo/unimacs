@@ -5,7 +5,7 @@
 
 import Foundation
 
-let MAX_CAPABILITIES = 6
+let MAX_CAPABILITIES = 7
 
 struct HostCapability: OptionSet {
     let rawValue: UInt
@@ -17,4 +17,5 @@ struct HostCapability: OptionSet {
     static let portable         = HostCapability(rawValue: 1 << 3)
     static let audioSync        = HostCapability(rawValue: 1 << 4)
     static let autoUnlock       = HostCapability(rawValue: 1 << 5)
+    static let biometricAuth    = HostCapability(rawValue: 1 << 6)
 }

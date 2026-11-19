@@ -26,6 +26,7 @@ final class BezelController: NSObject {
 	private var bezelView: BezelView?
 	private var textTimer: Timer?
 	private var activeControlledHost: RemoteHost?
+	private var isTemporarilySuspended = false
 
 	class func `default`() -> BezelController {
 		if let existing = _default {
@@ -54,14 +55,17 @@ final class BezelController: NSObject {
 
 		switch mode {
 		case .hidden:
+			isTemporarilySuspended = false
 			activeControlledHost = nil
 			bezelView.setMode(.hidden)
 			bezelWindow.orderOut(self)
 		case .controlling(let host, let hint):
 			activeControlledHost = host
 			bezelView.setMode(.controlling(host: host, emergencyHint: hint))
-			bezelWindow.orderFront(nil)
-			bezelWindow.orderFrontRegardless()
+			if !isTemporarilySuspended {
+				bezelWindow.orderFront(nil)
+				bezelWindow.orderFrontRegardless()
+			}
 		case .emergency(let title, let subtitle, let count, let maxCount):
 			bezelView.setMode(.emergency(title: title, subtitle: subtitle, count: count, maxCount: maxCount))
 			bezelWindow.orderFront(nil)
@@ -81,6 +85,20 @@ final class BezelController: NSObject {
 					self?.restorePreviousActiveState()
 				}
 			}
+		}
+	}
+
+	func setTemporarilySuspended(_ suspended: Bool) {
+		guard isTemporarilySuspended != suspended else { return }
+		isTemporarilySuspended = suspended
+		if suspended {
+			textTimer?.invalidate()
+			textTimer = nil
+			bezelWindow?.orderOut(nil)
+		} else if activeControlledHost != nil && !PreferencesManager.shared().bool(forPref: HIDE_CONTROL_BEZEL) {
+			restorePreviousActiveState()
+		} else {
+			bezelWindow?.orderOut(nil)
 		}
 	}
 

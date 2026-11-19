@@ -72,23 +72,12 @@ enum ControlLockPolicy {
     }
 }
 
-enum AutoUnlockLogLevel {
-    case info
-    case success
-    case warning
-    case error
-}
-
-enum AutoUnlockLogAction {
-    case openAutoUnlockSettings
-    case openAccessibilitySettings
-}
-
 @MainActor
 protocol AutoUnlockCoordinatorDelegate: AnyObject {
     var localHostId: String { get }
     func isLocalScreenLocked() -> Bool
     func isAutoUnlockEnabled() -> Bool
+    func isRemoteBiometricAuthEnabled() -> Bool
     func hasLocalSavedPassword() -> Bool
     func isAccessibilityTrusted() -> Bool
     func isPeerTrustedAndPaired(_ hostId: String) -> Bool
@@ -345,7 +334,7 @@ final class AutoUnlockProtocolCoordinator {
                 hostId: hostId,
                 action: nil
             )
-            if delegate.isAutoUnlockEnabled() {
+            if delegate.isAutoUnlockEnabled() || delegate.isRemoteBiometricAuthEnabled() {
                 initiateKeyExchange(with: hostId)
             }
             return false
@@ -429,15 +418,23 @@ final class AutoUnlockProtocolCoordinator {
     func handleConnectionEstablished(to hostId: String, isEligible: Bool) {
         guard let delegate = delegate else { return }
         guard isEligible,
-              delegate.isAutoUnlockEnabled(),
               !delegate.isLocalScreenLocked(),
-              delegate.isPeerTrustedAndPaired(hostId),
-              delegate.isAutoUnlockAllowedFromPeer(hostId) else {
+              delegate.isPeerTrustedAndPaired(hostId) else {
+            return
+        }
+
+        let canAutoUnlock = delegate.isAutoUnlockEnabled() && delegate.isAutoUnlockAllowedFromPeer(hostId)
+        let canKeyExchange = canAutoUnlock || delegate.isRemoteBiometricAuthEnabled()
+        guard canKeyExchange else {
             return
         }
 
         if !credentialStore.hasPeerSecret(for: hostId) {
             initiateKeyExchange(with: hostId)
+        }
+
+        guard canAutoUnlock else {
+            return
         }
 
         let now = clock()
@@ -455,7 +452,7 @@ final class AutoUnlockProtocolCoordinator {
     func initiateKeyExchange(with hostId: String, force: Bool = false) {
         guard let delegate = delegate else { return }
         guard !hostId.isEmpty, hostId != delegate.localHostId else { return }
-        guard delegate.isAutoUnlockEnabled() else { return }
+        guard delegate.isAutoUnlockEnabled() || delegate.isRemoteBiometricAuthEnabled() else { return }
         guard !delegate.isLocalScreenLocked() else { return }
         guard delegate.isPeerTrustedAndPaired(hostId) else { return }
         guard delegate.isHostConnected(hostId) else { return }
@@ -1112,7 +1109,7 @@ final class AutoUnlockProtocolCoordinator {
 
         if keyMismatch {
             credentialStore.removePeerSecret(for: hostId)
-            if !delegate.isLocalScreenLocked() && delegate.isAutoUnlockEnabled() {
+            if !delegate.isLocalScreenLocked() && (delegate.isAutoUnlockEnabled() || delegate.isRemoteBiometricAuthEnabled()) {
                 initiateKeyExchange(with: hostId, force: true)
             }
         }
@@ -1215,8 +1212,19 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
     }
 
     @objc private func defaultsDidChange(_ notification: Notification) {
-        if let key = notification.object as? String, key != Settings.enableAutoUnlockKey {
-            return
+        if let key = notification.object as? String {
+            if key == Settings.enableRemoteBiometricAuthKey {
+                if isRemoteBiometricAuthEnabled() {
+                    ensurePeerKeysWithConnectedHosts()
+                }
+                return
+            }
+            if key != Settings.enableAutoUnlockKey {
+                return
+            }
+        }
+        if isAutoUnlockEnabled() || isRemoteBiometricAuthEnabled() {
+            ensurePeerKeysWithConnectedHosts()
         }
         broadcastLocalStatusToConnectedPeers()
     }
@@ -1321,10 +1329,17 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
         UnlockCredentialStore.shared.hasPeerSecret(for: hostId)
     }
 
+    func initiatePeerKeyExchangeIfNeeded(with hostId: String, force: Bool = false) {
+        coordinator.initiateKeyExchange(with: hostId, force: force)
+    }
+
     func ensurePeerKeyExchanged(with host: RemoteHost, on connection: NetworkConnection? = nil) {
-        guard host.hasCapability(.autoUnlock),
-              host.allowAutoUnlock,
-              HostDevicesManager.shared.isPaired(with: host) else {
+        guard HostDevicesManager.shared.isPaired(with: host) else {
+            return
+        }
+        let eligibleForAutoUnlock = host.hasCapability(.autoUnlock) && host.allowAutoUnlock && isAutoUnlockEnabled()
+        let eligibleForBiometric = host.hasCapability(.biometricAuth) && isRemoteBiometricAuthEnabled()
+        guard eligibleForAutoUnlock || eligibleForBiometric else {
             return
         }
         guard connection?.isConnected ?? DeviceConnectionManager.shared.isConnected(to: host) else {
@@ -1352,6 +1367,7 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
         }
         let eligible = isCapableAndPaired && host.allowAutoUnlock
         coordinator.handleConnectionEstablished(to: host.identifier, isEligible: eligible)
+        ensurePeerKeyExchanged(with: host, on: connection)
     }
 
     func connectionDidDisconnect(from host: RemoteHost) {
@@ -1376,6 +1392,10 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
 
     func isAutoUnlockEnabled() -> Bool {
         PreferencesManager.shared().bool(forPref: Settings.enableAutoUnlockKey)
+    }
+
+    func isRemoteBiometricAuthEnabled() -> Bool {
+        PreferencesManager.shared().bool(forPref: Settings.enableRemoteBiometricAuthKey)
     }
 
     func hasLocalSavedPassword() -> Bool {
@@ -1511,34 +1531,15 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
         hostId: String?,
         action: AutoUnlockLogAction?
     ) {
-        let mappedLevel: ActivityLogLevel
-        switch level {
-        case .info: mappedLevel = .info
-        case .success: mappedLevel = .success
-        case .warning: mappedLevel = .warning
-        case .error: mappedLevel = .error
-        }
-
-        let actions: [ActivityFixAction]
-        switch action {
-        case .openAutoUnlockSettings:
-            actions = [.openAutoUnlockSettings]
-        case .openAccessibilitySettings:
-            actions = [.openAccessibilitySettings]
-        case nil:
-            actions = []
-        }
-
-        let hostName = hostId.map { peerDisplayName($0) }
         ActivityLogManager.shared.log(
-            level: mappedLevel,
+            level: level.activityLogLevel,
             category: .control,
             title: title,
             detail: detail,
             howToFix: howToFix,
             hostId: hostId,
-            hostName: hostName,
-            actions: actions
+            hostName: hostId.map { peerDisplayName($0) },
+            actions: action.map { [$0.activityFixAction] } ?? []
         )
     }
 
@@ -1577,6 +1578,26 @@ final class AutoUnlockManager: NSObject, DeviceConnectionDelegate, AutoUnlockCoo
                 items.forEach { $0.cancel() }
             }
             reconnectRetryWorkItems.removeAll()
+        }
+    }
+}
+
+extension AutoUnlockLogLevel {
+    var activityLogLevel: ActivityLogLevel {
+        switch self {
+        case .info: return .info
+        case .success: return .success
+        case .warning: return .warning
+        case .error: return .error
+        }
+    }
+}
+
+extension AutoUnlockLogAction {
+    var activityFixAction: ActivityFixAction {
+        switch self {
+        case .openAutoUnlockSettings: return .openAutoUnlockSettings
+        case .openAccessibilitySettings: return .openAccessibilitySettings
         }
     }
 }

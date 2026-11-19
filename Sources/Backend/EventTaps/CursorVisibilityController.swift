@@ -34,6 +34,8 @@ final class CursorVisibilityController {
     private var desiredCursorVisible = true
     /// Number of CGDisplayHideCursor calls not yet balanced by CGDisplayShowCursor.
     private var unbalancedHideCount = 0
+    /// True while temporary high-privilege system UI (e.g. Touch ID) needs key focus.
+    private(set) var isSuspendedForSystemPrompt = false
 
     private init() {}
 
@@ -44,6 +46,7 @@ final class CursorVisibilityController {
     // MARK: - Control session
 
     func beginControlSession(reason: String) {
+        isSuspendedForSystemPrompt = false
         guard desiredCursorVisible else { return }
         desiredCursorVisible = false
 
@@ -69,6 +72,7 @@ final class CursorVisibilityController {
     }
 
     func endControlSession(reason: String) {
+        isSuspendedForSystemPrompt = false
         guard !desiredCursorVisible else { return }
         desiredCursorVisible = true
 
@@ -79,8 +83,43 @@ final class CursorVisibilityController {
         debugLog("cursor: restored after control session (reason=\(reason))", module: .control)
     }
 
+    func suspendShieldsForSystemPrompt() {
+        guard !isSuspendedForSystemPrompt else { return }
+        isSuspendedForSystemPrompt = true
+        guard !desiredCursorVisible else { return }
+
+        // Keep local cursor hidden via connection property while Unimacs yields foreground focus.
+        applyBackgroundHack()
+        if usesShieldWindow {
+            hideShields()
+        }
+        hideCursorIfLeaked()
+        debugLog("cursor: suspended shields for system prompt", module: .control)
+    }
+
+    func resumeShieldsAfterSystemPrompt() {
+        guard isSuspendedForSystemPrompt else { return }
+        isSuspendedForSystemPrompt = false
+        guard !desiredCursorVisible else { return }
+
+        if usesShieldWindow {
+            showShields(makeKey: true)
+            // Activate directly so MainController.previousFrontApp is not overwritten with coreautha.
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        hideCursorIfLeaked()
+        debugLog("cursor: resumed shields after system prompt", module: .control)
+    }
+
     /// Called for every event tap callback while the tap is live.
     func handleEventTapTick(isControlling: Bool, eventType: CGEventType) {
+        if isSuspendedForSystemPrompt {
+            if isControlling, !desiredCursorVisible, Self.isPointerEvent(eventType) {
+                hideCursorIfLeaked()
+            }
+            return
+        }
+
         if usesShieldWindow {
             guard isControlling, !desiredCursorVisible else { return }
             // Keep shields owning the cursor region, and re-hide only if it leaked.

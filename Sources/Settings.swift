@@ -67,6 +67,8 @@ class Settings {
     static let syncLockSleepKey: String = "syncLockSleep"
     static let enableAutoUnlockKey: String = "enableAutoUnlock"
     static let allowAutoUnlockKey: String = "allowAutoUnlock"
+    static let enableRemoteBiometricAuthKey: String = "enableRemoteBiometricAuth"
+    static let remoteBiometricAuthShortcutKey: String = "remoteBiometricAuthShortcut"
 
 
 	

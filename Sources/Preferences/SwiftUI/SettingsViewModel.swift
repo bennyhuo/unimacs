@@ -126,6 +126,25 @@ final class SettingsViewModel: ObservableObject {
         }
     }
 
+    @Published var enableRemoteBiometricAuth: Bool {
+        didSet {
+            prefs.setValue(enableRemoteBiometricAuth, forKey: Settings.enableRemoteBiometricAuthKey)
+            if enableRemoteBiometricAuth {
+                AutoUnlockManager.shared.ensurePeerKeysWithConnectedHosts()
+            }
+        }
+    }
+
+    @Published var remoteBiometricAuthShortcut: RemoteBiometricShortcut? {
+        didSet {
+            prefs.setValue(
+                remoteBiometricAuthShortcut?.serializedString ?? "",
+                forKey: Settings.remoteBiometricAuthShortcutKey
+            )
+            EventsController.shared.updateBiometricShortcut(remoteBiometricAuthShortcut)
+        }
+    }
+
     @Published private(set) var hasSavedUnlockPassword: Bool = false
     @Published private(set) var isSavedUnlockPasswordInvalid: Bool = false
     @Published var isVerifyingUnlockPassword: Bool = false
@@ -414,6 +433,15 @@ final class SettingsViewModel: ObservableObject {
         } else {
             enableAutoUnlock = true
         }
+
+        if prefs.value(forPref: Settings.enableRemoteBiometricAuthKey) != nil {
+            enableRemoteBiometricAuth = prefs.bool(forPref: Settings.enableRemoteBiometricAuthKey)
+        } else {
+            enableRemoteBiometricAuth = true
+        }
+        remoteBiometricAuthShortcut = RemoteBiometricShortcut(
+            serialized: prefs.value(forPref: Settings.remoteBiometricAuthShortcutKey) as? String
+        )
         
         disconnectOnNetworkChange = prefs.bool(forPref: Settings.disconnectOnNetworkConfigChangeKey)
         
@@ -513,7 +541,8 @@ final class SettingsViewModel: ObservableObject {
             do {
                 try UnlockCredentialStore.shared.savePassword(password)
                 AutoUnlockManager.shared.resetFailureCircuitBreaker()
-                if enableAutoUnlock {
+                RemoteBiometricAuthManager.shared.resetFailureCircuitBreaker()
+                if enableAutoUnlock || enableRemoteBiometricAuth {
                     AutoUnlockManager.shared.ensurePeerKeysWithConnectedHosts()
                 }
                 refreshAutoUnlockState()
@@ -533,6 +562,7 @@ final class SettingsViewModel: ObservableObject {
     func removeUnlockPassword() {
         UnlockCredentialStore.shared.deletePassword()
         AutoUnlockManager.shared.resetFailureCircuitBreaker()
+        RemoteBiometricAuthManager.shared.resetFailureCircuitBreaker()
         refreshAutoUnlockState()
     }
     

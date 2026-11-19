@@ -181,6 +181,12 @@ class StatusItemController: NSObject, NSMenuDelegate {
             ClientController.shared.stopControl()
         }
     }
+
+    @objc private func triggerRemoteTouchID() {
+        Task { @MainActor in
+            RemoteBiometricAuthManager.shared.triggerManualBiometricAuth()
+        }
+    }
     
     @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent
@@ -248,6 +254,29 @@ class StatusItemController: NSObject, NSMenuDelegate {
         // 3. Client Control State (if controlling a device)
         let clientController = ClientController.shared
         if clientController.isControlling, let host = clientController.currentConnection?.connectedHost {
+            if host.hasCapability(.biometricAuth),
+               PreferencesManager.shared().bool(forPref: Settings.enableRemoteBiometricAuthKey) {
+                let shortcut = RemoteBiometricShortcut(
+                    serialized: PreferencesManager.shared().value(forPref: Settings.remoteBiometricAuthShortcutKey) as? String
+                )
+                let title: String
+                if let shortcut = shortcut {
+                    title = String(
+                        format: NSLocalizedString("Authenticate with Touch ID (%@)", comment: ""),
+                        shortcut.displayString
+                    )
+                } else {
+                    title = NSLocalizedString("Authenticate with Touch ID", comment: "")
+                }
+                let touchIDItem = NSMenuItem(
+                    title: title,
+                    action: #selector(triggerRemoteTouchID),
+                    keyEquivalent: ""
+                )
+                touchIDItem.target = self
+                menu.addItem(touchIDItem)
+            }
+
             let controllingItem = NSMenuItem(
                 title: String(format: NSLocalizedString("Stop Controlling \u{201C}%@\u{201D}", comment: ""), host.computerName),
                 action: #selector(stopControllingDevice),
